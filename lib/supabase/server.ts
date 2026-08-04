@@ -1,5 +1,5 @@
 // 서버(Route Handler/RSC)용 Supabase 클라이언트
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type SetAllCookies } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 export async function createClient() {
@@ -10,7 +10,10 @@ export async function createClient() {
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (list) => list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+        setAll: ((list) =>
+          list.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )) satisfies SetAllCookies,
       },
     }
   );

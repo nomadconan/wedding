@@ -11,7 +11,7 @@
 
 | ID | 태스크 | 상태 | 명세서 근거 | 마일스톤 |
 |---|---|---|---|---|
-| T-01 | 리포 초기화·셋업 검증 | [ ] | §8 M0, 부록 C | M0 |
+| T-01 | 리포 초기화·셋업 검증 | [~] | §8 M0, 부록 C | M0 |
 | T-02 | Git·브랜치·CI | [ ] | §7.2, §7.5 | M0 |
 | T-03 | 마이그레이션 1차 | [ ] | §3.1·§3.2·§3.5, §3.9 | M0 |
 | T-04 | lib/core 골격 + 테스트 | [ ] | §5.2·§5.3, §7.5 | M0~M1 |
@@ -22,7 +22,7 @@
 
 ## T-01 — 리포 초기화·셋업 검증
 
-**상태:** [ ]
+**상태:** [~] (`npm run db:start` 사용자 확인 대기)
 
 ### 목적
 스캐폴드를 실제로 구동 가능한 개발 환경으로 만든다. 이후 모든 태스크가 로컬에서
@@ -50,10 +50,23 @@ npm run dev
 - `scripts\dev-setup.bat`이 위 흐름을 일괄 실행하도록 정비.
 
 ### 완료 판정 기준
-- [ ] `npm run dev` → `http://localhost:3000` 이 정상적으로 뜬다.
-- [ ] `npm run db:start` → 로컬 Supabase(Docker) 스택이 기동된다.
-- [ ] `npm run lint && npm run test` 가 **통과**한다 (경고는 허용, 에러 0).
-- [ ] `.env.local` 이 `.gitignore` 로 제외되어 있고, `.env.example` 에 필요한 키 목록이 전부 있다.
+- [x] `npm run dev` → `http://localhost:3000` 이 HTTP 200 으로 응답한다.
+- [ ] `npm run db:start` → 로컬 Supabase(Docker) 스택이 기동된다. *(사용자가 Docker 기동 후 직접 실행)*
+- [x] `npm run lint && npm run test` 가 **통과**한다 (ESLint 경고 0, vitest 4건 통과).
+- [x] `.env.local` 이 `.gitignore` 로 제외되어 있고, `.env.example` 에 필요한 키 목록이 전부 있다.
+- [x] (추가 확인) `npm run build` 가 통과한다 — T-02 CI 의 build 스텝 전제.
+
+### T-01 에서 실제로 변경된 것
+| 파일 | 변경 |
+|---|---|
+| `package.json` | `eslint` `^9` → `^8.57.1` (eslint-config-next@14.2 peer 범위), `supabase` devDependency 추가 |
+| `.eslintrc.json` | 신규 — `next/core-web-vitals`. flat config(`eslint.config.mjs`)는 삭제 |
+| `next.config.mjs` | `next.config.ts` 대체 (Next 14 는 TS config 미지원) |
+| `vitest.config.ts` | 신규 — `include`에 `lib/core` 테스트 경로 명시 |
+| `lib/core/smoke.test.ts` | 신규 — 스모크 테스트 4건 |
+| `.gitignore` | 전역 `*.pdf`/`*.docx` → `_local_reports/**`·`tmp/**` 경로 한정 |
+| `scripts/dev-setup.bat` | 단계별 실패 중단, `.env.local` 덮어쓰기 방지, `dev` 까지 연결 |
+| `lib/supabase/server.ts` | `setAll` implicit any 제거 (build 차단 이슈) |
 
 ---
 
