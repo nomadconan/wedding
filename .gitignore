@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+tmp/
+_local_reports/
+.env
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+supabase/.temp/
+coverage/
+.DS_Store
+
+# 개인정보 포함 가능 문서는 로컬 전용 경로에서만 제외한다.
+# (전역 *.pdf / *.docx 제외는 docs/ 산출물·테스트 픽스처까지 막으므로 경로 한정)
+# 계약서 샘플 원본 커밋 금지. 마스킹본만 검토 후 허용.
+_local_reports/**/*.pdf
+_local_reports/**/*.docx
+_local_reports/**/*.jpg
+_local_reports/**/*.jpeg
+_local_reports/**/*.png
+tmp/**/*.pdf
+tmp/**/*.docx

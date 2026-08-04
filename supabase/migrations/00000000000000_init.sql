@@ -1,0 +1,3 @@
+-- 초기 스키마 (docs/03 데이터 모델 기준 — 플랫폼 확장 시 마이그레이션 추가)
+-- users는 supabase auth 연동 프로필 테이블로 구성
+-- TODO: profiles / documents / reports / estimates / price_stats / penalty_rules / detect_rules / payments / feedbacks

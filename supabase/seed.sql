@@ -1,0 +1,2 @@
+-- 시드: 검출 룰 / 위약금 룰 / 추가금 사전
+-- TODO: detect_rules 20종, penalty_rules(시점 밴드), extra_fee_dict(30+ 항목: 원본구매비 등)
