@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-label="유료 노출 없음">
+  <title>icon.no-paid-placement 24x24 (placeholder)</title>
+  <rect width="24" height="24" fill="#F1F2F4"/>
+  <path d="M0 0 L24 24 M24 0 L0 24" stroke="#DFE2E6" stroke-width="1"/>
+  <rect x="0.5" y="0.5" width="23" height="23" fill="none" stroke="#C7CBD1" stroke-width="1"/>
+  <text x="50%" y="50%" font-family="system-ui, sans-serif" font-size="6" fill="#5A6572" text-anchor="middle" dominant-baseline="middle">24x24</text>
+</svg>

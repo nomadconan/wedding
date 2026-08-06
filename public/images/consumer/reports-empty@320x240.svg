@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240" role="img" aria-label="아직 등록된 검토 리포트가 없음">
+  <title>reports.empty 320x240 (placeholder)</title>
+  <rect width="320" height="240" fill="#F1F2F4"/>
+  <path d="M0 0 L320 240 M320 0 L0 240" stroke="#DFE2E6" stroke-width="2"/>
+  <rect x="1" y="1" width="318" height="238" fill="none" stroke="#C7CBD1" stroke-width="2"/>
+  <text x="50%" y="46%" font-family="system-ui, sans-serif" font-size="31" fill="#5A6572" text-anchor="middle" dominant-baseline="middle">reports.empty</text>
+  <text x="50%" y="46%" dy="47" font-family="system-ui, sans-serif" font-size="25" fill="#5A6572" text-anchor="middle" dominant-baseline="middle">320x240</text>
+</svg>
