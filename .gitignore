@@ -23,3 +23,9 @@ _local_reports/**/*.jpeg
 _local_reports/**/*.png
 tmp/**/*.pdf
 tmp/**/*.docx
+# Business strategy docs (kept in Claude project knowledge, not in public repo)
+docs/00_*.md
+docs/01_*.md
+docs/02_*.md
+docs/04_*.md
+supabase/.branches/
