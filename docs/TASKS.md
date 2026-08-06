@@ -14,7 +14,7 @@
 | T-01 | 리포 초기화·셋업 검증 | [~] | §8 M0, 부록 C | M0 |
 | T-02a | 브랜치·원격 정리 | [~] | §7.2 | M0 |
 | T-02b | CI 파이프라인 | [ ] | §7.2, §7.5 | T-04 이후 |
-| T-02c | 이미지·아이콘 자산 규약 | [ ] | (미정) | M0 |
+| T-02c | 이미지·아이콘 자산 규약 | [x] | §6, §7.5 | M0 |
 | T-03 | 마이그레이션 1차 | [ ] | §3.1·§3.2·§3.5, §3.9 | M0 |
 | T-04 | lib/core 골격 + 테스트 | [ ] | §5.2·§5.3, §7.5 | M0~M1 |
 | T-05 | 인증·온보딩 | [ ] | F-C-01, F-C-02 | M1 |
@@ -137,9 +137,45 @@ PR 기반 개발 흐름이 올라탈 브랜치·원격 구조를 고정한다. C
 
 ## T-02c — 이미지·아이콘 자산 규약
 
-**상태:** [ ]
+**상태:** [x] (2026-08-07 완료 · 슬롯 **18개** 정의)
 
-**다음 세션에서 정의.**
+### 목적
+실제 이미지를 나중에 제작하더라도 **같은 경로·같은 파일명으로 덮어쓰기만 하면 교체가 끝나도록**
+자산 참조를 매니페스트 한 곳으로 모은다. 지금은 정확한 치수의 자리표시 이미지를 커밋해
+빌드와 CI(T-02b)가 이미지 부재로 깨지지 않게 한다.
+
+### 작업 내용
+- `lib/assets/manifest.ts` — 단일 진실. `AssetSlot` 타입 + `ASSETS` 레코드.
+  슬롯 근거는 명세서 §6 화면 명세의 **R1 화면**으로 한정했다.
+- `public/images/{brand,marketing,consumer,vendor,admin,icons}/` 폴더 구조 + 자리표시 이미지 커밋.
+- `scripts/generate-placeholders.mjs` / `scripts/check-assets.mjs` — **신규 의존성 없음**.
+  PNG 는 Node 내장 `zlib` 기반 자체 인코더(`scripts/lib/png-writer.mjs`, 5×7 비트맵 폰트)로 생성.
+- `components/ui/AssetImage.tsx` — `next/image` 래핑, 슬롯 id 로만 참조.
+- `docs/ASSETS.md` — 파일명 규칙·교체 절차·슬롯 추가 절차·아이콘 정책.
+
+### 정의한 슬롯 — 총 18개
+| 그룹 | 개수 | 슬롯 |
+|---|---|---|
+| brand | 3 | `brand.logo` · `brand.symbol` · `brand.og-default` |
+| marketing | 2 | `landing.hero` · `guide.thumbnail-default` |
+| consumer | 9 | `onboarding.step1`~`step6` · `reports.empty` · `budget.empty` · `explore.empty` |
+| vendor | 1 | `vendor.dashboard.empty` |
+| admin | 1 | `admin.dashboard.empty` |
+| icons | 2 | `icon.clear-avatar` · `icon.no-paid-placement` |
+
+> R2/R3 화면 슬롯은 **범위에서 뺀 것이 아니라**, 해당 화면 구현 시점에 §6 근거로 추가한다
+> (`docs/ASSETS.md` §4 절차). 범위 축소 금지 원칙(CLAUDE.md §2.1)에 저촉되지 않는다.
+
+### 완료 판정 기준
+- [x] `npm run assets:gen` → 18개 슬롯 파일이 전부 생성된다. **기존 파일은 덮어쓰지 않는다**(재실행 시 `kept`).
+- [x] `npm run assets:check` → 파일 존재·실제 픽셀 치수·파일명 `@WxH` 일치가 전부 통과한다.
+- [x] 매니페스트에 없는 id 를 `AssetImage` 에 넘기면 **타입 에러**가 난다(`AssetId` 로 키 좁힘).
+- [x] `npm run lint && npm run test` 통과.
+- [x] `npm run build` 통과.
+
+### T-02b 연계
+`npm run assets:check` 는 불일치 시 **비영 종료 코드**를 반환한다.
+T-02b CI 워크플로의 게이트 스텝으로 그대로 얹는다(`npm run build` 앞).
 
 ---
 

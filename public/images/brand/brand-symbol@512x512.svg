@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="웨딩클리어 심볼">
+  <title>brand.symbol 512x512 (placeholder)</title>
+  <rect width="512" height="512" fill="#F1F2F4"/>
+  <path d="M0 0 L512 512 M512 0 L0 512" stroke="#DFE2E6" stroke-width="4"/>
+  <rect x="2" y="2" width="508" height="508" fill="none" stroke="#C7CBD1" stroke-width="4"/>
+  <text x="50%" y="46%" font-family="system-ui, sans-serif" font-size="55" fill="#5A6572" text-anchor="middle" dominant-baseline="middle">brand.symbol</text>
+  <text x="50%" y="46%" dy="83" font-family="system-ui, sans-serif" font-size="44" fill="#5A6572" text-anchor="middle" dominant-baseline="middle">512x512</text>
+</svg>

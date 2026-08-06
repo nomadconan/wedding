@@ -29,3 +29,18 @@ docs/01_*.md
 docs/02_*.md
 docs/04_*.md
 supabase/.branches/
+# Business strategy docs at repo root (Claude project knowledge only)
+/00_*.md
+/00_*.txt
+/01_*.md
+/02_*.md
+/04_*.md
+
+# Duplicate context docs at root (canonical copies live in docs/)
+/03_*.md
+/05_*.md
+/06_*.md
+/07_*.md
+
+# Local scratch
+filelist.txt
