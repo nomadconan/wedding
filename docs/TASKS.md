@@ -16,7 +16,7 @@
 | T-02b | CI 파이프라인 | [ ] | §7.2, §7.5 | T-04 이후 |
 | T-02c | 이미지·아이콘 자산 규약 | [x] | §6, §7.5 | M0 |
 | T-03 | 마이그레이션 1차 | [x] | §3.1~§3.8, §3.9 | M0 |
-| T-04 | lib/core 골격 + 테스트 | [ ] | §5.2·§5.3, §7.5 | M0~M1 |
+| T-04 | lib/core 골격 + 테스트 | [x] | §5.1·§5.2·§5.3·§5.4, 부록 A, §7.5 | M0~M1 |
 | T-05 | 인증·온보딩 | [ ] | F-C-01, F-C-02 | M1 |
 | T-06 | 예산 배분·추적 | [ ] | F-C-05 | M1 |
 
@@ -297,7 +297,11 @@ enum 13종, RLS 활성화 + 정책, 역할별 GRANT
 
 ## T-04 — lib/core 골격 + 테스트
 
-**상태:** [ ]
+**상태:** [x] (2026-08-08 완료, 브랜치 `feat/T-04-core-domain`)
+
+> **범위 확대 이력** 2026-08-08: 당초 "인터페이스·골격만" 이던 범위를 **실제 구현**으로 넓혔다.
+> 검출 룰 20종은 부록 A 를 데이터로 옮겨 전부 구현했고(근거 조항 번호만 법무 검수 대기),
+> 마스킹(§5.2 3단계)과 견적 정규화 스키마(§5.4)를 함께 넣었다.
 
 ### 목적
 프레임워크 무관 도메인 로직의 뼈대를 세운다. 특히 **위약금 계산이 LLM 없이 결정적으로**
@@ -322,24 +326,63 @@ enum 13종, RLS 활성화 + 정책, 역할별 GRANT
 2. **`lib/core/pricing/penalty.ts` — 위약금 엔진 (LLM 미사용, 순수 함수)**
    - 입력: 카테고리, 총액, 계약금, 예식일, 취소 시점, 계약서 규정 위약률
    - 출력: 기준 위약금, 계약서 기준 위약금, **초과분**, 근거 조항, 이의 제기 문구
-3. **`lib/core/rules/index.ts` — `DetectRule` 인터페이스**
-   - 필드: `code`, `title`, `category`, `severity_default`, `pattern`,
-     `prompt_fragment`, `basis_ref`, `version`
-   - 룰 20종 **구현체는 아직 작성하지 않는다**(근거 조항 확정 대기 — 하단 표 참조).
-     인터페이스와 레지스트리 골격, 그리고 인터페이스 계약 테스트만 작성한다.
-4. **React/Next import 금지 확인** — `lib/core` 하위에서 `react`·`next` import를 금지하는
-   ESLint 규칙(`no-restricted-imports`)을 추가한다.
+3. **`lib/core/rules/` — 검출 룰 20종 (부록 A)**
+   - `types.ts` — `DetectRule` 인터페이스(`code`, `title`, `category`, `severity_default`,
+     `detect.presence` / `detect.absence`, `prompt_fragment`, `basis_ref`, `version`, `is_active`)
+   - `detect-rules.ts` — R-01~R-20 데이터 정의
+   - `scan.ts` — 마스킹 텍스트를 받아 결정적으로 매칭, 인용 대조(`verifyCitation`)
+   - **근거 조항 번호는 지어내지 않는다.** 출처 수준(표준약관 / 소비자분쟁해결기준 업종)까지만
+     적고 조항 단위 매핑은 파일 상단 TODO 로 남긴다.
+4. **`lib/core/masking/` — 개인정보 마스킹 (§5.2 3단계)**
+   - 이름·연락처·주민번호·주소·계좌·사업자번호 정규식 치환
+   - 마스킹 맵은 반환값으로만 전달. 파일·로그에 쓰지 않는다.
+   - 마스킹 실패 판정(`detectResidualPii` / `assertMaskingComplete`)
+5. **`lib/core/schemas/estimate.ts` — 견적 정규화 입출력 스키마 (§5.4)**
+6. **React/Next import 금지 확인** — 테스트(`no-framework-imports.test.ts`)로 강제한다.
+
+### 산출물
+
+| 파일 | 내용 |
+|---|---|
+| `lib/core/legal.ts` | 고정 고지 문구·검증 (§7.7) |
+| `lib/core/schemas/report.ts` | `ReportSchema`·`FindingSchema` (§5.2) |
+| `lib/core/schemas/penalty.ts` | 위약금 입출력·룰 세트 스키마 (§5.3) |
+| `lib/core/schemas/estimate.ts` | 견적 정규화 스키마 (§5.4) |
+| `lib/core/schemas/index.ts` | 스키마 배럴 |
+| `lib/core/pricing/penalty.ts` | 위약금 엔진 (LLM 미사용 순수 함수) |
+| `lib/core/pricing/penalty-rules.ts` | 기준 룰 세트 (가정치, 주입 대체 가능) |
+| `lib/core/rules/types.ts` · `detect-rules.ts` · `scan.ts` · `index.ts` | 검출 룰 20종·스캐너 |
+| `lib/core/masking/patterns.ts` · `index.ts` | 마스킹 패턴·엔진 |
+
+### 결과 수치
+
+- **소스 13파일 / 테스트 7파일 · 테스트 197건 전부 통과**
+- 내보낸 함수·클래스·상수 **53개 중 51개(96%)가 테스트에서 직접 참조**된다.
+  나머지 2개(`PenaltyCategorySchema`·`PenaltyResultSchema`)는 상위 스키마·엔진을 통해 간접 실행된다.
+- 검출 룰 **20종 × (양성 1 + 음성 1) = 40건** + 목록 무결성 9건
+- 위약금 경계값 **10구간** + 계약금 분기 5건 + 비정상 입력 7건 + 정수 연산·출력 규약 7건
+- 마스킹 패턴별 치환 8건 + 실패 판정 8건 + 목록 무결성 6건
+- 스키마 검증 50건
 
 ### 완료 판정 기준
-- [ ] `npm run test` 가 통과하고, **위약금 경계값 테스트가 실제로 실행된다**(skip 아님):
-  - [ ] 취소 시점 **구간 경계** — 경계일 당일이 어느 구간에 속하는지 (예: D-30 정확히 당일)
-  - [ ] 구간 경계 ±1일
-  - [ ] **계약금 반환 여부** 분기 (반환 / 몰취 / 부분)
-  - [ ] 계약서 위약률이 기준보다 **낮은 경우** → 초과분 0 (음수가 나오지 않을 것)
-  - [ ] 총액 0 / 계약금 > 총액 등 비정상 입력 처리
-  - [ ] 예식일 경과 후 취소
-- [ ] `ReportSchema` 가 유효/무효 샘플 JSON을 각각 통과/거부한다.
-- [ ] `lib/core` 에서 `react`·`next` import 시 lint 에러가 발생한다.
+- [x] `npm run test` 가 통과하고, **위약금 경계값 테스트가 실제로 실행된다**(skip 아님):
+  - [x] 취소 시점 **구간 경계** — 경계일 당일이 어느 구간에 속하는지
+        (D-90 은 상위 구간, D-89 는 하위 구간. D-60/59, D-30/29 도 동일하게 검증)
+  - [x] 구간 경계 ±1일 (D-91/90/89, D-60/59, D-30/29, D-1/0/-1)
+  - [x] **계약금 반환 여부** 분기 (반환 / 계약금 = 위약금 / 부분 반환 / 부족분 추가 부담)
+  - [x] 계약서 위약률이 기준보다 **낮은 경우** → 초과분 0 (음수 없음)
+  - [x] 총액 0 / 총액 음수 / 비정수 / 계약금 > 총액 / 잘못된 날짜 형식
+  - [x] 예식일 경과 후 취소 (`AFTER_EVENT` 구간)
+- [x] `ReportSchema` 가 유효/무효 샘플 JSON을 각각 통과/거부한다
+      (필수 4필드 누락, 점수 범위·정수, 미정의 `rule_code`, 미정의 `severity`, 고지 누락)
+- [x] `lib/core` 에서 `react`·`next`·DB·AI SDK import 를 금지한다 —
+      `lib/core/no-framework-imports.test.ts` 가 소스 전체를 스캔해 위반 시 실패한다.
+      같은 테스트가 `console` 호출 금지(원문·마스킹 맵 유출 방지)도 함께 강제한다.
+- [ ] **ESLint `no-restricted-imports` 규칙 추가** — 이번 태스크의 수정 허용 범위가
+      `lib/core`·테스트·`docs/TASKS.md` 로 한정돼 `.eslintrc.json` 을 건드리지 않았다.
+      현재는 위 테스트가 같은 역할을 하고 있으며, 규칙 추가는 T-02b(CI)에서 함께 넣는다.
+- [ ] **커버리지 80% 수치 측정** — `@vitest/coverage-v8` 미설치이며 새 의존성 추가는
+      이번 태스크에서 보고 대상이라 실행하지 않았다. 위 심볼 참조율 96% 로 대체 보고한다.
 
 ---
 
@@ -440,7 +483,7 @@ enum 13종, RLS 활성화 + 정책, 역할별 GRANT
 
 | 항목 | 대기 사유 |
 |---|---|
-| `detect_rules` 시드 20종 | 근거 조항 확정 후. 테이블·인터페이스만 선행 |
+| `detect_rules` 시드 20종 | 근거 **조항 번호** 확정 후. 룰 20종 자체는 T-04에서 `lib/core/rules/detect-rules.ts` 로 구현 완료 |
 | §3.3~3.4 업체·거래 **기능** | 스키마는 T-03에서 생성 완료. 화면·API 착수는 M5 구간이며 공개는 `feature_flags` 로만 연다 |
 | Storage 버킷(§3.10) | T-03 범위 밖. 별도 태스크 |
 | `seed.sql`(`task_templates` 등) | T-03 범위 밖. 별도 태스크 |
@@ -449,11 +492,16 @@ enum 13종, RLS 활성화 + 정책, 역할별 GRANT
 
 ### 부가 메모
 
-- **검출 룰 20종 초안**은 명세서 부록 A에 R-01~R-20으로 이미 존재한다.
-  등급·문안은 **법무 검수 후 확정**이며, `basis_ref`(소비자분쟁해결기준·표준약관 조항)
-  매핑이 끝나야 시드를 작성한다. T-04에서는 `DetectRule` 인터페이스와 레지스트리 골격까지만.
+- **검출 룰 20종**은 T-04에서 `lib/core/rules/detect-rules.ts` 에 R-01~R-20 전부 구현했다.
+  다만 등급·문안은 **법무 검수 후 확정**이고, `basis_ref` 는 출처 수준
+  (공정거래위원회 표준약관 / 소비자분쟁해결기준 업종)까지만 적혀 있다.
+  **조항 번호 매핑이 끝나야 `seed.sql` 을 작성한다.** 테스트가 조항 번호 표기(`제N조`·`N항`)를
+  금지하고 있어, 확정 전에 임의 번호가 들어가면 테스트가 깨진다.
 - **`penalty_rules` 시드**도 같은 근거 조항 확정에 묶여 있다. T-04의 위약금 엔진은
-  룰 데이터를 **주입받는 순수 함수**로 설계해, 시드가 나중에 들어와도 코드 변경이 없게 한다.
+  룰 데이터를 **주입받는 순수 함수**로 구현했고, 기본값
+  (`lib/core/pricing/penalty-rules.ts` 의 `DRAFT_PENALTY_RULE_SETS`)은 `isDraft: true` 로
+  표시돼 결과 `notes` 에 "가정치" 경고가 자동으로 붙는다. 시드가 들어오면 그 값을 주입하면 되고
+  엔진 코드는 바뀌지 않는다.
 - **에스크로**는 `escrow_holds` 컬럼 정의만 유지하고 릴리즈·집행 로직은 O-03 결론 후.
   M5까지 법무 자문 착수가 하드 선행조건이다(§8.2).
 - **수수료 요율**은 `settlements.fee_rate` 를 `app_settings` 에서 읽는다.
