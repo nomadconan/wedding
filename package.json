@@ -11,6 +11,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
+    "env:sync": "node scripts/sync-env.mjs",
+    "env:check": "node scripts/sync-env.mjs --check",
     "assets:gen": "node scripts/generate-placeholders.mjs",
     "assets:check": "node scripts/check-assets.mjs",
     "db:start": "supabase start",
