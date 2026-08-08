@@ -104,14 +104,26 @@
 
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
-| S5-01 | **마이그레이션 6차 — 요율·결제 스케줄** | [ ] | T-03 | §3.8 `commission_rates`·`planner_fee_rates`, §3.4 `payment_schedules`·`planner_settlements`, `bookings` 스냅샷 컬럼 |
-| S5-02 | 요율 해석 엔진 (`lib/core/pricing`) | [ ] | S5-01 | §3.8 해석 규칙 — 업체→카테고리→전역, bp 정수 |
+| S5-01 | **마이그레이션 6차 — 요율·결제 스케줄** | [~] | T-03 | §3.8 `commission_rates`·`planner_fee_rates`, §3.4 `payment_schedules`·`planner_settlements`, `bookings` 스냅샷 컬럼 |
+| S5-02 | 요율 해석 엔진 (`lib/core/pricing`) | [x] | S5-01 | §3.8 해석 규칙 — 업체→카테고리→전역, bp 정수 |
 | S5-03 | 요율 관리 콘솔 | [ ] | S5-02 | F-A-15 |
 | S5-04 | 표준계약 템플릿·발행 | [ ] | S4-12 | F-C-15, §7.7 — **조항은 플레이스홀더** |
 | S5-05 | 3자 전자서명 | [ ] | S5-04 | F-C-15 |
 | S5-06 | 분할 결제 | [ ] | S5-04, S5-02 | F-C-14, D-21 |
 | S5-07 | 정산 (스냅샷 요율 기준) | [ ] | S5-06 | F-V-09, F-A-11 |
 | S5-08 | 환불·위약금 처리 | [ ] | S5-06, T-04 | F-A-17, §7.7 |
+
+> **S5-01 진행 상황 — 요율 구조만 끝났다(`[~]`)**
+> 마이그레이션 `20260808000600_commission_rates.sql` 로 **`commission_rates`·`planner_fee_rates`**
+> 두 테이블(열거 2, 겹침 EXCLUDE 2, RLS SELECT 2)과 `app_settings` 가변 파라미터 키 7개를
+> 만들었다. **남은 것은 결제 스케줄 쪽**이다 — `payment_schedules`·`planner_settlements`
+> 신규 2테이블, `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`,
+> `payments.payment_schedule_id`. 범위에서 뺀 것이 아니라 **아직 만들지 않은 것**이며
+> S5-06(분할 결제) 착수 전까지 별도 마이그레이션으로 추가한다.
+>
+> **S5-02 산출** `lib/core/pricing/rates.ts`(`resolveRate`·`calculateSettlement`·
+> `calculatePlannerFee`), `order.ts`(`calculateOrderTotal`), `amount.ts`(미정 sentinel),
+> `lib/core/schemas/rates.ts`·`order.ts`, 테스트 58건. 요율 값은 코드 어디에도 없다.
 
 ### 6단계 — 플래너
 
@@ -164,9 +176,9 @@
 
 ## 다음 착수 태스크
 
-1단계 기반은 **S1-01 · S1-02 · S1-03 전부 완료**됐다.
+1단계 기반(S1-01 · S1-02 · S1-03)과 **요율 구조**(S5-01 요율 테이블 · S5-02 해석 엔진)가 끝났다. **S2-03 상품·판매가 등록의 선행 조건이 풀렸다** — 판매가 등록 화면의 예상 정산액을 `calculateSettlement` 로 계산할 수 있다.
 
-다음은 **S5-01 → S5-02**(요율 구조)다. **S2-03 상품·판매가 등록이 요율 조회에 의존**하기 때문이다 — 판매가 등록 화면에 예상 정산액을 보여주려면 요율 해석 엔진이 먼저 있어야 한다. 2단계를 시작하기 전에 5단계 앞부분을 당겨오는 것이 유일한 역순 의존이다.
+다음은 **S2-01 → S2-02 → S2-03**(공급)이다. S5-01의 잔여분(결제 스케줄 테이블)은 S5-06 착수 전까지 채우면 되며 2단계를 막지 않는다.
 
 ---
 
@@ -207,7 +219,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | S4-01 | `chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers` | — |
 | S4-02 | `vendor_availability`, `consultations`, `consultation_deposits` | — |
 | S4-03 | `entity_events` | `notifications` 컬럼 확장, `audit_logs.resolution_basis` |
-| S5-01 | `commission_rates`, `planner_fee_rates`, `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
+| S5-01 | ~~`commission_rates`~~, ~~`planner_fee_rates`~~ (완료), `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
 | S6-01 | `planner_scopes` | — |
 
 **신규 테이블 16개.** 각 마이그레이션에는 RLS 정책을 같은 파일에 포함한다(§3.9, CLAUDE.md §5.5). `entity_events`는 **insert-only** — UPDATE·DELETE 정책을 부여하지 않는다.
