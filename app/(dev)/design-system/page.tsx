@@ -17,6 +17,7 @@ import { useState } from "react";
 import { AdminShell } from "@/components/layout/AdminShell";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { AiDisclaimer } from "@/components/domain/AiDisclaimer";
+import { BrokerNotice } from "@/components/domain/BrokerNotice";
 import { PriceDisplay } from "@/components/domain/PriceDisplay";
 import { SortCriteriaBadge } from "@/components/domain/SortCriteriaBadge";
 import { Badge } from "@/components/ui/badge";
@@ -199,32 +200,81 @@ export default function DesignSystemPage() {
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">PriceDisplay</CardTitle>
+              <CardTitle className="text-base">PriceDisplay — 단품(item)</CardTitle>
               <CardDescription>
-                총액 기준·부가세 명시·추가금 동일 화면 노출을 타입으로 강제한다.
+                총액 → 내역(판매가·추가금·플래너 수수료) → 부가세 순서. 넷 다 필수 prop이라
+                생략하면 컴파일이 안 된다.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <PriceDisplay
                 label="총 견적가"
                 amount={12500000}
+                basePrice={12500000}
                 taxIncluded
                 addOns={{ kind: "none" }}
+                plannerFee={{ kind: "not_selected" }}
                 size="lg"
               />
               <Separator />
               <PriceDisplay
-                label="홀 대관 + 식대"
-                amount={8400000}
+                label="홀 대관 + 식대 (플래너 선택)"
+                amount={9540000}
+                basePrice={8400000}
                 taxIncluded={false}
                 addOns={{ kind: "listed", count: 3, total: 720000 }}
+                plannerFee={{ kind: "selected", amount: 420000 }}
               />
               <Separator />
               <PriceDisplay
-                label="스튜디오 패키지"
+                label="스튜디오 패키지 (추가금 미등록)"
                 amount={1800000}
+                basePrice={1800000}
                 taxIncluded
                 addOns={{ kind: "unknown" }}
+                plannerFee={{ kind: "unavailable" }}
+                size="sm"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">PriceDisplay — 합계(sum)·0원·미정</CardTitle>
+              <CardDescription>
+                플래너는 카테고리별 부분 선택이라(D-17) 합계 변형이 따로 있다. &quot;0원&quot;과
+                &quot;미정&quot;은 다른 정보다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <PriceDisplay
+                variant="sum"
+                itemCount={4}
+                amount={21740000}
+                basePrice={20200000}
+                taxIncluded
+                addOns={{ kind: "listed", count: 5, total: 640000 }}
+                plannerFee={{ kind: "selected", amount: 900000, categoryCount: 2 }}
+                size="lg"
+              />
+              <Separator />
+              <PriceDisplay
+                label="확정된 0원 — 추가금 없음"
+                amount={0}
+                basePrice={0}
+                taxIncluded
+                addOns={{ kind: "none" }}
+                plannerFee={{ kind: "selected", amount: 0 }}
+                size="sm"
+              />
+              <Separator />
+              <PriceDisplay
+                label="미정 — 아직 견적이 없다"
+                amount="unknown"
+                basePrice="unknown"
+                taxIncluded={false}
+                addOns={{ kind: "unknown" }}
+                plannerFee={{ kind: "selected", amount: "unknown" }}
                 size="sm"
               />
             </CardContent>
@@ -260,6 +310,51 @@ export default function DesignSystemPage() {
                 variant="inline"
                 basisRef={["공정거래위원회 표준약관", "소비자분쟁해결기준(사진촬영업)"]}
               />
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-3">
+            <CardHeader>
+              <CardTitle className="text-base">BrokerNotice</CardTitle>
+              <CardDescription>
+                플랫폼은 통신판매중개자이며 계약 당사자가 아님을 거래 관련 화면(계약·결제·상담
+                예약·분쟁)에 고지한다(D-24). 문구는 <code>lib/core/legal.ts</code> 단일 진실이며
+                접기·닫기 옵션이 없다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-caption font-medium text-muted-foreground">
+                  inline — 결제·계약 화면 하단 고정 (링크 대상 미정)
+                </p>
+                <BrokerNotice />
+                <p className="text-caption font-medium text-muted-foreground">
+                  inline — 이용약관 링크가 정해진 경우
+                </p>
+                <BrokerNotice termsHref="/terms" />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-caption font-medium text-muted-foreground">
+                  compact — 카드 안 한 줄
+                </p>
+                <Card>
+                  <CardContent className="space-y-3 pt-5">
+                    <p className="text-sm font-medium">더미 웨딩홀 A · 계약 요약</p>
+                    <PriceDisplay
+                      label="1회차 결제 예정액"
+                      amount={4900000}
+                      basePrice={4500000}
+                      taxIncluded
+                      addOns={{ kind: "included" }}
+                      plannerFee={{ kind: "selected", amount: 400000 }}
+                      size="sm"
+                    />
+                    <Separator />
+                    <BrokerNotice variant="compact" termsHref="/terms" />
+                  </CardContent>
+                </Card>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -506,15 +601,23 @@ export default function DesignSystemPage() {
                     <p className="mb-2 text-sm font-medium">더미 웨딩홀 A</p>
                     <PriceDisplay
                       amount={9800000}
+                      basePrice={9800000}
                       taxIncluded
                       addOns={{ kind: "listed", count: 2 }}
+                      plannerFee={{ kind: "not_selected" }}
                     />
                   </CardContent>
                 </Card>
                 <Card>
                   <CardContent className="pt-5">
                     <p className="mb-2 text-sm font-medium">더미 웨딩홀 B</p>
-                    <PriceDisplay amount={11200000} taxIncluded addOns={{ kind: "none" }} />
+                    <PriceDisplay
+                      amount={12040000}
+                      basePrice={11200000}
+                      taxIncluded
+                      addOns={{ kind: "none" }}
+                      plannerFee={{ kind: "selected", amount: 840000 }}
+                    />
                   </CardContent>
                 </Card>
               </div>
