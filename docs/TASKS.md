@@ -7,6 +7,19 @@
 
 ---
 
+## 운영 규칙 (T-00c)
+
+명세 ↔ 태스크 대응을 사람 기억에 맡기지 않는다. 문서 말미의 **[커버리지 검증표](#커버리지-검증표-t-00c)** 가 단일 진실이다.
+
+1. **새 태스크를 시작하기 전에 커버리지 검증표에서 번호와 범위를 확인한다.**
+   브리프에 적힌 태스크 번호와 표가 다르면 **표를 기준**으로 하고, 차이를 사용자에게 보고한다.
+2. **모든 태스크는 완료 시 커버리지 표의 해당 행을 갱신한다.** 상태(`미착수`/`진행중`/`완료`)와
+   담당 태스크를 함께 고친다. 부분 완료는 `[~]` 로 적고 **잔여분을 같은 칸에 명시**한다.
+3. **미배정 행이 하나라도 남아 있으면 그 단계를 완료로 판정하지 않는다.**
+   기존 태스크에 넣을 수 없으면 태스크를 신설한다 — 항목을 지우거나 합치지 않는다(CLAUDE.md §2.1).
+
+---
+
 ## 태스크 번호 체계 (v2.0 재편)
 
 명세서 §1.3의 **개발 순서 8단계**를 그대로 따른다. `S{단계}-{연번}` 형식이다.
@@ -87,6 +100,8 @@
 | S3-07 | 장바구니 기반 비교표 | [ ] | S3-05 | F-C-10 |
 | S3-08 | 참가격 인덱스 화면 | [ ] | S3-01 | F-C-09 |
 | S3-09 | 마이페이지·개인정보 | [ ] | S3-01 | F-C-23 |
+| S3-10 | **랜딩·마케팅 진입** | [ ] | S1-01 | §6.1 `/` — 총액 공개 강조·조건 검색 진입. **T-00c 신설** |
+| S3-11 | **소비자 홈 대시보드** | [ ] | S3-05, S3-01 | §6.2 `/home` — D-day·다음 할 일·예산 게이지·장바구니 요약. **T-00c 신설** |
 
 ### 4단계 — 연결
 
@@ -104,7 +119,8 @@
 | S4-10 | 노쇼 분쟁 조율 큐 | [ ] | S4-09 | F-A-16 |
 | S4-11 | 3자 일정 공유·캘린더 동기화 | [ ] | S4-07 | F-C-29 |
 | S4-12 | 표준 문의·견적 | [ ] | S2-03, S3-01 | F-C-13, F-V-07 |
-| S4-13 | 알림센터·발송 증적 | [ ] | S4-03 | F-C-21, D-23 |
+| S4-13 | 알림센터·발송 증적 | [ ] | S4-03 | F-C-21, D-23. `dday-notifications`·`sla-escalation` 배치 포함 |
+| S4-14 | **업체 알림·연동 설정** | [ ] | S2-01, S4-13 | F-V-14 — 수신 채널·담당자 배정·영업시간. **T-00c 신설** |
 
 > **S4-02 진행 상황 — `vendor_availability` 만 끝났다(`[~]`)**
 > 마이그레이션 `20260808000700_vendor_availability.sql`. 요일 단위 반복 규칙이며 날짜 예외는
@@ -130,6 +146,8 @@
 | S5-06 | 분할 결제 | [ ] | S5-04, S5-02 | F-C-14, D-21 |
 | S5-07 | 정산 (스냅샷 요율 기준) | [ ] | S5-06 | F-V-09, F-A-11 |
 | S5-08 | 환불·위약금 처리 | [ ] | S5-06, T-04 | F-A-17, §7.7 |
+| S5-09 | **에스크로 예치·릴리즈** | [ ] | S5-06 | F-C-16 — `escrow_holds`·`POST /api/escrow/release`. **집행 로직은 O-03 대기**, 절차·기록만. **T-00c 신설** |
+| S5-10 | **업체 예약·계약 관리** | [ ] | S5-04, S4-07 | F-V-08 — `/vendor/bookings`·`PATCH /api/vendor/bookings/[id]`. **T-00c 신설** |
 
 > **S5-01 진행 상황 — 요율 구조만 끝났다(`[~]`)**
 > 마이그레이션 `20260808000600_commission_rates.sql` 로 **`commission_rates`·`planner_fee_rates`**
@@ -277,3 +295,357 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 - **위약금 엔진**은 룰 데이터를 주입받는 순수 함수다. 기본값(`DRAFT_PENALTY_RULE_SETS`)은 `isDraft: true`라 결과 `notes`에 "가정치" 경고가 자동으로 붙는다.
 - **요율 스냅샷 원칙**(§3.4)은 회귀 테스트로 고정한다 — 요율 변경 후 기존 계약의 정산액이 불변임을 S5-02에서 테스트에 포함한다.
 - **노쇼 무응답 기본값은 환불**이다(§3.11). 몰취가 기본이면 업체의 방치가 이득이 되는 구조가 되기 때문이며, 이 설계 의도를 바꾸지 않는다.
+
+---
+
+## 커버리지 검증표 (T-00c)
+
+`docs/07_개발명세서.md` v2.0의 **§2 기능 · §3 테이블 · §4 API · §6 화면**을 전수 추출해 태스크에 대응시킨 표다.
+운영 규칙은 문서 상단 [운영 규칙](#운영-규칙-t-00c)에 있다.
+
+| 축 | 총계 | 배정 | 미배정 | 완료 |
+|---|---|---|---|---|
+| §2 기능 | 65 | 65 | 0 | 0 |
+| §3 테이블 | 82 | 82 | 0 | 69 |
+| §4 API·배치 | 75 | 75 | 0 | 0 |
+| §6 화면 | 67 | 67 | 0 | 0 |
+
+> **추출 시점 미배정 8건은 전부 태스크를 신설해 해소했다** — S3-10, S3-11, S4-14, S5-09, S5-10.
+> 상세는 [신설 태스크](#신설-태스크-t-00c)에 있다.
+
+### A. §2 기능 (65)
+
+| ID | 기능 | 단계 | 담당 태스크 | 상태 |
+|---|---|---|---|---|
+| F-C-01 | 회원가입·온보딩 | 3 | S3-01 | 미착수 |
+| F-C-02 | 커플 연동 | 3 | S3-02 | 미착수 |
+| F-C-03 | AI 플래너 대화 | 7 | S7-06 | 미착수 |
+| F-C-04 | 일정·체크리스트 | 7 | S7-08 | 미착수 |
+| F-C-05 | 예산 배분·추적 | 7 | S7-07 | 미착수 |
+| F-C-06 | 견적 비교·정규화 | 7 | S7-05 | 미착수 |
+| F-C-07 | 계약서 검토 리포트 | 7 | S7-03 | 미착수 |
+| F-C-08 | 위약금 시뮬레이터 | 7 | S7-04 | 미착수 |
+| F-C-09 | 참가격 인덱스 탐색 | 3 | S3-08 | 미착수 |
+| F-C-10 | 업체 탐색·필터·비교 | 3 | S3-03, S3-07 | 미착수 |
+| F-C-11 | 실시간 예약 가능일 | 3 | S3-03 | 미착수 |
+| F-C-12 | 다이내믹 가격 노출 | 3 | S3-03 | 미착수 |
+| F-C-13 | 직거래 문의·견적 요청 | 4 | S4-12 | 미착수 |
+| F-C-14 | 분할 결제 | 5 | S5-06 | 미착수 |
+| F-C-15 | 전자계약·3자 서명 | 5 | S5-04, S5-05 | 미착수 |
+| F-C-16 | 에스크로 안전거래 | 5 | **S5-09**(신설) | 미착수 |
+| F-C-17 | 검증 후기 | 8 | S8-11 | 미착수 |
+| F-C-18 | 플래너 매칭 마켓 | 6 | S6-02, S6-04 | 미착수 |
+| F-C-19 | 멤버십 구독 | 7 | S7-11 | 미착수 |
+| F-C-20 | 공유 리포트·초대 | 7 | S7-12 | 미착수 |
+| F-C-21 | 알림센터 | 4 | S4-13 | 미착수 |
+| F-C-22 | 하객·좌석 유틸리티 | 7 | S7-09 | 미착수 |
+| F-C-23 | 마이페이지·개인정보 | 3 | S3-09 | 미착수 |
+| F-C-24 | SEO 콘텐츠 허브 | 7 | S7-10, **S3-10**(랜딩) | 미착수 |
+| F-C-25 | 장바구니 | 3 | S3-05 | 미착수 |
+| F-C-26 | 찜 | 3 | S3-06 | 미착수 |
+| F-C-27 | 실시간 채팅 | 4 | S4-04 | 미착수 |
+| F-C-28 | 문의게시판 | 4 | S4-05 | 미착수 |
+| F-C-29 | 상담·탐방 예약 | 4 | S4-07, S4-08, S4-09, S4-11 | 미착수 |
+| F-C-30 | 조건 검색 | 7 | S7-02 | 미착수 |
+| F-C-31 | 플래너 범위 선택 | 6 | S6-03 | 미착수 |
+| F-V-01 | 입점 신청·검증 | 2 | S2-01 | 미착수 |
+| F-V-02 | 업체 프로필 관리 | 2 | S2-02 | 미착수 |
+| F-V-03 | 상품·패키지 등록 | 2 | S2-03 | 미착수 |
+| F-V-04 | 추가금 사전 등록 | 2 | S2-04 | 미착수 |
+| F-V-05 | 실재고 캘린더 | 2 | S2-05 | 미착수 |
+| F-V-06 | 다이내믹 프라이싱 룰 | 2 | S2-06 | 미착수 |
+| F-V-07 | 문의·견적 응답 | 4 | S4-12 | 미착수 |
+| F-V-08 | 예약·계약 관리 | 5 | **S5-10**(신설) | 미착수 |
+| F-V-09 | 정산 관리 | 5 | S5-07 | 미착수 |
+| F-V-10 | 컴플라이언스 진단 | 7 | S7-13 | 미착수 |
+| F-V-11 | 후기·평판 관리 | 8 | S8-11 | 미착수 |
+| F-V-12 | 성과 통계 | 2 | S2-08 | 미착수 |
+| F-V-13 | 멤버·권한 관리 | 2 | S2-07 | 미착수 |
+| F-V-14 | 알림·연동 설정 | 4 | **S4-14**(신설) | 미착수 |
+| F-V-15 | 채팅 응대 | 4 | S4-04 | 미착수 |
+| F-V-16 | 문의게시판 관리 | 4 | S4-05 | 미착수 |
+| F-V-17 | 상담 일정 관리 | 4 | S4-06, S4-07, S4-09 | 미착수 |
+| F-A-01 | 입점 심사 | 2 | S2-01 | 미착수 |
+| F-A-02 | 참가격 데이터 큐레이션 | 8 | S8-10 | 미착수 |
+| F-A-03 | 검출 룰·프롬프트 관리 | 8 | S8-06 | 미착수 |
+| F-A-04 | AI 품질 관리 | 8 | S8-07 | 미착수 |
+| F-A-05 | 콘텐츠 CMS | 8 | S8-08 | 미착수 |
+| F-A-06 | CS·신고 처리 | 8 | S8-09 | 미착수 |
+| F-A-07 | 지표 대시보드 | 8 | S8-01 | 미착수 |
+| F-A-08 | 개인정보 감사 | 8 | S8-04 | 미착수 |
+| F-A-09 | 감사 로그 | 8 | S8-02 | 미착수 |
+| F-A-10 | 피처 플래그 | 8 | S8-12 | 미착수 |
+| F-A-11 | 정산 집행 | 5 | S5-07 | 미착수 |
+| F-A-12 | 분쟁 조율 | 8 | S8-03 | 미착수 |
+| F-A-13 | 후기 관리 | 8 | S8-11 | 미착수 |
+| F-A-14 | 가격 이상 탐지 | 8 | S8-10 | 미착수 |
+| F-A-15 | 요율 관리 | 5 | S5-03 | 미착수 |
+| F-A-16 | 노쇼 분쟁 조율 | 4 | S4-10 | 미착수 |
+| F-A-17 | 위약금 처리 | 5 | S5-08 | 미착수 |
+
+### B. §3 테이블 (82)
+
+`상태=완료` 는 마이그레이션이 적용돼 `types/database.ts` 에 반영된 것을 뜻한다. 화면·API 완성 여부와 무관하다.
+
+| 테이블 | 절 | 담당 태스크 | 상태 |
+|---|---|---|---|
+| profiles | 3.1 | T-03 | 완료 |
+| couples | 3.1 | T-03 | 완료 |
+| couple_members | 3.1 | T-03 | 완료 |
+| couple_invites | 3.1 | T-03 | 완료 |
+| onboarding_answers | 3.1 | T-03 | 완료 |
+| memberships | 3.1 | T-03 | 완료 |
+| subscription_payments | 3.1 | T-03 | 완료 |
+| consents | 3.1 | T-03 | 완료 |
+| data_deletion_requests | 3.1 | T-03 | 완료 |
+| task_templates | 3.2 | T-03 | 완료 |
+| tasks | 3.2 | T-03 | 완료 |
+| budgets | 3.2 | T-03 | 완료 |
+| budget_items | 3.2 | T-03 | 완료 |
+| expenses | 3.2 | T-03 | 완료 |
+| vendors | 3.3 | T-03 | 완료 |
+| vendor_documents | 3.3 | T-03 | 완료 |
+| vendor_members | 3.3 | T-03 | 완료 |
+| vendor_media | 3.3 | T-03 | 완료 |
+| products | 3.3 | T-03 | 완료 |
+| product_options | 3.3 | T-03 | 완료 |
+| price_rules | 3.3 | T-03 | 완료 |
+| price_index | 3.3 | T-03 | 완료 |
+| price_sources | 3.3 | T-03 | 완료 |
+| **vendor_availability** | 3.3 | S4-02 | 완료 |
+| inventory_slots | 3.4 | T-03 | 완료 |
+| **carts** | 3.4 | S3-04 | 미착수 |
+| **cart_items** | 3.4 | S3-04 | 미착수 |
+| **wishlists** | 3.4 | S3-04 | 미착수 |
+| inquiries | 3.4 | T-03 | 완료 |
+| inquiry_targets | 3.4 | T-03 | 완료 |
+| quotes | 3.4 | T-03 | 완료 |
+| quote_items | 3.4 | T-03 | 완료 |
+| **consultations** | 3.4 | S4-02 (잔여) | 미착수 |
+| **consultation_deposits** | 3.4 | S4-02 (잔여) | 미착수 |
+| bookings | 3.4 | T-03 / 스냅샷 컬럼 2개는 S5-01 (잔여) | 진행중 |
+| contracts | 3.4 | T-03 | 완료 |
+| contract_signatures | 3.4 | T-03 | 완료 |
+| **payment_schedules** | 3.4 | S5-01 (잔여) | 미착수 |
+| payments | 3.4 | T-03 / `payment_schedule_id` 는 S5-01 (잔여) | 진행중 |
+| escrow_holds | 3.4 | T-03 | 완료 |
+| refunds | 3.4 | T-03 | 완료 |
+| settlements | 3.4 | T-03 / `fee_rate_bp` 는 S5-01 (잔여) | 진행중 |
+| settlement_items | 3.4 | T-03 | 완료 |
+| **planner_settlements** | 3.4 | S5-01 (잔여) | 미착수 |
+| disputes | 3.4 | T-03 | 완료 |
+| documents | 3.5 | T-03 | 완료 |
+| document_analyses | 3.5 | T-03 | 완료 |
+| findings | 3.5 | T-03 | 완료 |
+| detect_rules | 3.5 | T-03 / 시드는 S7-01 | 진행중 |
+| penalty_rules | 3.5 | T-03 / 시드는 S7-01 | 진행중 |
+| penalty_simulations | 3.5 | T-03 | 완료 |
+| estimate_uploads | 3.5 | T-03 | 완료 |
+| estimate_items | 3.5 | T-03 | 완료 |
+| estimate_comparisons | 3.5 | T-03 | 완료 |
+| ai_conversations | 3.6 | T-03 | 완료 |
+| ai_messages | 3.6 | T-03 | 완료 |
+| ai_tool_calls | 3.6 | T-03 | 완료 |
+| ai_call_logs | 3.6 | T-03 | 완료 |
+| prompt_versions | 3.6 | T-03 | 완료 |
+| reviews | 3.7 | T-03 | 완료 |
+| review_reports | 3.7 | T-03 | 완료 |
+| planners | 3.7 | T-03 | 완료 |
+| planner_engagements | 3.7 | T-03 | 완료 |
+| **planner_scopes** | 3.7 | S6-01 | 미착수 |
+| **chat_rooms** | 3.7 | S4-01 | 미착수 |
+| **chat_messages** | 3.7 | S4-01 | 미착수 |
+| **qna_posts** | 3.7 | S4-01 | 미착수 |
+| **qna_answers** | 3.7 | S4-01 | 미착수 |
+| content_posts | 3.7 | T-03 | 완료 |
+| notifications | 3.7 | T-03 / 발송·수신·열람 컬럼 확장은 S4-03 (잔여) | 진행중 |
+| notification_prefs | 3.7 | T-03 | 완료 |
+| share_links | 3.7 | T-03 | 완료 |
+| guests | 3.7 | T-03 | 완료 |
+| seating_plans | 3.7 | T-03 | 완료 |
+| audit_logs | 3.8 | T-03 / `resolution_basis` 는 S4-03 (잔여) | 진행중 |
+| **entity_events** | 3.8 | S4-03 | 미착수 |
+| feature_flags | 3.8 | T-03 | 완료 |
+| app_settings | 3.8 | T-03 / 파라미터 키 시드는 S5-01 | 완료 |
+| **commission_rates** | 3.8 | S5-01 | 완료 |
+| **planner_fee_rates** | 3.8 | S5-01 | 완료 |
+| tickets | 3.8 | T-03 | 완료 |
+| job_runs | 3.8 | T-03 | 완료 |
+
+### C. §4 API · 배치 (75)
+
+| 메서드 · 경로 | 면 | 담당 태스크 | 상태 |
+|---|---|---|---|
+| POST /api/onboarding | 소비자 | S3-01 | 미착수 |
+| POST /api/couples/invite | 소비자 | S3-02 | 미착수 |
+| POST /api/ai/planner (SSE) | 소비자 | S7-06 | 미착수 |
+| GET/POST/PATCH /api/tasks | 소비자 | S7-08 | 미착수 |
+| GET/PUT /api/budget | 소비자 | S7-07 | 미착수 |
+| POST /api/documents | 소비자 | S7-03 | 미착수 |
+| POST /api/reports · GET /api/reports/[id] | 소비자 | S7-03 | 미착수 |
+| POST /api/estimates/normalize · GET /api/estimates/compare | 소비자 | S7-05 | 미착수 |
+| POST /api/penalty/simulate | 소비자 | S7-04 | 미착수 |
+| GET /api/prices | 소비자 | S3-08 | 미착수 |
+| GET /api/vendors | 소비자 | S3-03 | 미착수 |
+| GET /api/vendors/[id]/availability | 소비자 | S3-03 | 미착수 |
+| GET/POST/DELETE /api/cart | 소비자 | S3-05 | 미착수 |
+| GET/POST/DELETE /api/wishlist | 소비자 | S3-06 | 미착수 |
+| GET/POST /api/search | 소비자 | S7-02 | 미착수 |
+| GET/POST /api/chat/rooms | 소비자 | S4-04 | 미착수 |
+| GET/POST /api/chat/messages | 소비자 | S4-04 | 미착수 |
+| GET/POST /api/qna | 소비자 | S4-05 | 미착수 |
+| POST /api/inquiries | 소비자 | S4-12 | 미착수 |
+| GET/POST /api/consultations | 소비자 | S4-07 | 미착수 |
+| POST /api/consultations/[id]/confirm | 소비자 | S4-09 | 미착수 |
+| GET/POST /api/payments/schedules | 소비자 | S5-06 | 미착수 |
+| POST /api/payments/checkout | 소비자 | S5-06 | 미착수 |
+| POST /api/contracts/[id]/sign | 소비자 | S5-05 | 미착수 |
+| POST /api/escrow/release | 소비자 | **S5-09**(신설) | 미착수 |
+| POST /api/reviews | 소비자 | S8-11 | 미착수 |
+| GET/PUT /api/planner-scopes | 소비자 | S6-03 | 미착수 |
+| POST /api/share-links · GET /api/share/[token] | 소비자 | S7-12 | 미착수 |
+| GET/PUT /api/notifications | 소비자 | S4-13 | 미착수 |
+| POST /api/me/delete-request | 소비자 | S3-09 | 미착수 |
+| POST /api/vendor/apply | 업체 | S2-01 | 미착수 |
+| GET/PUT /api/vendor/profile | 업체 | S2-02 | 미착수 |
+| CRUD /api/vendor/products | 업체 | S2-03 | 미착수 |
+| CRUD /api/vendor/products/[id]/options | 업체 | S2-04 | 미착수 |
+| POST /api/vendor/inventory/bulk | 업체 | S2-05 | 미착수 |
+| CRUD /api/vendor/price-rules · POST .../simulate | 업체 | S2-06 | 미착수 |
+| CRUD /api/vendor/availability | 업체 | S4-06 | 미착수 |
+| GET/POST /api/vendor/chat | 업체 | S4-04 | 미착수 |
+| GET/POST /api/vendor/qna | 업체 | S4-05 | 미착수 |
+| GET/PATCH /api/vendor/consultations | 업체 | S4-07, S4-09 | 미착수 |
+| POST /api/vendor/quotes | 업체 | S4-12 | 미착수 |
+| PATCH /api/vendor/bookings/[id] | 업체 | **S5-10**(신설) | 미착수 |
+| GET /api/vendor/settlements | 업체 | S5-07 | 미착수 |
+| POST /api/vendor/compliance/scan | 업체 | S7-13 | 미착수 |
+| GET /api/vendor/stats | 업체 | S2-08 | 미착수 |
+| POST /api/vendor/members | 업체 | S2-07 | 미착수 |
+| PATCH /api/admin/vendors/[id]/review | 운영자 | S2-01 | 미착수 |
+| POST /api/admin/prices/recalculate | 운영자 | S8-10 | 미착수 |
+| CRUD /api/admin/rules | 운영자 | S8-06 | 미착수 |
+| POST /api/admin/prompts/deploy | 운영자 | S8-06 | 미착수 |
+| GET /api/admin/ai-quality | 운영자 | S8-07 | 미착수 |
+| CRUD /api/admin/content | 운영자 | S8-08 | 미착수 |
+| CRUD /api/admin/tickets | 운영자 | S8-09 | 미착수 |
+| GET /api/admin/metrics | 운영자 | S8-01 | 미착수 |
+| GET /api/admin/privacy-audit | 운영자 | S8-04 | 미착수 |
+| GET /api/admin/audit-logs | 운영자 | S8-02 | 미착수 |
+| CRUD /api/admin/commission-rates · GET .../resolve | 운영자 | S5-03 | 미착수 |
+| GET/PATCH /api/admin/consultation-disputes | 운영자 | S4-10 | 미착수 |
+| GET /api/admin/entity-events | 운영자 | S8-02 | 미착수 |
+| PUT /api/admin/flags/[key] | 운영자 | S8-12 | 미착수 |
+| POST /api/admin/settlements/run | 운영자 | S5-07 | 미착수 |
+| PATCH /api/admin/disputes/[id] | 운영자 | S8-03 | 미착수 |
+| POST /api/admin/penalties | 운영자 | S5-08 | 미착수 |
+| GET /api/admin/price-anomalies | 운영자 | S8-10 | 미착수 |
+| POST /api/webhooks/toss (웹훅) | 배치 | S5-06 | 미착수 |
+| purge-documents (Edge, 매시간) | 배치 | S8-04 | 미착수 |
+| dday-notifications (Cron, 매일) | 배치 | S4-13 | 미착수 |
+| price-index-refresh (Cron, 주 1회) | 배치 | S8-10 | 미착수 |
+| settlement-aggregate (Cron, 월 2회) | 배치 | S5-07 | 미착수 |
+| price-anomaly-scan (Cron, 매일) | 배치 | S8-10 | 미착수 |
+| sla-escalation (Cron, 1시간) | 배치 | S4-13 | 미착수 |
+| consultation-confirm-request (Cron, 1시간) | 배치 | S4-09 | 미착수 |
+| consultation-resolve (Cron, 1시간) | 배치 | S4-09 | 미착수 |
+| planner-payout-due (Cron, 매일) | 배치 | S6-05 | 미착수 |
+| wishlist-price-watch (Cron, 매일) | 배치 | S3-06 | 미착수 |
+
+> **배치 실행 인프라**(Cron 등록·`job_runs` 기록·실패 경보)는 **S8-13**(모니터링·장애 대응)이 소유한다.
+> 위 표의 담당 태스크는 각 배치의 **로직**을 만드는 곳이다.
+
+### D. §6 화면 (67)
+
+| 경로 | 면 | 담당 태스크 | 상태 |
+|---|---|---|---|
+| / | 마케팅 | **S3-10**(신설) | 미착수 |
+| /guides/[slug] | 마케팅 | S7-10 | 미착수 |
+| /prices/[region]/[category] | 마케팅 | S3-08 | 미착수 |
+| /login | 인증 | S3-01 | 미착수 |
+| /onboarding | 인증 | S3-01 | 미착수 |
+| /home | 소비자 | **S3-11**(신설) | 미착수 |
+| /planner | 소비자 | S7-06 | 미착수 |
+| /checklist | 소비자 | S7-08 | 미착수 |
+| /budget | 소비자 | S7-07 | 미착수 |
+| /reports | 소비자 | S7-03 | 미착수 |
+| /reports/upload | 소비자 | S7-03 | 미착수 |
+| /reports/[id] | 소비자 | S7-03 | 미착수 |
+| /estimates | 소비자 | S7-05 | 미착수 |
+| /tools/penalty | 소비자 | S7-04 | 미착수 |
+| /explore | 소비자 | S3-03 | 미착수 |
+| /explore/[vendorId] | 소비자 | S3-03 | 미착수 |
+| /search | 소비자 | S7-02 | 미착수 |
+| /cart | 소비자 | S3-05, S6-03(플래너 토글) | 미착수 |
+| /explore/compare | 소비자 | S3-07 | 미착수 |
+| /wishlist | 소비자 | S3-06 | 미착수 |
+| /chat | 소비자 | S4-04 | 미착수 |
+| /chat/[roomId] | 소비자 | S4-04 | 미착수 |
+| /qna/[vendorId] | 소비자 | S4-05 | 미착수 |
+| /consultations | 소비자 | S4-07, S4-08, S4-09 | 미착수 |
+| /inquiries | 소비자 | S4-12 | 미착수 |
+| /bookings/[id] | 소비자 | S5-06 | 미착수 |
+| /checkout/[bookingId] | 소비자 | S5-06 | 미착수 |
+| /contracts/[id] | 소비자 | S5-05 | 미착수 |
+| /reviews/new/[bookingId] | 소비자 | S8-11 | 미착수 |
+| /planners | 소비자 | S6-02, S6-04 | 미착수 |
+| /membership | 소비자 | S7-11 | 미착수 |
+| /guests | 소비자 | S7-09 | 미착수 |
+| /notifications | 소비자 | S4-13 | 미착수 |
+| /me | 소비자 | S3-09 | 미착수 |
+| /share/[token] | 소비자 | S7-12 | 미착수 |
+| /vendor/apply | 업체 | S2-01 | 미착수 |
+| /vendor | 업체 | S2-08 | 미착수 |
+| /vendor/profile | 업체 | S2-02 | 미착수 |
+| /vendor/products | 업체 | S2-03, S2-04 | 미착수 |
+| /vendor/inventory | 업체 | S2-05 | 미착수 |
+| /vendor/pricing | 업체 | S2-06 | 미착수 |
+| /vendor/inquiries | 업체 | S4-12 | 미착수 |
+| /vendor/chat | 업체 | S4-04 | 미착수 |
+| /vendor/qna | 업체 | S4-05 | 미착수 |
+| /vendor/availability | 업체 | S4-06 | 미착수 |
+| /vendor/consultations | 업체 | S4-07, S4-09 | 미착수 |
+| /vendor/bookings | 업체 | **S5-10**(신설) | 미착수 |
+| /vendor/settlements | 업체 | S5-07 | 미착수 |
+| /vendor/compliance | 업체 | S7-13 | 미착수 |
+| /vendor/reviews | 업체 | S8-11 | 미착수 |
+| /vendor/stats | 업체 | S2-08 | 미착수 |
+| /vendor/members | 업체 | S2-07 | 미착수 |
+| /admin | 운영자 | S8-01 | 미착수 |
+| /admin/vendors | 운영자 | S2-01 | 미착수 |
+| /admin/prices | 운영자 | S8-10 | 미착수 |
+| /admin/rules | 운영자 | S8-06 | 미착수 |
+| /admin/ai-quality | 운영자 | S8-07 | 미착수 |
+| /admin/cms | 운영자 | S8-08 | 미착수 |
+| /admin/tickets | 운영자 | S8-09 | 미착수 |
+| /admin/privacy | 운영자 | S8-04 | 미착수 |
+| /admin/flags | 운영자 | S8-12 | 미착수 |
+| /admin/audit | 운영자 | S8-02 | 미착수 |
+| /admin/commission-rates | 운영자 | S5-03 | 미착수 |
+| /admin/consultation-disputes | 운영자 | S4-10 | 미착수 |
+| /admin/settlements | 운영자 | S5-07 | 미착수 |
+| /admin/disputes | 운영자 | S8-03, S5-08(위약금) | 미착수 |
+| /admin/reviews | 운영자 | S8-11 | 미착수 |
+
+> **F-V-14(업체 알림·연동 설정)는 §6에 전용 라우트가 없다.** 명세의 빈칸이며 기능을 뺀 것이 아니다.
+> S4-14에서 `/vendor/profile` 내 섹션으로 둘지 `/vendor/settings` 를 신설할지 결정하고,
+> 결정 후 §6.3과 이 표에 라우트를 추가한다.
+
+### 신설 태스크 (T-00c)
+
+미배정 8건을 해소하기 위해 만든 태스크다. 기존 태스크에 끼워 넣지 않은 이유를 함께 적는다.
+
+| ID | 단계 | 태스크 | 해소한 미배정 항목 | 신설 이유 |
+|---|---|---|---|---|
+| S3-10 | 3 | 랜딩·마케팅 진입 | 화면 `/` | F-C-24를 담당하는 S7-10은 **7단계**인데 랜딩은 명세 **3단계**다. 탐색·검색 진입점이라 콘텐츠 허브를 기다릴 수 없다 |
+| S3-11 | 3 | 소비자 홈 대시보드 | 화면 `/home` | 여러 기능(F-C-04·05·25)의 요약 화면이라 어느 기능 태스크에도 온전히 속하지 않는다. 소유자가 없으면 끝까지 안 만들어진다 |
+| S4-14 | 4 | 업체 알림·연동 설정 | 기능 F-V-14 | S4-13은 **소비자 알림센터**(F-C-21)다. 업체 수신 채널·담당자 배정·영업시간은 별개 화면·별개 권한이다 |
+| S5-09 | 5 | 에스크로 예치·릴리즈 | 기능 F-C-16, API `POST /api/escrow/release` | 자체 테이블(`escrow_holds`)과 API가 있는데 담당 태스크가 없었다. **집행 로직은 O-03 대기**이나 절차·기록은 지금 만든다 |
+| S5-10 | 5 | 업체 예약·계약 관리 | 기능 F-V-08, API `PATCH /api/vendor/bookings/[id]`, 화면 `/vendor/bookings` | 소비자 측 계약(S5-04·S5-05)과 업체 측 상태 보드는 별개 화면이다. 업체가 승인·거절할 수 없으면 거래가 성립하지 않는다 |
+
+### 표에 없는 것 (의도적)
+
+- **§5 AI 파이프라인**은 기능(F-C-03·06·07·08·30, F-A-03·04·14)에 종속되므로 별도 축을 두지 않았다.
+  파이프라인 자체의 진행은 S7-01~S7-06·S8-06·S8-07이 담당한다.
+- **§3.10 Storage 버킷 5종**은 테이블이 아니라 인프라다. 생성은 S4-01(`chat-attachments` 포함)이 소유한다.
+- **§7 비기능 요구사항**(성능·보안·접근성·CI)은 S8-05·S8-13과 각 태스크의 완료 조건에 녹아 있다.
