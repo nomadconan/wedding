@@ -1,8 +1,12 @@
 @echo off
 :: WeddingClear - initial local setup (Windows CMD)
-:: Order: install -> env -> db:start -> db:reset -> db:types -> dev
+:: Order: install -> db:start -> env -> db:reset -> db:types -> dev
 :: Prerequisite: Docker Desktop must be running (WSL2 backend) before db:start.
 :: NOTE: ASCII-only on purpose - Korean text garbles under CP949 consoles.
+::
+:: db:start now runs BEFORE the env step: the Supabase URL and keys only exist
+:: once the local stack is up, and scripts\sync-env.mjs reads them from
+:: `supabase status` instead of asking a human to retype them (S0-01).
 
 setlocal
 cd /d "%~dp0.."
@@ -11,21 +15,12 @@ echo [1/6] npm install
 call npm install
 if errorlevel 1 goto :error
 
-echo [2/6] env file
-if exist ".env.local" (
-  echo      .env.local already exists - keeping it ^(not overwritten^)
-) else (
-  copy ".env.example" ".env.local" >nul
-  if errorlevel 1 goto :error
-  echo      created .env.local - fill in values before continuing:
-  echo        - NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY  ^(from db:start output^)
-  echo        - SUPABASE_SERVICE_ROLE_KEY   ^(server only^)
-  echo        - ANTHROPIC_API_KEY / AI_MODEL ^(server only^)
-  echo        - TOSS_CLIENT_KEY / TOSS_SECRET_KEY ^(test keys^)
-)
-
-echo [3/6] npm run db:start   ^(local Supabase, needs Docker^)
+echo [2/6] npm run db:start   ^(local Supabase, needs Docker^)
 call npm run db:start
+if errorlevel 1 goto :error
+
+echo [3/6] env file           ^(scripts\sync-env.mjs^)
+call npm run env:sync
 if errorlevel 1 goto :error
 
 echo [4/6] npm run db:reset   ^(migrations + seed.sql^)
