@@ -15,7 +15,7 @@
 | T-02a | 브랜치·원격 정리 | [~] | §7.2 | M0 |
 | T-02b | CI 파이프라인 | [ ] | §7.2, §7.5 | T-04 이후 |
 | T-02c | 이미지·아이콘 자산 규약 | [x] | §6, §7.5 | M0 |
-| T-03 | 마이그레이션 1차 | [ ] | §3.1·§3.2·§3.5, §3.9 | M0 |
+| T-03 | 마이그레이션 1차 | [x] | §3.1~§3.8, §3.9 | M0 |
 | T-04 | lib/core 골격 + 테스트 | [ ] | §5.2·§5.3, §7.5 | M0~M1 |
 | T-05 | 인증·온보딩 | [ ] | F-C-01, F-C-02 | M1 |
 | T-06 | 예산 배분·추적 | [ ] | F-C-05 | M1 |
@@ -179,9 +179,13 @@ T-02b CI 워크플로의 게이트 스텝으로 그대로 얹는다(`npm run bui
 
 ---
 
-## T-03 — 마이그레이션 1차 (명세서 §3.1·§3.2·§3.5 범위만)
+## T-03 — 마이그레이션 1차 (명세서 §3.1~§3.8 전체)
 
-**상태:** [ ]
+**상태:** [x] (2026-08-08 완료, 브랜치 `feat/T-03-migrations`)
+
+> **범위 확대 이력** 2026-08-08: 당초 §3.1·§3.2·§3.5 로 좁혀 두었던 범위를
+> **§3.1~§3.8 전 테이블**로 확대해 1차에 일괄 작성했다. 근거는 CLAUDE.md §2.1
+> (범위 축소 금지) — 공개 시점은 `feature_flags` 로만 제어하고 스키마는 미리 만들어 둔다.
 
 ### 목적
 소비자 코어 기능(온보딩·체크리스트·예산·계약검토)이 올라탈 데이터 기반을 만든다.
@@ -189,48 +193,105 @@ T-02b CI 워크플로의 게이트 스텝으로 그대로 얹는다(`npm run bui
 
 ### 선행조건
 - T-01 완료 (`npm run db:reset` / `db:types` 가 동작해야 함)
-- 명세서 §3.1(사용자·커플), §3.2(일정·예산), §3.5(계약검토·견적 정규화), §3.9(RLS 원칙) 숙지
+- 명세서 §3.1~§3.8(데이터 모델 전체), §3.9(RLS 원칙) 숙지
 
 ### 범위
-**포함 (§3.1)**: `profiles`, `couples`, `couple_members`, `couple_invites`,
+**포함 (§3.1 · 9)**: `profiles`, `couples`, `couple_members`, `couple_invites`,
 `onboarding_answers`, `memberships`, `subscription_payments`, `consents`,
 `data_deletion_requests`
 
-**포함 (§3.2)**: `task_templates`, `tasks`, `budgets`, `budget_items`, `expenses`
+**포함 (§3.2 · 5)**: `task_templates`, `tasks`, `budgets`, `budget_items`, `expenses`
 
-**포함 (§3.5)**: `documents`, `document_analyses`, `findings`, `detect_rules`,
+**포함 (§3.3 · 9)**: `vendors`, `vendor_documents`, `vendor_members`, `vendor_media`,
+`products`, `product_options`, `price_rules`, `price_index`, `price_sources`
+
+**포함 (§3.4 · 14)**: `inventory_slots`, `inquiries`, `inquiry_targets`, `quotes`,
+`quote_items`, `bookings`, `contracts`, `contract_signatures`, `payments`,
+`escrow_holds`, `refunds`, `settlements`, `settlement_items`, `disputes`
+
+**포함 (§3.5 · 9)**: `documents`, `document_analyses`, `findings`, `detect_rules`,
 `penalty_rules`, `penalty_simulations`, `estimate_uploads`, `estimate_items`,
 `estimate_comparisons`
 
-**포함 (§3.8)**: `feature_flags`, `app_settings`, `audit_logs`
-— 2026-08-06 결정(하단 "결정 완료" 참조)
+**포함 (§3.6 · 5)**: `ai_conversations`, `ai_messages`, `ai_tool_calls`, `ai_call_logs`,
+`prompt_versions`
+
+**포함 (§3.7 · 10)**: `reviews`, `review_reports`, `planners`, `planner_engagements`,
+`content_posts`, `notifications`, `notification_prefs`, `share_links`, `guests`,
+`seating_plans`
+
+**포함 (§3.8 · 5)**: `audit_logs`, `feature_flags`, `app_settings`, `tickets`, `job_runs`
+— `feature_flags`·`app_settings`·`audit_logs` 는 2026-08-06 결정(하단 "결정 완료" 참조)
 
 **포함 (기반)**: 전 테이블 공통 컬럼(`id` uuid / `created_at` / `updated_at` 트리거),
-§3.10 Storage 버킷 중 `contracts-raw`·`reports`
+enum 13종, RLS 활성화 + 정책, 역할별 GRANT
 
-> **제외**: §3.3(업체·상품·가격), §3.4(재고·거래·결제), §3.6~3.7 — 아래 "선행조건 대기" 표 참조.
-> §3.8 중 위 3종을 제외한 나머지 테이블도 이번 범위가 아니다.
+> **제외**: §3.10 Storage 버킷, `seed.sql`(검출 룰 20종·`task_templates` 시드) — 별도 태스크.
+
+### 산출물
+
+| 파일 | 내용 | 테이블 |
+|---|---|---|
+| `supabase/migrations/20260808000100_extensions_and_helpers.sql` | pgcrypto, `set_updated_at()`, `attach_set_updated_at()`, enum 13종 | — |
+| `supabase/migrations/20260808000200_core.sql` | §3.1 + §3.2 + 커플 스코프(`guests`·`seating_plans`) | 16 |
+| `supabase/migrations/20260808000300_vendor_commerce.sql` | §3.3 + §3.4 | 23 |
+| `supabase/migrations/20260808000400_ai_ops.sql` | §3.5 + §3.6 + §3.7(잔여) + §3.8 | 27 |
+| `supabase/migrations/20260808000500_rls.sql` | RLS 보조 함수 7종, 전 테이블 RLS + 정책 블록 66, 역할별 GRANT | — |
+
+기존 `00000000000000_init.sql`(TODO 주석 3줄)은 삭제했다.
+
+### 결과 수치
+
+- **테이블 66** (§3.1~§3.8 전체) · **정책 블록 66** (테이블 1:1 대응) · **개별 정책 156건**
+- **RLS 미활성 테이블 0** · **공통 컬럼/트리거 누락 테이블 0**
+- 정책을 두지 않은 **전면 거부(서비스롤 전용) 10종**:
+  `price_sources`, `detect_rules`, `penalty_rules`, `ai_call_logs`, `prompt_versions`,
+  `share_links`, `audit_logs`, `feature_flags`, `app_settings`, `job_runs`
+- 이 중 **`feature_flags` 만 테이블 GRANT 까지 회수**했다(`anon`·`authenticated` 권한 없음).
+  미공개 R2·R3 기능의 **존재 자체를 감추기 위해서**다 — 플래그 목록이 클라이언트에 보이면
+  D-09 의 '만들어 두고 켜지 않는다' 전략이 무력해진다. 플래그 평가는 Route Handler
+  (서비스롤)에서만 수행하고 클라이언트에는 **평가 결과만** 내려보낸다.
+- enum 13종 / `types/database.ts` 3,003줄 재생성
+
+검산 쿼리는 `20260808000500_rls.sql` 말미 주석에 그대로 실어 두었다.
 
 ### 작업 내용
-- 마이그레이션 SQL 작성 → `npm run db:diff -- -f init_consumer_core`
+- 마이그레이션 SQL 5개 파일 작성(위 산출물 표).
 - **모든 테이블에 RLS 활성화 + 정책 작성** (§3.9):
   - 커플 데이터: `couple_members` 에 소속된 `user_id` 만 SELECT/INSERT/UPDATE
   - 결제·계약 서명 관련은 `member_role = 'owner'` 추가 조건
   - `documents`: 소유 커플만. `purged_at IS NOT NULL` 이면 `storage_path` 를 API 응답에서 제외
   - 기본은 **거부**, 필요한 것만 허용
-- `documents.purge_scheduled_at` NOT NULL 제약 또는 기본값으로 파기 예약 누락을 구조적으로 방지.
-- `seed.sql`에 `task_templates`(D-360~D-0 역산 원본) 시드 작성.
-  `detect_rules`·`penalty_rules`는 **테이블·인터페이스만** 만들고 시드는 보류(하단 표 참조).
+- `documents.purge_scheduled_at` **NOT NULL** 로 파기 예약 누락을 구조적으로 방지.
+- `products.base_price_total` **NOT NULL** — '별도 문의' 가격 등록 차단의 스키마 근거(F-V-03).
 - `npm run db:types` 로 `types/database.ts` 재생성.
 
+> **작업 중 발견 · 조치** Supabase 기본 권한(`pg_default_acl`)은 `postgres` 역할이 만든
+> 테이블에 대해 `anon`·`authenticated` 에게 `Dxtm` 만 부여하고 SELECT/INSERT/UPDATE/DELETE 는
+> 부여하지 않는다. GRANT 가 없으면 **RLS 정책 평가 이전에 `permission denied` 로 막혀 정책이
+> 전부 무력해진다.** `20260808000500_rls.sql` 말미에 역할별 GRANT 와 `alter default privileges`
+> (이후 마이그레이션 자동 적용)를 명시했다. 행 단위 경계는 어디까지나 RLS 이며 `anon` 에는
+> SELECT 만 부여한다.
+
 ### 완료 판정 기준
-- [ ] `npm run db:reset` 이 에러 없이 완주한다.
-- [ ] `npm run db:types` 가 통과하고 `types/database.ts` 가 갱신된다.
-- [ ] 범위 내 **모든 테이블에 RLS가 활성화**되어 있다 (`pg_tables` 조회로 확인).
-- [ ] **통합 테스트로 타 커플 데이터 차단을 확인**한다:
-      커플 A 사용자 세션으로 커플 B의 `couples` / `tasks` / `budgets` / `documents` /
-      `findings` 를 조회·수정 시도 → 전부 0건 반환 또는 거부.
-- [ ] 같은 테스트에서 `member_role='partner'` 사용자가 결제·서명 권한 대상 행을 변경하지 못한다.
+- [x] `npm run db:reset` 이 에러 없이 완주한다.
+- [x] `npm run db:types` 가 통과하고 `types/database.ts` 가 갱신된다(public 테이블 66 / enum 13).
+- [x] 범위 내 **모든 테이블에 RLS가 활성화**되어 있다 (`pg_class.relrowsecurity` 조회 → 미활성 0건).
+- [x] **타 커플 데이터 차단을 확인**했다 (로컬 psql 세션 검증, `set local role authenticated` +
+      `request.jwt.claims` 전환):
+  - 커플 A 세션에서 `couples`/`tasks`/`budgets`/`documents` 는 자기 행 1건씩만 조회된다.
+  - 커플 B의 `couples`/`tasks`/`documents` 를 id 지정 조회 → 전부 0건.
+  - 커플 B의 `tasks` UPDATE → 0행. 커플 B에 `tasks` INSERT → RLS 위반으로 거부.
+- [x] `member_role='partner'` 사용자가 owner 전용 동작을 하지 못한다:
+      `couples` UPDATE → 0행, `couple_invites` INSERT → RLS 위반으로 거부.
+- [x] `anon` 은 공개 데이터(`vendors`(active)·`products`(active 업체)·`price_index`·
+      `content_posts`(발행분))만 읽고, `app_settings`·`audit_logs` 는 0건,
+      쓰기는 `permission denied` 로 거부된다.
+- [x] `feature_flags` 는 `anon`·`authenticated` 모두 조회 시 `permission denied` 이며
+      `service_role` 만 SELECT/INSERT/UPDATE 가 가능하다.
+- [ ] **위 RLS 검증을 자동화 테스트로 커밋**한다 — 이번 태스크는 마이그레이션 파일 범위로
+      한정되어 로컬 psql 수동 검증까지만 수행했다. 테스트 하네스는 T-05(E2E 도입)에서
+      함께 넣는다.
 
 ---
 
@@ -380,7 +441,9 @@ T-02b CI 워크플로의 게이트 스텝으로 그대로 얹는다(`npm run bui
 | 항목 | 대기 사유 |
 |---|---|
 | `detect_rules` 시드 20종 | 근거 조항 확정 후. 테이블·인터페이스만 선행 |
-| §3.3~3.4 업체·거래 테이블 | M5 구간. T-03 범위에 넣지 않는다 |
+| §3.3~3.4 업체·거래 **기능** | 스키마는 T-03에서 생성 완료. 화면·API 착수는 M5 구간이며 공개는 `feature_flags` 로만 연다 |
+| Storage 버킷(§3.10) | T-03 범위 밖. 별도 태스크 |
+| `seed.sql`(`task_templates` 등) | T-03 범위 밖. 별도 태스크 |
 | 에스크로 스키마 | O-03 법무 결론 대기. 컬럼 정의만 유지 |
 | 수수료 요율 하드코딩 | O-02 미확정. `app_settings` 파라미터로만 접근 |
 
@@ -412,6 +475,7 @@ T-02b CI 워크플로의 게이트 스텝으로 그대로 얹는다(`npm run bui
 ## 미결 항목 — 착수 전 확인 필요
 
 1. **온보딩 예산 초안의 `price_index` 의존**
-   F-C-05는 "참가격 지수 기반 권장 배분"이나 `price_index` 는 §3.3(T-03 범위 밖, M5)에 있다.
+   F-C-05는 "참가격 지수 기반 권장 배분"이다. `price_index` **테이블 자체는 T-03에서
+   생성**됐지만 데이터 수집(참가격 인덱스 구축)이 M5 구간이라 초기에는 비어 있다.
    → T-05·T-06은 **고정 비율 배분으로 시작**하고 `budgets.index_version` 에
    `'fixed-v1'` 같은 값을 기록해두는 것으로 진행한다(변경 시 확인).
