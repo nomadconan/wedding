@@ -72,7 +72,7 @@
 
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
-| S2-01 | 업체 인증·입점 신청 | [ ] | S1-01, T-03 | F-V-01, F-A-01 |
+| S2-01 | 업체 인증·입점 신청 | [x] | S1-01, T-03 | F-V-01, F-A-01. 이메일 로그인·미들웨어 세션 포함 |
 | S2-02 | 업체 프로필·미디어 | [ ] | S2-01 | F-V-02 |
 | S2-03 | 상품·판매가 등록 | [ ] | S2-01, **S5-01** | F-V-03 — 요율 조회가 있어야 예상 정산액 표시 |
 | S2-04 | 추가금 사전 등록 | [ ] | S2-03 | F-V-04 |
@@ -80,6 +80,13 @@
 | S2-06 | 다이내믹 프라이싱 룰 | [ ] | S2-03 | F-V-06 |
 | S2-07 | 업체 멤버·권한 | [ ] | S2-01 | F-V-13 |
 | S2-08 | 업체 대시보드·통계 | [ ] | S2-03 | F-V-12 |
+
+> **S2-01 산출** 마이그레이션 `20260808000800_vendor_apply.sql`(`entity_events`·`vendor_applications`
+> ·`vendor-documents` 버킷), 화면 `/login`·`/vendor/apply`·`/admin/vendors`,
+> API `POST /api/vendor/apply`·`PATCH /api/admin/vendors/[id]/review`,
+> 인증 기반(`middleware.ts` 세션 갱신·라우트 가드, `lib/supabase/auth.ts`·`admin.ts`),
+> `lib/core/vendor` + `lib/core/schemas/vendor.ts`, 테스트 20건.
+> **소셜 로그인은 S3-01** 에서 붙인다 — 여기서는 이메일·비밀번호 경로만 만들었다.
 
 > **2단계에는 마이그레이션 태스크가 없다.** §3.3·§3.4의 업체 도메인 테이블(`vendors`,
 > `vendor_documents`, `vendor_members`, `vendor_media`, `products`, `product_options`,
@@ -305,10 +312,10 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 
 | 축 | 총계 | 배정 | 미배정 | 완료 |
 |---|---|---|---|---|
-| §2 기능 | 65 | 65 | 0 | 0 |
-| §3 테이블 | 82 | 82 | 0 | 69 |
-| §4 API·배치 | 75 | 75 | 0 | 0 |
-| §6 화면 | 67 | 67 | 0 | 0 |
+| §2 기능 | 65 | 65 | 0 | 2 |
+| §3 테이블 | 82 (+명세 외 1) | 83 | 0 | 71 |
+| §4 API·배치 | 75 | 75 | 0 | 2 |
+| §6 화면 | 67 | 67 | 0 | 2 |
 
 > **추출 시점 미배정 8건은 전부 태스크를 신설해 해소했다** — S3-10, S3-11, S4-14, S5-09, S5-10.
 > 상세는 [신설 태스크](#신설-태스크-t-00c)에 있다.
@@ -317,7 +324,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 
 | ID | 기능 | 단계 | 담당 태스크 | 상태 |
 |---|---|---|---|---|
-| F-C-01 | 회원가입·온보딩 | 3 | S3-01 | 미착수 |
+| F-C-01 | 회원가입·온보딩 | 3 | S3-01 / 이메일 로그인은 S2-01 | 진행중 |
 | F-C-02 | 커플 연동 | 3 | S3-02 | 미착수 |
 | F-C-03 | AI 플래너 대화 | 7 | S7-06 | 미착수 |
 | F-C-04 | 일정·체크리스트 | 7 | S7-08 | 미착수 |
@@ -348,7 +355,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | F-C-29 | 상담·탐방 예약 | 4 | S4-07, S4-08, S4-09, S4-11 | 미착수 |
 | F-C-30 | 조건 검색 | 7 | S7-02 | 미착수 |
 | F-C-31 | 플래너 범위 선택 | 6 | S6-03 | 미착수 |
-| F-V-01 | 입점 신청·검증 | 2 | S2-01 | 미착수 |
+| F-V-01 | 입점 신청·검증 | 2 | S2-01 | 완료 |
 | F-V-02 | 업체 프로필 관리 | 2 | S2-02 | 미착수 |
 | F-V-03 | 상품·패키지 등록 | 2 | S2-03 | 미착수 |
 | F-V-04 | 추가금 사전 등록 | 2 | S2-04 | 미착수 |
@@ -365,7 +372,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | F-V-15 | 채팅 응대 | 4 | S4-04 | 미착수 |
 | F-V-16 | 문의게시판 관리 | 4 | S4-05 | 미착수 |
 | F-V-17 | 상담 일정 관리 | 4 | S4-06, S4-07, S4-09 | 미착수 |
-| F-A-01 | 입점 심사 | 2 | S2-01 | 미착수 |
+| F-A-01 | 입점 심사 | 2 | S2-01 | 완료 |
 | F-A-02 | 참가격 데이터 큐레이션 | 8 | S8-10 | 미착수 |
 | F-A-03 | 검출 룰·프롬프트 관리 | 8 | S8-06 | 미착수 |
 | F-A-04 | AI 품질 관리 | 8 | S8-07 | 미착수 |
@@ -404,7 +411,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | budget_items | 3.2 | T-03 | 완료 |
 | expenses | 3.2 | T-03 | 완료 |
 | vendors | 3.3 | T-03 | 완료 |
-| vendor_documents | 3.3 | T-03 | 완료 |
+| vendor_documents | 3.3 | T-03 / 업로드·서명 URL 은 S2-01 | 완료 |
 | vendor_members | 3.3 | T-03 | 완료 |
 | vendor_media | 3.3 | T-03 | 완료 |
 | products | 3.3 | T-03 | 완료 |
@@ -463,14 +470,26 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | share_links | 3.7 | T-03 | 완료 |
 | guests | 3.7 | T-03 | 완료 |
 | seating_plans | 3.7 | T-03 | 완료 |
-| audit_logs | 3.8 | T-03 / `resolution_basis` 는 S4-03 (잔여) | 진행중 |
-| **entity_events** | 3.8 | S4-03 | 미착수 |
+| audit_logs | 3.8 | T-03 / 심사 액션 기록은 S2-01 / `resolution_basis` 는 S4-03 (잔여) | 진행중 |
+| **entity_events** | 3.8 | S2-01(생성) / S4-03(확장·타임라인) | 진행중 |
 | feature_flags | 3.8 | T-03 | 완료 |
 | app_settings | 3.8 | T-03 / 파라미터 키 시드는 S5-01 | 완료 |
 | **commission_rates** | 3.8 | S5-01 | 완료 |
 | **planner_fee_rates** | 3.8 | S5-01 | 완료 |
 | tickets | 3.8 | T-03 | 완료 |
 | job_runs | 3.8 | T-03 | 완료 |
+| **vendor_applications** ※명세 외 | (3.3 추가 제안) | S2-01 | 완료 |
+
+> **명세 외 테이블 1건 — `vendor_applications`(S2-01)**
+> §2.2 F-V-01 은 심사 상태를 **신청 → 보완 → 승인·반려** 4단계로 요구하는데 §3.3
+> `vendors.status` 는 `pending|active|suspended` 3값뿐이라 '보완요청'·'반려'를 표현할 수 없다.
+> 공개 카탈로그 테이블(`vendors`)에 심사 전용 정보(반려 사유·대표자 연락처)를 얹지 않으려고
+> 신청서를 분리했다. **명세서 §3.3 에 추가하도록 제안**한다.
+>
+> **Storage 버킷 1건 — `vendor-documents`(비공개)**
+> §3.10 버킷 목록에 없으나 F-V-01 의 서류 제출에 필요하다. 공개 버킷은 `vendor-media` 외에
+> 두지 않는다는 원칙에 따라 비공개로 만들고 **서명 URL(5분)** 로만 연다.
+> 이것도 §3.10 에 추가하도록 제안한다.
 
 ### C. §4 API · 배치 (75)
 
@@ -506,7 +525,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | POST /api/share-links · GET /api/share/[token] | 소비자 | S7-12 | 미착수 |
 | GET/PUT /api/notifications | 소비자 | S4-13 | 미착수 |
 | POST /api/me/delete-request | 소비자 | S3-09 | 미착수 |
-| POST /api/vendor/apply | 업체 | S2-01 | 미착수 |
+| POST /api/vendor/apply | 업체 | S2-01 | 완료 |
 | GET/PUT /api/vendor/profile | 업체 | S2-02 | 미착수 |
 | CRUD /api/vendor/products | 업체 | S2-03 | 미착수 |
 | CRUD /api/vendor/products/[id]/options | 업체 | S2-04 | 미착수 |
@@ -522,7 +541,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | POST /api/vendor/compliance/scan | 업체 | S7-13 | 미착수 |
 | GET /api/vendor/stats | 업체 | S2-08 | 미착수 |
 | POST /api/vendor/members | 업체 | S2-07 | 미착수 |
-| PATCH /api/admin/vendors/[id]/review | 운영자 | S2-01 | 미착수 |
+| PATCH /api/admin/vendors/[id]/review | 운영자 | S2-01 | 완료 |
 | POST /api/admin/prices/recalculate | 운영자 | S8-10 | 미착수 |
 | CRUD /api/admin/rules | 운영자 | S8-06 | 미착수 |
 | POST /api/admin/prompts/deploy | 운영자 | S8-06 | 미착수 |
@@ -562,7 +581,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | / | 마케팅 | **S3-10**(신설) | 미착수 |
 | /guides/[slug] | 마케팅 | S7-10 | 미착수 |
 | /prices/[region]/[category] | 마케팅 | S3-08 | 미착수 |
-| /login | 인증 | S3-01 | 미착수 |
+| /login | 인증 | S3-01 / 이메일 경로는 S2-01 | 진행중 |
 | /onboarding | 인증 | S3-01 | 미착수 |
 | /home | 소비자 | **S3-11**(신설) | 미착수 |
 | /planner | 소비자 | S7-06 | 미착수 |
@@ -594,7 +613,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | /notifications | 소비자 | S4-13 | 미착수 |
 | /me | 소비자 | S3-09 | 미착수 |
 | /share/[token] | 소비자 | S7-12 | 미착수 |
-| /vendor/apply | 업체 | S2-01 | 미착수 |
+| /vendor/apply | 업체 | S2-01 | 완료 |
 | /vendor | 업체 | S2-08 | 미착수 |
 | /vendor/profile | 업체 | S2-02 | 미착수 |
 | /vendor/products | 업체 | S2-03, S2-04 | 미착수 |
@@ -612,7 +631,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | /vendor/stats | 업체 | S2-08 | 미착수 |
 | /vendor/members | 업체 | S2-07 | 미착수 |
 | /admin | 운영자 | S8-01 | 미착수 |
-| /admin/vendors | 운영자 | S2-01 | 미착수 |
+| /admin/vendors | 운영자 | S2-01 | 완료 |
 | /admin/prices | 운영자 | S8-10 | 미착수 |
 | /admin/rules | 운영자 | S8-06 | 미착수 |
 | /admin/ai-quality | 운영자 | S8-07 | 미착수 |

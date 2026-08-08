@@ -954,6 +954,54 @@ export type Database = {
           },
         ]
       }
+      entity_events: {
+        Row: {
+          actor_id: string | null
+          actor_role: string | null
+          after_state: string | null
+          before_state: string | null
+          created_at: string
+          entity_id: string
+          entity_type: string
+          event_type: string
+          id: string
+          ip_hash: string | null
+          memo: string | null
+          occurred_at: string
+          source: Database["public"]["Enums"]["entity_event_source"]
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_role?: string | null
+          after_state?: string | null
+          before_state?: string | null
+          created_at?: string
+          entity_id: string
+          entity_type: string
+          event_type: string
+          id?: string
+          ip_hash?: string | null
+          memo?: string | null
+          occurred_at?: string
+          source?: Database["public"]["Enums"]["entity_event_source"]
+        }
+        Update: {
+          actor_id?: string | null
+          actor_role?: string | null
+          after_state?: string | null
+          before_state?: string | null
+          created_at?: string
+          entity_id?: string
+          entity_type?: string
+          event_type?: string
+          id?: string
+          ip_hash?: string | null
+          memo?: string | null
+          occurred_at?: string
+          source?: Database["public"]["Enums"]["entity_event_source"]
+        }
+        Relationships: []
+      }
       escrow_holds: {
         Row: {
           created_at: string
@@ -2741,6 +2789,71 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_applications: {
+        Row: {
+          applicant_id: string
+          biz_no_masked: string
+          biz_no_verified_at: string | null
+          biz_no_verified_by: string | null
+          contact_phone: string
+          created_at: string
+          id: string
+          mail_order_no: string | null
+          representative_name: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: Database["public"]["Enums"]["vendor_application_status"]
+          submitted_at: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          applicant_id: string
+          biz_no_masked: string
+          biz_no_verified_at?: string | null
+          biz_no_verified_by?: string | null
+          contact_phone: string
+          created_at?: string
+          id?: string
+          mail_order_no?: string | null
+          representative_name: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["vendor_application_status"]
+          submitted_at?: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          applicant_id?: string
+          biz_no_masked?: string
+          biz_no_verified_at?: string | null
+          biz_no_verified_by?: string | null
+          contact_phone?: string
+          created_at?: string
+          id?: string
+          mail_order_no?: string | null
+          representative_name?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: Database["public"]["Enums"]["vendor_application_status"]
+          submitted_at?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_applications_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: true
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendor_availability: {
         Row: {
           created_at: string
@@ -2970,6 +3083,7 @@ export type Database = {
       content_post_type: "guide" | "price_report" | "glossary"
       couple_member_role: "owner" | "partner" | "planner"
       document_type: "contract" | "estimate"
+      entity_event_source: "web" | "app" | "system" | "admin"
       finding_severity: "high" | "mid" | "low"
       membership_plan: "free" | "premium"
       payment_purpose: "deposit" | "balance" | "membership"
@@ -2985,6 +3099,11 @@ export type Database = {
         | "vendor_staff"
         | "ops"
         | "admin"
+      vendor_application_status:
+        | "submitted"
+        | "revision_requested"
+        | "approved"
+        | "rejected"
       vendor_member_role: "owner" | "staff"
       vendor_status: "pending" | "active" | "suspended"
     }
@@ -3123,6 +3242,7 @@ export const Constants = {
       content_post_type: ["guide", "price_report", "glossary"],
       couple_member_role: ["owner", "partner", "planner"],
       document_type: ["contract", "estimate"],
+      entity_event_source: ["web", "app", "system", "admin"],
       finding_severity: ["high", "mid", "low"],
       membership_plan: ["free", "premium"],
       payment_purpose: ["deposit", "balance", "membership"],
@@ -3138,6 +3258,12 @@ export const Constants = {
         "vendor_staff",
         "ops",
         "admin",
+      ],
+      vendor_application_status: [
+        "submitted",
+        "revision_requested",
+        "approved",
+        "rejected",
       ],
       vendor_member_role: ["owner", "staff"],
       vendor_status: ["pending", "active", "suspended"],
