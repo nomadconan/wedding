@@ -1,3 +1,119 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* =============================================================================
+ * 디자인 토큰 (T-04b)
+ * 근거: docs/07_개발명세서.md §6 공통 UI 규칙 / §7.5 접근성
+ *
+ * 원칙
+ *  1) 무채색 기반 + 단일 강조색(파랑). 강조색은 "지금 눌러야 할 것" 하나에만 쓴다.
+ *  2) 시맨틱 색은 성공·경고·위험 3종만 둔다. 그 이상은 화면을 시끄럽게 만든다.
+ *  3) 값은 HSL 3요소(`H S% L%`)로 적는다. tailwind.config.ts 가 `hsl(var(--x))` 로 감싸므로
+ *     여기에 `hsl(...)` 나 `oklch(...)` 를 그대로 넣으면 안 된다.
+ *  4) 다크모드는 이번 범위가 아니다. `.dark` 블록을 두지 않는다(docs/DESIGN.md 참조).
+ * ========================================================================== */
+
+@layer base {
+  :root {
+    /* ── 무채색 스케일 ───────────────────────────────────────────────── */
+    --neutral-0: 0 0% 100%;
+    --neutral-50: 210 20% 98%;
+    --neutral-100: 210 17% 95%;
+    --neutral-200: 214 15% 91%;
+    --neutral-300: 213 13% 83%;
+    --neutral-400: 215 11% 65%;
+    --neutral-500: 215 12% 47%;
+    --neutral-600: 216 14% 34%;
+    --neutral-700: 217 17% 27%;
+    --neutral-800: 218 21% 18%;
+    --neutral-900: 220 26% 11%;
+
+    /* ── 강조색 — 파랑 하나 ──────────────────────────────────────────── */
+    --brand-50: 214 100% 97%;
+    --brand-100: 214 95% 93%;
+    --brand-200: 213 94% 87%;
+    --brand-500: 215 92% 58%;
+    --brand-600: 217 89% 51%;
+    --brand-700: 220 85% 43%;
+
+    /* ── 시맨틱 — 최소 3종 ───────────────────────────────────────────── */
+    --success: 152 60% 36%;
+    --success-foreground: 0 0% 100%;
+    --success-surface: 152 55% 96%;
+
+    --warning: 32 90% 44%;
+    --warning-foreground: 0 0% 100%;
+    --warning-surface: 38 92% 95%;
+
+    --danger: 0 72% 47%;
+    --danger-foreground: 0 0% 100%;
+    --danger-surface: 0 86% 97%;
+
+    /* ── shadcn/ui 시맨틱 매핑 ───────────────────────────────────────── */
+    /* 주의: Tailwind 의 `accent-*` 는 shadcn 규약상 **hover 표면색**이다.
+       브랜드 강조색은 `primary-*` / `brand-*` 다. docs/DESIGN.md §2 참조. */
+    --background: var(--neutral-0);
+    --foreground: var(--neutral-900);
+
+    --card: var(--neutral-0);
+    --card-foreground: var(--neutral-900);
+    --popover: var(--neutral-0);
+    --popover-foreground: var(--neutral-900);
+
+    --primary: var(--brand-500);
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: var(--neutral-100);
+    --secondary-foreground: var(--neutral-800);
+
+    --muted: var(--neutral-50);
+    --muted-foreground: var(--neutral-500);
+
+    --accent: var(--neutral-100);
+    --accent-foreground: var(--neutral-900);
+
+    --destructive: var(--danger);
+    --destructive-foreground: var(--danger-foreground);
+
+    --border: var(--neutral-200);
+    --input: var(--neutral-200);
+    --ring: var(--brand-500);
+
+    /* ── 모서리 ──────────────────────────────────────────────────────── */
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    /* 한글 가독성 우선 시스템 스택. 웹폰트는 §7.1 성능 예산 확정 후 별도 도입한다. */
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", Pretendard,
+      "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+    /* 한국어는 단어 단위 줄바꿈이 자연스럽다. */
+    word-break: keep-all;
+  }
+
+  /* 숫자를 표에서 세로로 맞춘다. 금액 비교가 핵심인 서비스라 기본값으로 켠다. */
+  :where(table, [data-amount]) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 키보드 사용자에게만 포커스 링을 보인다 (§7.5 WCAG 2.1 AA). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  /* 하단 탭 내비게이션이 있는 화면의 안전 영역 확보 (iOS 홈 인디케이터 대응). */
+  .pb-safe {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+}
