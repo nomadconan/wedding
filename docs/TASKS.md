@@ -17,6 +17,7 @@
 | T-02c | 이미지·아이콘 자산 규약 | [x] | §6, §7.5 | M0 |
 | T-03 | 마이그레이션 1차 | [x] | §3.1~§3.8, §3.9 | M0 |
 | T-04 | lib/core 골격 + 테스트 | [x] | §5.1·§5.2·§5.3·§5.4, 부록 A, §7.5 | M0~M1 |
+| T-04b | 디자인 시스템 기반 | [x] | §6 공통 UI 규칙, §7.5 | M0~M1 |
 | T-05 | 인증·온보딩 | [ ] | F-C-01, F-C-02 | M1 |
 | T-06 | 예산 배분·추적 | [ ] | F-C-05 | M1 |
 
@@ -383,6 +384,62 @@ enum 13종, RLS 활성화 + 정책, 역할별 GRANT
       현재는 위 테스트가 같은 역할을 하고 있으며, 규칙 추가는 T-02b(CI)에서 함께 넣는다.
 - [ ] **커버리지 80% 수치 측정** — `@vitest/coverage-v8` 미설치이며 새 의존성 추가는
       이번 태스크에서 보고 대상이라 실행하지 않았다. 위 심볼 참조율 96% 로 대체 보고한다.
+
+---
+
+## T-04b — 디자인 시스템 기반
+
+**상태:** [x] (2026-08-08 완료, 브랜치 `feat/T-04b-design-system`)
+
+### 목적
+화면 태스크(T-05 이후)가 매번 색·간격·상태 처리를 새로 정하지 않도록 기반을 만든다.
+동시에 **명세서 §6 공통 UI 규칙을 문서가 아니라 컴포넌트 타입으로 강제**한다.
+
+### 방향
+- 서비스 핵심 가치는 **가격 정찰제**(총액 공개·추가금 사전 등록)다.
+  계약 검토·AI 플래너는 신뢰를 보조하는 기능이며 화면 위계에서 주인공이 아니다.
+- 톤: 무채색 기반 + 단일 강조색(파랑), 넉넉한 여백, 화면당 정보량 최소화,
+  금액은 크고 굵게·단위는 작게.
+- 한 화면 한 질문 원칙 (온보딩 6단계에 적용).
+
+### 산출물
+
+| 영역 | 파일 |
+|---|---|
+| 토큰 | `app/globals.css`(색·타이포·간격 CSS 변수), `tailwind.config.ts`(Tailwind 연결) |
+| 기본 컴포넌트 | `components/ui/` shadcn 14종 + `components.json` |
+| 상태 3종 | `components/ui/{LoadingState,EmptyState,ErrorState}.tsx` |
+| 도메인 | `components/domain/{PriceDisplay,SortCriteriaBadge,AiDisclaimer}.tsx` |
+| 레이아웃 | `components/layout/{ConsumerShell,BottomTabNav,AdminShell}.tsx` |
+| 카탈로그 | `app/(dev)/design-system/page.tsx` (개발 전용, 프로덕션 라우트 아님) |
+| 문서 | `docs/DESIGN.md` |
+
+### 명세 규칙의 코드 강제
+
+| 명세 규칙 | 강제 방식 |
+|---|---|
+| 가격은 항상 총액·부가세 여부 명시·추가금 동일 화면 (§6) | `PriceDisplay` 의 `taxIncluded`·`addOns` 가 **필수 prop**. 생략하면 타입 에러 |
+| 정렬·추천에 기준 배지 노출 (§6, D-03) | `SortCriteriaBadge` 가 정렬 코드 + "유료 노출 없음" 을 함께 렌더 |
+| AI 고지 상시 고정 노출 (§5.1, CLAUDE.md §2.3) | `AiDisclaimer` 에 접기·닫기·툴팁 prop 을 두지 않음. 문구는 `lib/core/legal.ts` 단일 진실 |
+| 로딩·빈 상태·에러 3종 (§6) | `components/ui/` 3종 제공 + `docs/DESIGN.md` 원칙 2 |
+| 모바일 375px / 데스크톱 1280px (§6) | `ConsumerShell`(max-w-consumer 480px) / `AdminShell`(max-w-admin 1280px) |
+| 터치 타깃·포커스 링 (§7.5) | `Button` 에 `size="touch"`(44px+) 추가, `:focus-visible` 전역 링 |
+
+### 결과 수치
+- 신규 파일 **9개**(도메인 3 · 상태 3 · 레이아웃 3) + shadcn 생성 **17개** + 카탈로그 1 + 문서 1
+- 색 토큰 **무채색 11단계 + 강조 6단계 + 시맨틱 3종(각 3변형)**
+- 타이포 스케일 **9종**(display 3 · amount 3 · unit · caption · base)
+- 새 의존성 **12개**(radix 10 + cva/clsx/tailwind-merge/lucide-react/tailwindcss-animate)
+
+### 완료 판정 기준
+- [x] `npm run build` 통과, `/design-system` 라우트 생성 확인
+- [x] `npm run lint` 무경고, `npm run test` 197건 유지(도메인 로직 영향 없음)
+- [x] 빌드된 CSS 에 토큰이 실제로 생성됨을 확인(`--brand-500`, `bg-brand-500`,
+      `text-amount-lg`, `px-gutter`, `h-tab-bar`, `max-w-consumer`, `lg:w-sidebar` 등)
+- [x] 개발 서버에서 `/design-system` 이 200 으로 렌더되고 도메인 컴포넌트 3종이
+      실제 출력에 포함됨을 확인
+- [ ] **`(dev)` 라우트 그룹 차단** — 배포 전 미들웨어나 `feature_flags` 로 막는다.
+      배포 태스크에서 처리한다.
 
 ---
 
