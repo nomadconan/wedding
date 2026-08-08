@@ -2741,6 +2741,47 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_availability: {
+        Row: {
+          created_at: string
+          end_time: string
+          id: string
+          slot_minutes: number
+          start_time: string
+          updated_at: string
+          vendor_id: string
+          weekday: number
+        }
+        Insert: {
+          created_at?: string
+          end_time: string
+          id?: string
+          slot_minutes: number
+          start_time: string
+          updated_at?: string
+          vendor_id: string
+          weekday: number
+        }
+        Update: {
+          created_at?: string
+          end_time?: string
+          id?: string
+          slot_minutes?: number
+          start_time?: string
+          updated_at?: string
+          vendor_id?: string
+          weekday?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_availability_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendor_documents: {
         Row: {
           created_at: string
@@ -2920,6 +2961,7 @@ export type Database = {
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
+      timemultirange: { Args: never; Returns: unknown }
     }
     Enums: {
       ai_feature: "planner" | "report" | "estimate"
