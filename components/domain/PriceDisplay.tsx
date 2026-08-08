@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { AMOUNT_UNKNOWN, isUnknownAmount, type Amount } from "@/lib/core/pricing/amount";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,21 +25,17 @@ import { cn } from "@/lib/utils";
  * 요율 해석은 S5-02 `lib/core/pricing` 의 몫이다.
  */
 
-/** '미정' 금액 sentinel. `0`(확정된 0원)과 반드시 구분한다. */
-export const AMOUNT_UNKNOWN = "unknown";
-
 /**
- * 금액 값.
+ * 금액 값과 '미정' sentinel 은 **도메인(`lib/core/pricing/amount`)이 단일 진실**이다.
+ * 화면이 자기 sentinel 을 따로 두면 계산 결과와 표시가 조용히 어긋난다 —
+ * `calculateOrderTotal` 이 돌려주는 값을 그대로 받기 위해 여기서 다시 정의하지 않는다.
  *
  * `null`·`undefined` 를 미정으로 쓰지 않는 이유: 옵셔널 prop 의 누락과 구분되지 않아
  * "안 넘겼다"가 조용히 "미정"으로 렌더된다. 미정은 **명시적으로** 선언해야 한다.
  */
-export type PriceAmount = number | typeof AMOUNT_UNKNOWN;
+export { AMOUNT_UNKNOWN, isUnknownAmount };
 
-/** 금액이 아직 정해지지 않은 상태인가. */
-export function isUnknownAmount(value: PriceAmount): value is typeof AMOUNT_UNKNOWN {
-  return value === AMOUNT_UNKNOWN;
-}
+export type PriceAmount = Amount;
 
 /** 미정 금액 표기. "0원"과 절대 같은 문자열이 되지 않는다. */
 export const UNKNOWN_AMOUNT_TEXT = "미정";

@@ -415,6 +415,45 @@ export type Database = {
           },
         ]
       }
+      commission_rates: {
+        Row: {
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          fee_rate_bp: number
+          id: string
+          memo: string | null
+          scope_key: string | null
+          scope_type: Database["public"]["Enums"]["commission_scope_type"]
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          effective_from: string
+          effective_to?: string | null
+          fee_rate_bp: number
+          id?: string
+          memo?: string | null
+          scope_key?: string | null
+          scope_type: Database["public"]["Enums"]["commission_scope_type"]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          fee_rate_bp?: number
+          id?: string
+          memo?: string | null
+          scope_key?: string | null
+          scope_type?: Database["public"]["Enums"]["commission_scope_type"]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       consents: {
         Row: {
           agreed_at: string
@@ -1737,6 +1776,48 @@ export type Database = {
           },
         ]
       }
+      planner_fee_rates: {
+        Row: {
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          fee_rate_bp: number
+          id: string
+          memo: string | null
+          scope_key: string | null
+          scope_type: Database["public"]["Enums"]["planner_rate_scope_type"]
+          service_level: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          effective_from: string
+          effective_to?: string | null
+          fee_rate_bp: number
+          id?: string
+          memo?: string | null
+          scope_key?: string | null
+          scope_type: Database["public"]["Enums"]["planner_rate_scope_type"]
+          service_level?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          fee_rate_bp?: number
+          id?: string
+          memo?: string | null
+          scope_key?: string | null
+          scope_type?: Database["public"]["Enums"]["planner_rate_scope_type"]
+          service_level?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       planners: {
         Row: {
           created_at: string
@@ -2826,9 +2907,16 @@ export type Database = {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean
       }
+      is_any_planner: { Args: never; Returns: boolean }
+      is_any_vendor_member: { Args: never; Returns: boolean }
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
+      is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
+      is_vendor_member_of_category: {
+        Args: { p_category: string }
+        Returns: boolean
+      }
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
@@ -2836,12 +2924,14 @@ export type Database = {
     Enums: {
       ai_feature: "planner" | "report" | "estimate"
       booking_status: "hold" | "confirmed" | "cancelled" | "fulfilled"
+      commission_scope_type: "global" | "category" | "vendor"
       content_post_type: "guide" | "price_report" | "glossary"
       couple_member_role: "owner" | "partner" | "planner"
       document_type: "contract" | "estimate"
       finding_severity: "high" | "mid" | "low"
       membership_plan: "free" | "premium"
       payment_purpose: "deposit" | "balance" | "membership"
+      planner_rate_scope_type: "global" | "category" | "planner"
       price_rule_type: "season" | "weekday" | "leadtime" | "occupancy"
       task_source: "auto" | "manual" | "ai"
       user_role:
@@ -2987,12 +3077,14 @@ export const Constants = {
     Enums: {
       ai_feature: ["planner", "report", "estimate"],
       booking_status: ["hold", "confirmed", "cancelled", "fulfilled"],
+      commission_scope_type: ["global", "category", "vendor"],
       content_post_type: ["guide", "price_report", "glossary"],
       couple_member_role: ["owner", "partner", "planner"],
       document_type: ["contract", "estimate"],
       finding_severity: ["high", "mid", "low"],
       membership_plan: ["free", "premium"],
       payment_purpose: ["deposit", "balance", "membership"],
+      planner_rate_scope_type: ["global", "category", "planner"],
       price_rule_type: ["season", "weekday", "leadtime", "occupancy"],
       task_source: ["auto", "manual", "ai"],
       user_role: [
