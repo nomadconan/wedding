@@ -68,6 +68,12 @@
 | S2-07 | 업체 멤버·권한 | [ ] | S2-01 | F-V-13 |
 | S2-08 | 업체 대시보드·통계 | [ ] | S2-03 | F-V-12 |
 
+> **2단계에는 마이그레이션 태스크가 없다.** §3.3·§3.4의 업체 도메인 테이블(`vendors`,
+> `vendor_documents`, `vendor_members`, `vendor_media`, `products`, `product_options`,
+> `price_rules`, `price_index`, `price_sources`, `inventory_slots`)은 **T-03에서 이미 만들었고**
+> v2.0에서 추가·변경된 컬럼도 없다. 2단계는 화면·API 작업만 남았다.
+> §3.3의 유일한 잔여 테이블이던 `vendor_availability`는 **S4-02에서 앞당겨 처리**했다(아래 참조).
+
 ### 3단계 — 수요
 
 | ID | 태스크 | 상태 | 선행 | 근거 |
@@ -87,7 +93,7 @@
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
 | S4-01 | **마이그레이션 3차 — 채팅·문의게시판** | [ ] | T-03 | §3.7 `chat_rooms`·`chat_messages`·`qna_posts`·`qna_answers` |
-| S4-02 | **마이그레이션 4차 — 상담·보증금·가용시간** | [ ] | T-03 | §3.3 `vendor_availability`, §3.4 `consultations`·`consultation_deposits` |
+| S4-02 | **마이그레이션 4차 — 상담·보증금·가용시간** | [~] | T-03 | §3.3 `vendor_availability`, §3.4 `consultations`·`consultation_deposits` |
 | S4-03 | **마이그레이션 5차 — 증거 보존** | [ ] | T-03 | §3.8 `entity_events`, `notifications`·`audit_logs` 확장 |
 | S4-04 | 실시간 채팅 (소비자·업체) | [ ] | S4-01, S2-01, S3-01 | F-C-27, F-V-15 |
 | S4-05 | 문의게시판 | [ ] | S4-01 | F-C-28, F-V-16 |
@@ -99,6 +105,18 @@
 | S4-11 | 3자 일정 공유·캘린더 동기화 | [ ] | S4-07 | F-C-29 |
 | S4-12 | 표준 문의·견적 | [ ] | S2-03, S3-01 | F-C-13, F-V-07 |
 | S4-13 | 알림센터·발송 증적 | [ ] | S4-03 | F-C-21, D-23 |
+
+> **S4-02 진행 상황 — `vendor_availability` 만 끝났다(`[~]`)**
+> 마이그레이션 `20260808000700_vendor_availability.sql`. 요일 단위 반복 규칙이며 날짜 예외는
+> `inventory_slots` 블록 처리로 다룬다(§3.3). 같은 업체·요일의 시간대 겹침은 EXCLUDE로 거부한다.
+> RLS는 형제 테이블 `inventory_slots`와 같은 형태다 — active 업체는 공개 열람, 쓰기는 업체 멤버
+> (일정은 가격·정산이 아니므로 **staff도 가능**).
+>
+> **앞당긴 이유** `vendor_availability`는 §3.3 **업체 도메인** 테이블이고, 업체 어드민의 시간대
+> 등록 화면(F-V-17)이 예약 흐름보다 먼저 만들어진다. 예약 테이블과 묶어 둘 이유가 없다.
+>
+> **남은 것** `consultations`·`consultation_deposits` 2테이블. 4단계 예약 흐름(S4-07·S4-08)과
+> 함께 별도 마이그레이션으로 추가한다. 범위에서 뺀 것이 아니다.
 
 ### 5단계 — 거래
 
@@ -217,7 +235,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 |---|---|---|
 | S3-04 | `carts`, `cart_items`, `wishlists` | — |
 | S4-01 | `chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers` | — |
-| S4-02 | `vendor_availability`, `consultations`, `consultation_deposits` | — |
+| S4-02 | ~~`vendor_availability`~~ (완료), `consultations`, `consultation_deposits` | — |
 | S4-03 | `entity_events` | `notifications` 컬럼 확장, `audit_logs.resolution_basis` |
 | S5-01 | ~~`commission_rates`~~, ~~`planner_fee_rates`~~ (완료), `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
 | S6-01 | `planner_scopes` | — |
