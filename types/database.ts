@@ -1962,6 +1962,8 @@ export type Database = {
           created_at: string
           floor_price: number | null
           id: string
+          is_active: boolean
+          priority: number
           product_id: string | null
           rule_type: Database["public"]["Enums"]["price_rule_type"]
           updated_at: string
@@ -1975,6 +1977,8 @@ export type Database = {
           created_at?: string
           floor_price?: number | null
           id?: string
+          is_active?: boolean
+          priority?: number
           product_id?: string | null
           rule_type: Database["public"]["Enums"]["price_rule_type"]
           updated_at?: string
@@ -1988,6 +1992,8 @@ export type Database = {
           created_at?: string
           floor_price?: number | null
           id?: string
+          is_active?: boolean
+          priority?: number
           product_id?: string | null
           rule_type?: Database["public"]["Enums"]["price_rule_type"]
           updated_at?: string
