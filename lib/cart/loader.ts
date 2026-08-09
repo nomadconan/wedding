@@ -38,6 +38,12 @@ export type CartItemView = {
   priceIncludesVat: boolean;
   addOns: OrderAddOns;
   addOnList: { id: string; name: string; price: number; isMandatory: boolean; note: string | null }[];
+  /** 업체가 밝힌 포함 항목 수. 비교표(S3-07)의 축이다. */
+  includedItemCount: number;
+  /** 비교표(S3-07)의 조건 축. 없으면 업체가 적지 않은 것이다 — '해당 없음'과 구분한다. */
+  capacityMin: number | null;
+  capacityMax: number | null;
+  regionCode: string | null;
   options: Record<string, unknown>;
   plannerSelected: boolean;
   /** 이 항목에 붙는 플래너 수수료. 요율이 없으면 null 이며 화면은 '미정'으로 적는다. */
@@ -57,6 +63,14 @@ export type CartView = {
   items: CartItemView[];
   /** 지금 볼 수 있는 항목만으로 계산한 합계. */
   total: OrderTotal | null;
+  /**
+   * **플래너를 전부 뺀 기준**의 같은 합계.
+   *
+   * 비교표(S3-07)가 "같은 조건으로 보기" 를 제공하려면 두 기준이 모두 필요하다.
+   * 요율은 서버만 알기 때문에 클라이언트가 다시 계산할 수 없어, 두 벌을 함께 내려준다.
+   * **장바구니의 실제 선택은 건드리지 않는다** — 표시 기준일 뿐이다.
+   */
+  totalWithoutPlanner: OrderTotal | null;
   /** 내려간 상품 때문에 합계에서 빠진 항목 수. 숨기지 않고 알린다. */
   excludedCount: number;
 };
@@ -107,9 +121,16 @@ export async function loadCart(
     .eq("status", "active")
     .maybeSingle();
 
-  if (!cart) {
-    return { cartId: null, coupleId: params.coupleId, items: [], total: null, excludedCount: 0 };
-  }
+  const empty = {
+    cartId: null as string | null,
+    coupleId: params.coupleId,
+    items: [] as CartItemView[],
+    total: null,
+    totalWithoutPlanner: null,
+    excludedCount: 0,
+  };
+
+  if (!cart) return empty;
 
   const { data: itemRows } = await mine
     .from("cart_items")
@@ -119,9 +140,7 @@ export async function loadCart(
 
   const items = (itemRows ?? []) as CartRow[];
 
-  if (items.length === 0) {
-    return { cartId: cart.id, coupleId: params.coupleId, items: [], total: null, excludedCount: 0 };
-  }
+  if (items.length === 0) return { ...empty, cartId: cart.id };
 
   // **상품은 공개 조건으로 읽는다.** 내려간 상품이 장바구니에서만 살아 있으면
   // 고객이 살 수 없는 것을 살 수 있는 것처럼 합산하게 된다.
@@ -136,7 +155,7 @@ export async function loadCart(
   const { data: productRows } = await client
     .from("products")
     .select(
-      "id, vendor_id, name, category, base_price_total, price_includes_vat, add_ons_declared_at",
+      "id, vendor_id, name, category, base_price_total, price_includes_vat, add_ons_declared_at, capacity_min, capacity_max, included_items_json",
     )
     .in("id", [...new Set(items.map((item) => item.product_id))]);
 
@@ -149,6 +168,9 @@ export async function loadCart(
       base_price_total: number;
       price_includes_vat: boolean;
       add_ons_declared_at: string | null;
+      capacity_min: number | null;
+      capacity_max: number | null;
+      included_items_json: unknown;
     }[]).map((row) => [row.id, row]),
   );
 
@@ -157,12 +179,14 @@ export async function loadCart(
   const { data: vendorRows } = visibleIds.length
     ? await client
         .from("vendors")
-        .select("id, name")
+        .select("id, name, region_code")
         .in("id", [...new Set([...products.values()].map((product) => product.vendor_id))])
     : { data: [] };
 
   const vendors = new Map(
-    ((vendorRows ?? []) as { id: string; name: string }[]).map((row) => [row.id, row]),
+    ((vendorRows ?? []) as { id: string; name: string; region_code: string | null }[]).map(
+      (row) => [row.id, row],
+    ),
   );
 
   const { data: optionRows } = visibleIds.length
@@ -212,6 +236,12 @@ export async function loadCart(
         isMandatory: option.is_mandatory,
         note: (option.trigger_condition?.description as string | undefined) ?? null,
       })),
+      includedItemCount: Array.isArray(product?.included_items_json)
+        ? (product.included_items_json as unknown[]).length
+        : 0,
+      capacityMin: product?.capacity_min ?? null,
+      capacityMax: product?.capacity_max ?? null,
+      regionCode: vendor?.region_code ?? null,
       options: item.options_json ?? {},
       plannerSelected: item.planner_selected,
       plannerFeeAmount: null,
@@ -227,23 +257,29 @@ export async function loadCart(
 
   const priceable = views.filter((view) => view.basePrice !== null);
 
+  const lineOf = (view: CartItemView, plannerSelected: boolean) => ({
+    lineId: view.itemId,
+    category: view.category ?? undefined,
+    salePrice: view.basePrice!,
+    addOns: view.addOns,
+    plannerSelected,
+    plannerFeeRateBp: resolvePlannerRate(plannerRates, view.category ?? "", at),
+    // 업체 정산 요율이다. **고객 화면에는 쓰지 않는다.**
+    // 여기서 넘기는 0은 정산 계산을 성립시키기 위한 자리채움이며, 그래서
+    // 이 함수는 결과의 settlement 를 밖으로 내보내지 않는다(위 CartItemView 참조).
+    feeRateBp: 0,
+  });
+
   const total =
     priceable.length === 0
       ? null
-      : calculateOrderTotal(
-          priceable.map((view) => ({
-            lineId: view.itemId,
-            category: view.category ?? undefined,
-            salePrice: view.basePrice!,
-            addOns: view.addOns,
-            plannerSelected: view.plannerSelected,
-            plannerFeeRateBp: resolvePlannerRate(plannerRates, view.category ?? "", at),
-            // 업체 정산 요율이다. **고객 화면에는 쓰지 않는다.**
-            // 여기서 넘기는 0은 정산 계산을 성립시키기 위한 자리채움이며, 그래서
-            // 이 함수는 결과의 settlement 를 밖으로 내보내지 않는다(위 CartItemView 참조).
-            feeRateBp: 0,
-          })),
-        );
+      : calculateOrderTotal(priceable.map((view) => lineOf(view, view.plannerSelected)));
+
+  // 비교표가 쓰는 '플래너 빼고 같은 조건' 기준. 요율은 서버만 알기 때문에 여기서 함께 낸다.
+  const totalWithoutPlanner =
+    priceable.length === 0
+      ? null
+      : calculateOrderTotal(priceable.map((view) => lineOf(view, false)));
 
   // 항목별 플래너 금액을 되돌려 담는다. 화면이 다시 계산하지 않게 하기 위해서다.
   if (total) {
@@ -263,6 +299,7 @@ export async function loadCart(
     coupleId: params.coupleId,
     items: views,
     total,
+    totalWithoutPlanner,
     excludedCount: views.length - priceable.length,
   };
 }
