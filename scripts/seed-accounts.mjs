@@ -42,6 +42,18 @@ const ACCOUNTS = [
     displayName: "업체 담당자",
     note: "vendor staff - cannot change price/settlement (S2-07)",
   },
+  {
+    email: "couple-a@local.test",
+    role: "consumer",
+    displayName: "예비부부 A",
+    note: "consumer - onboarding owner (S3-01)",
+  },
+  {
+    email: "couple-b@local.test",
+    role: "consumer",
+    displayName: "예비부부 B",
+    note: "consumer - couple invite acceptor (S3-01)",
+  },
 ];
 
 // ── args ────────────────────────────────────────────────────────────────────
@@ -286,6 +298,11 @@ async function main() {
   console.log(`    application : ${vendor.applicationStatus}`);
   console.log("    members     : vendor@local.test (owner) + staff@local.test (staff)");
   console.log("");
+  console.log("  consumer accounts (S3-01)");
+  console.log("    couple-a@local.test -> /onboarding 6 steps, then issue an invite code");
+  console.log("    couple-b@local.test -> accept that code to share one couple");
+  console.log("    (both start with no couple - onboarding creates it)");
+  console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);
   console.log(`    2. ${APP_URL}/admin/vendors  -> approve the seeded application`);
@@ -293,6 +310,7 @@ async function main() {
   console.log(`    4. ${APP_URL}/vendor/apply , /vendor/profile , /vendor/products`);
   console.log(`    5. ${APP_URL}/vendor/members -> staff@local.test 로 로그인하면`);
   console.log("       판매가/추가금 저장이 막히는 것을 확인할 수 있다");
+  console.log(`    6. ${APP_URL}/login -> couple-a@local.test -> ${APP_URL}/onboarding`);
   console.log("");
   console.log("  re-arm the approval demo: npm run seed:accounts -- --reset");
   console.log("");

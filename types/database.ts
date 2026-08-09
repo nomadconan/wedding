@@ -3101,6 +3101,7 @@ export type Database = {
       is_any_vendor_member: { Args: never; Returns: boolean }
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
+      is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {

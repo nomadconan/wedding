@@ -10,16 +10,27 @@ import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 
 /**
- * 이메일·비밀번호 로그인 (S2-01)
+ * 이메일·비밀번호 로그인 (S2-01) + 소셜 로그인 자리 (S3-01)
  *
- * 소셜 로그인(카카오/네이버/구글/애플)은 **S3-01 소비자 온보딩**에서 붙인다.
- * 여기서는 업체 신청자가 들어올 수 있는 최소 경로만 만든다 —
- * 로그인이 없으면 입점 신청 자체가 성립하지 않기 때문이다.
+ * 소셜 4종(카카오·네이버·구글·애플)은 **콜백 라우트와 버튼까지만** 만들어 두고
+ * `NEXT_PUBLIC_SOCIAL_AUTH_ENABLED` 로 노출을 제어한다. provider 키 발급·등록은
+ * 코드가 아니라 계정 작업이라 별도 태스크(S3-01b)로 분리했다 —
+ * "만들어 두고 켜지 않는다"(CLAUDE.md §2.1).
  *
  * 세션은 `@supabase/ssr` 브라우저 클라이언트가 **쿠키**에 넣는다.
  * 그래서 서버 컴포넌트·미들웨어·Route Handler 가 같은 세션을 그대로 읽는다.
  */
 type Mode = "signin" | "signup";
+
+/** §2.1 이 요구하는 소셜 4종. 켜기 전까지 버튼은 비활성이다. */
+const SOCIAL_PROVIDERS = [
+  { id: "kakao", label: "카카오" },
+  { id: "naver", label: "네이버" },
+  { id: "google", label: "구글" },
+  { id: "apple", label: "애플" },
+] as const;
+
+const SOCIAL_ENABLED = process.env.NEXT_PUBLIC_SOCIAL_AUTH_ENABLED === "true";
 
 export function LoginForm() {
   const router = useRouter();
@@ -148,6 +159,42 @@ export function LoginForm() {
           {pending ? "처리 중…" : mode === "signup" ? "가입하고 시작하기" : "로그인"}
         </Button>
       </form>
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-caption text-muted-foreground">또는</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2" data-testid="social-buttons">
+          {SOCIAL_PROVIDERS.map((provider) => (
+            <Button
+              key={provider.id}
+              type="button"
+              variant="outline"
+              disabled={!SOCIAL_ENABLED || pending}
+              onClick={async () => {
+                const supabase = createClient();
+                await supabase.auth.signInWithOAuth({
+                  provider: provider.id as "google",
+                  options: {
+                    redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+                  },
+                });
+              }}
+            >
+              {provider.label}
+            </Button>
+          ))}
+        </div>
+
+        {SOCIAL_ENABLED ? null : (
+          <p className="text-center text-caption text-muted-foreground">
+            소셜 로그인은 준비 중이에요. 지금은 이메일로 시작해 주세요.
+          </p>
+        )}
+      </div>
 
       <div className="text-center">
         <Button

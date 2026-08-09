@@ -19,7 +19,8 @@
     "db:start": "supabase start",
     "db:reset": "supabase db reset",
     "db:diff": "supabase db diff",
-    "db:types": "supabase gen types typescript --local > types/database.ts"
+    "db:types": "supabase gen types typescript --local > types/database.ts",
+    "db:rls": "node --env-file=.env.local scripts/rls-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
