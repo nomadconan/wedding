@@ -47,6 +47,7 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
+  { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },
   { href: "/vendor/members", label: "멤버 관리", icon: Users },
   { href: "/vendor/settings", label: "설정", icon: Settings },
 ];
