@@ -3142,6 +3142,7 @@ export type Database = {
           name: string
           region_code: string | null
           status: Database["public"]["Enums"]["vendor_status"]
+          style_tags: string[]
           updated_at: string
         }
         Insert: {
@@ -3159,6 +3160,7 @@ export type Database = {
           name: string
           region_code?: string | null
           status?: Database["public"]["Enums"]["vendor_status"]
+          style_tags?: string[]
           updated_at?: string
         }
         Update: {
@@ -3176,6 +3178,7 @@ export type Database = {
           name?: string
           region_code?: string | null
           status?: Database["public"]["Enums"]["vendor_status"]
+          style_tags?: string[]
           updated_at?: string
         }
         Relationships: []

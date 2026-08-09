@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 
+import { STYLE_TAGS } from "./onboarding";
+
 /**
  * 시설·포함 서비스 코드.
  *
@@ -81,6 +83,14 @@ export const VendorProfileInputSchema = z.object({
   capacityMin: CapacitySchema.default(null),
   capacityMax: CapacitySchema.default(null),
   facilities: z.array(VendorFacilitySchema).max(VENDOR_FACILITIES.length).default([]),
+  /**
+   * 업체 스타일(S3-03 · F-C-10 필터).
+   *
+   * 어휘는 **커플 온보딩과 같은 것**을 쓴다. 업체용 목록을 따로 두면 "커플이 고른
+   * 내추럴"과 "업체가 적은 내추럴"이 다른 값이 되어 매칭이 성립하지 않는다.
+   * 비워 둘 수 있다 — 적지 않은 것과 "해당 없음"은 다르므로 강제하지 않는다.
+   */
+  styleTags: z.array(z.enum(STYLE_TAGS)).max(STYLE_TAGS.length).default([]),
   intro: z.string().trim().max(2000, "소개문은 2000자까지 쓸 수 있습니다.").nullable().default(null),
 })
   .refine(
@@ -130,6 +140,7 @@ export const VENDOR_PROFILE_FIELD_LABEL: Record<string, string> = {
   capacity_min: "수용 인원(최소)",
   capacity_max: "수용 인원(최대)",
   facilities: "시설·포함 서비스",
+  style_tags: "스타일",
   intro: "소개문",
   media: "미디어",
 };

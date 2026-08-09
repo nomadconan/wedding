@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { STYLE_TAGS, STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import {
   VENDOR_FACILITIES,
   VENDOR_FACILITY_LABEL,
@@ -45,6 +46,7 @@ export type VendorProfileFormProps = {
     capacityMin: string;
     capacityMax: string;
     facilities: VendorFacility[];
+    styleTags: StyleTag[];
     intro: string;
   };
   media: MediaItem[];
@@ -57,6 +59,7 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const [facilities, setFacilities] = useState<VendorFacility[]>(defaults.facilities);
+  const [styleTags, setStyleTags] = useState<StyleTag[]>(defaults.styleTags);
   const [items, setItems] = useState<MediaItem[]>(media);
   const [removed, setRemoved] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -69,6 +72,10 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
 
   function toggleFacility(code: VendorFacility, on: boolean) {
     setFacilities((prev) => (on ? [...new Set([...prev, code])] : prev.filter((v) => v !== code)));
+  }
+
+  function toggleStyle(code: StyleTag, on: boolean) {
+    setStyleTags((prev) => (on ? [...new Set([...prev, code])] : prev.filter((v) => v !== code)));
   }
 
   function move(id: string, direction: -1 | 1) {
@@ -123,6 +130,7 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
             capacityMin: toNumber(form.get("capacityMin")),
             capacityMax: toNumber(form.get("capacityMax")),
             facilities,
+            styleTags,
             intro: String(form.get("intro") ?? "").trim() || null,
           },
           media: {
@@ -238,6 +246,34 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
                 />
                 <Label htmlFor={`facility-${code}`} className="font-normal">
                   {VENDOR_FACILITY_LABEL[code]}
+                </Label>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>스타일</Label>
+          {/*
+            고객이 탐색에서 스타일로 거를 때 쓰는 값이다(S3-03 · F-C-10).
+            어휘는 커플 온보딩과 같은 목록이라 "커플이 고른 내추럴"과 여기서 고른 값이
+            같은 값이 된다. 적지 않으면 스타일 필터에는 걸리지 않는다 — 등급이 아니라
+            분류이므로 안 적었다고 불리해지는 것은 없다.
+          */}
+          <p className="text-caption text-muted-foreground">
+            고객이 탐색 화면에서 스타일로 찾을 때 쓰입니다. 적지 않으면 스타일 필터에는
+            걸리지 않습니다.
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="vendor-style-tags">
+            {STYLE_TAGS.map((code) => (
+              <div key={code} className="flex items-center gap-2">
+                <Checkbox
+                  id={`style-${code}`}
+                  checked={styleTags.includes(code)}
+                  onCheckedChange={(checked) => toggleStyle(code, checked === true)}
+                />
+                <Label htmlFor={`style-${code}`} className="font-normal">
+                  {STYLE_TAG_LABEL[code]}
                 </Label>
               </div>
             ))}

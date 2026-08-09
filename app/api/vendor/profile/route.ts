@@ -29,7 +29,7 @@ const MEDIA_BUCKET = "vendor-media";
 
 /** 프로필 컬럼만 고른다. 심사 대상 정보(name·category·status)는 여기서 바뀌지 않는다. */
 const PROFILE_COLUMNS =
-  "id, name, category, status, region_code, address, address_detail, capacity_min, capacity_max, facilities, intro";
+  "id, name, category, status, region_code, address, address_detail, capacity_min, capacity_max, facilities, style_tags, intro";
 
 function safeFileName(fileName: string): string {
   const ext = fileName.includes(".") ? fileName.split(".").pop()!.toLowerCase().slice(0, 8) : "bin";
@@ -114,6 +114,8 @@ export async function PUT(request: NextRequest) {
     capacity_min: profile.capacityMin,
     capacity_max: profile.capacityMax,
     facilities: profile.facilities,
+    // 탐색 스타일 필터의 유일한 데이터 출처다(S3-03 · F-C-10).
+    style_tags: profile.styleTags,
     intro: profile.intro,
   };
 

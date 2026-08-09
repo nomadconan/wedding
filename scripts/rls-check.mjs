@@ -379,5 +379,69 @@ check(
       rollback;`)),
 );
 
+// =============================================================================
+// 탐색 공개 노출 (S3-03)
+// -----------------------------------------------------------------------------
+// `/explore` 는 비로그인도 본다(§1.4). 그래서 **anon 이 무엇을 볼 수 있는가** 가 곧
+// 카탈로그의 경계다. 앱이 조회 조건을 잘못 써도 DB 가 막아야 한다.
+// =============================================================================
+const EV_ACTIVE = "00000000-0000-0000-0000-00000000e001";
+const EV_PENDING = "00000000-0000-0000-0000-00000000e002";
+const EP_PUB = "00000000-0000-0000-0000-00000000e003";
+const EP_DRAFT = "00000000-0000-0000-0000-00000000e004";
+const EP_HIDDEN = "00000000-0000-0000-0000-00000000e005";
+
+const exploreFixture = `
+  insert into public.vendors (id, name, category, status, region_code, style_tags)
+    values ('${EV_ACTIVE}', 'RLS공개업체', 'hall', 'active', '서울', array['modern']),
+           ('${EV_PENDING}', 'RLS심사중업체', 'hall', 'pending', '서울', array['modern']);
+  insert into public.products
+    (id, vendor_id, category, name, base_price_total, status, included_items_json, add_ons_declared_at)
+    values
+      ('${EP_PUB}', '${EV_ACTIVE}', 'hall', '게시상품', 10000000, 'published', '[{"label":"대관료"}]'::jsonb, now()),
+      ('${EP_DRAFT}', '${EV_ACTIVE}', 'hall', '작성중상품', 9000000, 'draft', '[]'::jsonb, null),
+      ('${EP_HIDDEN}', '${EV_PENDING}', 'hall', '미승인업체상품', 8000000, 'published', '[{"label":"대관료"}]'::jsonb, now());
+  insert into public.product_options (product_id, name, price, is_mandatory, trigger_condition)
+    values ('${EP_DRAFT}', '작성중 추가금', 500000, true, '{}'::jsonb),
+           ('${EP_HIDDEN}', '미승인 추가금', 500000, true, '{}'::jsonb);
+  insert into public.price_rules
+    (vendor_id, product_id, rule_type, condition_json, adjust_type, adjust_value, floor_price, priority, is_active)
+    values ('${EV_ACTIVE}', '${EP_PUB}', 'season', '{"from":"2027-05-01","to":"2027-05-31"}'::jsonb,
+            'percent_bp', -1000, 7000000, 10, true);
+`;
+
+check(
+  "비로그인은 승인된 업체만 본다",
+  asAnon(`select count(*) from public.vendors where id in ('${EV_ACTIVE}', '${EV_PENDING}');`,
+    exploreFixture) === "1",
+);
+check(
+  "비로그인은 게시된 상품만 본다",
+  asAnon(`select count(*) from public.products
+     where id in ('${EP_PUB}', '${EP_DRAFT}', '${EP_HIDDEN}');`, exploreFixture) === "1",
+);
+check(
+  "비로그인은 작성 중·미승인 상품의 추가금도 못 본다",
+  asAnon(`select count(*) from public.product_options
+     where product_id in ('${EP_DRAFT}', '${EP_HIDDEN}');`, exploreFixture) === "0",
+);
+// 룰에는 그 업체가 받아들일 수 있는 최저가(floor_price)가 들어 있다. 고객도 경쟁사도 볼 일이 없다.
+check(
+  "비로그인은 프라이싱 룰을 못 본다 (floor_price 비공개)",
+  asAnon(`select count(*) from public.price_rules where vendor_id = '${EV_ACTIVE}';`,
+    exploreFixture) === "0",
+);
+check(
+  "남의 업체 프라이싱 룰도 못 본다",
+  asUser(owner, `select count(*) from public.price_rules where vendor_id = '${EV_ACTIVE}';`,
+    exploreFixture) === "0",
+);
+// anon 에는 UPDATE 권한 자체가 없다. RLS 보다 한 겹 앞에서 끊긴다 — 더 강한 경계다.
+check(
+  "비로그인은 게시 상품을 고칠 수 없다 (권한 없음)",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asAnon(`update public.products set base_price_total = 1;`, exploreFixture)),
+);
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
