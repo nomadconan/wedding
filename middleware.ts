@@ -21,7 +21,15 @@ import { NextResponse, type NextRequest } from "next/server";
  * HTTP 상태는 이미 200 으로 확정된 뒤다(클라이언트 스크립트로만 이동한다).
  * 미인증 접근을 상태 코드로 끊으려면 미들웨어에서 막아야 한다.
  */
-const PROTECTED_PREFIXES = ["/vendor", "/admin", "/onboarding", "/cart", "/wishlist"];
+const PROTECTED_PREFIXES = [
+  "/vendor",
+  "/admin",
+  "/onboarding",
+  "/cart",
+  "/wishlist",
+  // 탐색은 열려 있지만 **비교는 장바구니 기반**이라 로그인이 필요하다(S3-07).
+  "/explore/compare",
+];
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });

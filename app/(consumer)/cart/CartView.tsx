@@ -282,6 +282,15 @@ export function CartView({ cart }: { cart: CartData }) {
         </Card>
       ) : null}
 
+      {/* 비교 진입(§6.2 /cart 핵심 요소). 담은 것을 나란히 견주는 화면으로 간다. */}
+      <Link
+        href="/explore/compare"
+        className="block rounded-md border border-border px-3 py-2 text-center text-sm font-medium text-foreground"
+        data-testid="go-compare"
+      >
+        담은 것 비교하기
+      </Link>
+
       {/* 거래로 이어지는 화면이므로 중개자 지위를 고지한다(D-24 · §6). */}
       <BrokerNotice variant="inline" />
     </div>
