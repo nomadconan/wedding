@@ -21,6 +21,7 @@ import {
   productPublishBlockers,
   type IncludedItem,
 } from "@/lib/core/schemas/product";
+import { ADD_ONS_PUBLISH_BLOCKER, type AddOnSummary } from "@/lib/core/schemas/product-option";
 import {
   VENDOR_CATEGORIES,
   VENDOR_CATEGORY_LABEL,
@@ -57,6 +58,11 @@ export type ProductFormProps = {
     priceIncludesVat: boolean;
   };
   rate: RateInfo;
+  /**
+   * 추가금 사전 등록 상태(F-V-04). 신규 등록 화면에는 아직 상품이 없으므로 미등록이다.
+   * `PriceDisplay` 가 '없음'과 '미등록'을 다르게 그린다.
+   */
+  addOns?: AddOnSummary;
   /** 업체 기본 카테고리. 신규 등록의 초기값이다. */
   defaultCategory: string;
   canEdit: boolean;
@@ -68,7 +74,13 @@ const SCOPE_LABEL: Record<string, string> = {
   global: "전역 요율",
 };
 
-export function ProductForm({ product, rate, defaultCategory, canEdit }: ProductFormProps) {
+export function ProductForm({
+  product,
+  rate,
+  addOns = { kind: "unknown" },
+  defaultCategory,
+  canEdit,
+}: ProductFormProps) {
   const router = useRouter();
   const isEdit = Boolean(product);
 
@@ -96,6 +108,9 @@ export function ProductForm({ product, rate, defaultCategory, canEdit }: Product
     basePriceTotal: priceValid ? priceNumber : 0,
     includedItems: items,
   });
+
+  // 추가금 확정도 게시 조건이다(F-V-04). 판정은 API·DB 와 같은 상수를 쓴다.
+  if (addOns.kind === "unknown") blockers.push({ ...ADD_ONS_PUBLISH_BLOCKER });
 
   // 요율이 있을 때만 금액을 만든다. 없으면 계산 자체를 하지 않는다.
   const settlement =
@@ -322,8 +337,7 @@ export function ProductForm({ product, rate, defaultCategory, canEdit }: Product
               amount={priceValid ? priceNumber : "unknown"}
               basePrice={priceValid ? priceNumber : "unknown"}
               taxIncluded={product?.priceIncludesVat ?? true}
-              // 추가금 사전 등록은 S2-04 다. 아직 등록하지 않았다는 사실을 그대로 적는다.
-              addOns={{ kind: "unknown" }}
+              addOns={addOns}
               // 업체 화면은 플래너 선택 맥락이 아니다.
               plannerFee={{ kind: "unavailable" }}
               size="md"
