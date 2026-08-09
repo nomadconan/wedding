@@ -2105,6 +2105,9 @@ export type Database = {
           id: string
           included_items_json: Json
           name: string
+          price_includes_vat: boolean
+          published_at: string | null
+          status: string
           updated_at: string
           vendor_id: string
         }
@@ -2117,6 +2120,9 @@ export type Database = {
           id?: string
           included_items_json?: Json
           name: string
+          price_includes_vat?: boolean
+          published_at?: string | null
+          status?: string
           updated_at?: string
           vendor_id: string
         }
@@ -2129,6 +2135,9 @@ export type Database = {
           id?: string
           included_items_json?: Json
           name?: string
+          price_includes_vat?: boolean
+          published_at?: string | null
+          status?: string
           updated_at?: string
           vendor_id?: string
         }
