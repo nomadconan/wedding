@@ -415,6 +415,99 @@ export type Database = {
           },
         ]
       }
+      cart_items: {
+        Row: {
+          added_by: string
+          cart_id: string
+          created_at: string
+          id: string
+          options_json: Json
+          planner_selected: boolean
+          price_at_add: number
+          product_id: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          added_by: string
+          cart_id: string
+          created_at?: string
+          id?: string
+          options_json?: Json
+          planner_selected?: boolean
+          price_at_add: number
+          product_id: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          added_by?: string
+          cart_id?: string
+          created_at?: string
+          id?: string
+          options_json?: Json
+          planner_selected?: boolean
+          price_at_add?: number
+          product_id?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cart_items_cart_id_fkey"
+            columns: ["cart_id"]
+            isOneToOne: false
+            referencedRelation: "carts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cart_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cart_items_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      carts: {
+        Row: {
+          couple_id: string
+          created_at: string
+          id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          couple_id: string
+          created_at?: string
+          id?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          couple_id?: string
+          created_at?: string
+          id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "carts_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       commission_rates: {
         Row: {
           created_at: string
@@ -3087,12 +3180,68 @@ export type Database = {
         }
         Relationships: []
       }
+      wishlists: {
+        Row: {
+          added_by: string
+          couple_id: string
+          created_at: string
+          id: string
+          price_at_add: number | null
+          product_id: string | null
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          added_by: string
+          couple_id: string
+          created_at?: string
+          id?: string
+          price_at_add?: number | null
+          product_id?: string | null
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          added_by?: string
+          couple_id?: string
+          created_at?: string
+          id?: string
+          price_at_add?: number | null
+          product_id?: string | null
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wishlists_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wishlists_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wishlists_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
+      cart_couple_id: { Args: { p_cart_id: string }; Returns: string }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean

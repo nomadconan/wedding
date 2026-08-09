@@ -52,10 +52,17 @@ function sql(text) {
   ).trim();
 }
 
-/** 특정 사용자 세션으로 실행한다. 트랜잭션을 되돌려 DB 를 더럽히지 않는다. */
-function asUser(userId, body) {
+/**
+ * 특정 사용자 세션으로 실행한다. 트랜잭션을 되돌려 DB 를 더럽히지 않는다.
+ *
+ * `setup` 은 **역할을 바꾸기 전에** postgres 로 실행된다(RLS 를 지나간다).
+ * 시험용 데이터를 만들 때 쓴다 — 같은 트랜잭션이라 rollback 으로 함께 사라진다.
+ * 역할은 한 번 내려가면 되돌릴 수 없으므로 setup 이 먼저다.
+ */
+function asUser(userId, body, setup = "") {
   return sql(
     `begin;\n` +
+    `${setup ? `${setup}\n` : ""}` +
     `set local role authenticated;\n` +
     `set local request.jwt.claims = '${JSON.stringify({
       sub: userId, role: "authenticated", aud: "authenticated",
@@ -63,6 +70,29 @@ function asUser(userId, body) {
     `${body}\n` +
     `rollback;`,
   );
+}
+
+/** anon(비로그인) 세션. 공개 데이터 외에는 아무것도 보이면 안 된다. */
+function asAnon(body, setup = "") {
+  return sql(
+    `begin;\n` +
+    `${setup ? `${setup}\n` : ""}` +
+    `set local role anon;\n` +
+    `set local request.jwt.claims = '{"role":"anon"}';\n` +
+    `${body}\n` +
+    `rollback;`,
+  );
+}
+
+/** 거절돼야 정상인 문장. 기대한 사유로 끊겼으면 true. */
+function rejectedWith(pattern, run) {
+  try {
+    run();
+
+    return false;
+  } catch (error) {
+    return pattern.test(String(error.stderr ?? error));
+  }
 }
 
 const results = [];
@@ -83,6 +113,9 @@ const idOf = (email) => users.users?.find((u) => u.email === email)?.id ?? null;
 const owner = idOf("couple-a@local.test");
 const partner = idOf("couple-b@local.test");
 const outsider = idOf("vendor@local.test");
+// 플래너 위임 시험용. 커플 구성원만 아니면 된다 — 플래너 판정은 couple_members 가
+// 아니라 planner_engagements 로만 이뤄지고, 그것을 확인하는 것이 이 검사의 목적이다.
+const vendorStaff = idOf("staff@local.test");
 
 if (!owner || !partner || !outsider) {
   console.error("시드 계정이 없다. npm run seed:accounts 를 먼저 실행한다.");
@@ -144,32 +177,207 @@ check(
 );
 
 // 끼어들기는 에러(42501)로 끊겨야 한다 — 조용한 0 행이 아니라 거절이어야 한다.
-let intruded;
-try {
-  asUser(outsider, `insert into public.couple_members (couple_id, user_id, member_role)
-     values ('${coupleId}', '${outsider}', 'partner');`);
-  intruded = true;
-} catch (error) {
-  intruded = !/row-level security/i.test(String(error.stderr ?? error));
-}
-check("남은 남의 커플에 멤버로 끼어들 수 없다 (42501)", !intruded);
+check(
+  "남은 남의 커플에 멤버로 끼어들 수 없다 (42501)",
+  rejectedWith(/row-level security/i, () =>
+    asUser(outsider, `insert into public.couple_members (couple_id, user_id, member_role)
+       values ('${coupleId}', '${outsider}', 'partner');`)),
+);
 
 // ── 3) 한 사람 한 커플 ───────────────────────────────────────────────────────
-let duplicated;
-try {
-  sql(
-    `begin;
-     insert into public.couples (id, owner_id, stage)
-       values ('00000000-0000-0000-0000-0000000000ff', '${outsider}', 'onboarding');
-     insert into public.couple_members (couple_id, user_id, member_role)
-       values ('00000000-0000-0000-0000-0000000000ff', '${partner}', 'partner');
-     rollback;`,
+check(
+  "한 사람은 커플 하나에만 속한다 (부분 유니크)",
+  memberOf !== "1" || rejectedWith(/uq_couple_members_single_couple/, () =>
+    sql(`begin;
+      insert into public.couples (id, owner_id, stage)
+        values ('00000000-0000-0000-0000-0000000000ff', '${outsider}', 'onboarding');
+      insert into public.couple_members (couple_id, user_id, member_role)
+        values ('00000000-0000-0000-0000-0000000000ff', '${partner}', 'partner');
+      rollback;`)),
+);
+
+// =============================================================================
+// 장바구니 · 찜 (S3-04)
+// -----------------------------------------------------------------------------
+// 시험용 업체·상품·장바구니는 **트랜잭션 안에서 만들고 함께 되돌린다.**
+// 시드에 넣지 않는 이유는 `docs/06` §5-1 에 적어 뒀다 — 장바구니는 커플에 매달리고,
+// 커플은 온보딩을 밟아야 생긴다. 시드가 미리 만들면 온보딩 첫 화면을 볼 수 없게 된다.
+// =============================================================================
+const V = "00000000-0000-0000-0000-00000000c001"; // vendor
+const P1 = "00000000-0000-0000-0000-00000000c002"; // product
+const P2 = "00000000-0000-0000-0000-00000000c003"; // product (다른 상품)
+const CART = "00000000-0000-0000-0000-00000000c004";
+const PLANNER = "00000000-0000-0000-0000-00000000c005";
+
+/** 커플에 장바구니 1건 + 항목 1건 + 찜 1건을 붙인다. */
+const cartFixture = `
+  insert into public.vendors (id, name, category, status)
+    values ('${V}', 'RLS점검업체', 'hall', 'active');
+  insert into public.products (id, vendor_id, category, name, base_price_total)
+    values ('${P1}', '${V}', 'hall', 'RLS점검상품', 10000000),
+           ('${P2}', '${V}', 'hall', 'RLS점검상품2', 20000000);
+  insert into public.carts (id, couple_id, status)
+    values ('${CART}', '${coupleId}', 'active');
+  insert into public.cart_items (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+    values ('${CART}', '${V}', '${P1}', '{"a":1,"b":2}'::jsonb, '${owner}', 10000000);
+  insert into public.wishlists (couple_id, vendor_id, product_id, added_by, price_at_add)
+    values ('${coupleId}', '${V}', '${P2}', '${owner}', 20000000);
+`;
+
+/** 위 픽스처에 더해, 플래너 위임까지 붙인다(범위: carts·wishlists). */
+const plannerFixture = `${cartFixture}
+  insert into public.planners (id, user_id, status)
+    values ('${PLANNER}', '${vendorStaff ?? outsider}', 'active');
+  insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+    values ('${PLANNER}', '${coupleId}', '{"tables":["carts","wishlists"]}'::jsonb,
+            'active', now() - interval '1 day', now() + interval '30 days');
+`;
+
+// ── 당사자 양측 ──────────────────────────────────────────────────────────────
+check(
+  "담은 사람은 자기 장바구니를 본다",
+  asUser(owner, `select count(*) from public.cart_items;`, cartFixture) === "1",
+);
+check(
+  "찜도 본다",
+  asUser(owner, `select count(*) from public.wishlists;`, cartFixture) === "1",
+);
+
+if (memberOf === "1") {
+  check(
+    "배우자도 같은 장바구니를 본다 (커플 공유 · D-19)",
+    asUser(partner, `select count(*) from public.cart_items;`, cartFixture) === "1",
   );
-  duplicated = true;
-} catch (error) {
-  duplicated = !/uq_couple_members_single_couple/.test(String(error.stderr ?? error));
+  check(
+    "배우자도 담을 수 있다",
+    asUser(partner, `with i as (
+       insert into public.cart_items (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${partner}', 20000000) returning id)
+       select count(*) from i;`, cartFixture) === "1",
+  );
+  check(
+    "배우자가 담은 것을 소유자가 지울 수 있다",
+    asUser(owner, `with d as (delete from public.cart_items returning id) select count(*) from d;`,
+      cartFixture) === "1",
+  );
 }
-check("한 사람은 커플 하나에만 속한다 (부분 유니크)", memberOf === "1" ? !duplicated : true);
+
+// 담은 사람을 남으로 적을 수 없다 — 활동 기록의 작성자 표기가 거짓이 되면 안 된다.
+check(
+  "added_by 를 남의 이름으로 적을 수 없다 (42501)",
+  rejectedWith(/row-level security/i, () =>
+    asUser(owner, `insert into public.cart_items
+       (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${outsider}', 20000000);`, cartFixture)),
+);
+
+// ── 타 커플 격리 ─────────────────────────────────────────────────────────────
+for (const [label, table] of [
+  ["남은 남의 장바구니를 못 본다", "carts"],
+  ["남은 남의 장바구니 항목을 못 본다", "cart_items"],
+  ["남은 남의 찜을 못 본다", "wishlists"],
+]) {
+  check(label, asUser(outsider, `select count(*) from public.${table};`, cartFixture) === "0");
+}
+
+check(
+  "남은 남의 장바구니에 담을 수 없다 (42501)",
+  rejectedWith(/row-level security/i, () =>
+    asUser(outsider, `insert into public.cart_items
+       (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${outsider}', 20000000);`, cartFixture)),
+);
+check(
+  "남의 삭제는 한 행도 반영되지 않는다",
+  asUser(outsider, `with d as (delete from public.cart_items returning id) select count(*) from d;`,
+    cartFixture) === "0",
+);
+
+// ── anon ─────────────────────────────────────────────────────────────────────
+for (const [label, table] of [
+  ["비로그인은 장바구니를 못 본다", "carts"],
+  ["비로그인은 장바구니 항목을 못 본다", "cart_items"],
+  ["비로그인은 찜을 못 본다", "wishlists"],
+]) {
+  check(label, asAnon(`select count(*) from public.${table};`, cartFixture) === "0");
+}
+
+// ── 플래너 위임 ──────────────────────────────────────────────────────────────
+// 판단: **읽기는 준다, 쓰기는 주지 않는다.** 무엇을 후보로 두고 있는지 모르는 플래너는
+// 상담을 할 수 없다. 반면 planner_selected 는 플래너 자신의 수수료 스위치라(F-C-31)
+// 플래너가 켤 수 있으면 이해충돌이다.
+const plannerUser = vendorStaff ?? outsider;
+
+check(
+  "위임받은 플래너는 장바구니를 읽는다",
+  asUser(plannerUser, `select count(*) from public.cart_items;`, plannerFixture) === "1",
+);
+check(
+  "위임받은 플래너는 찜도 읽는다",
+  asUser(plannerUser, `select count(*) from public.wishlists;`, plannerFixture) === "1",
+);
+check(
+  "플래너는 담을 수 없다 (42501)",
+  rejectedWith(/row-level security/i, () =>
+    asUser(plannerUser, `insert into public.cart_items
+       (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${plannerUser}', 20000000);`, plannerFixture)),
+);
+check(
+  "플래너는 planner_selected 를 켤 수 없다 (이해충돌 차단)",
+  asUser(plannerUser, `with u as (update public.cart_items set planner_selected = true returning id)
+     select count(*) from u;`, plannerFixture) === "0",
+);
+check(
+  "위임 범위를 빼면 플래너도 못 본다",
+  asUser(plannerUser, `select count(*) from public.cart_items;`,
+    `${cartFixture}
+     insert into public.planners (id, user_id, status) values ('${PLANNER}', '${plannerUser}', 'active');
+     insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
+       values ('${PLANNER}', '${coupleId}', '{"tables":["tasks"]}'::jsonb, 'active');`) === "0",
+);
+
+// ── 중복 처리 ────────────────────────────────────────────────────────────────
+check(
+  "같은 상품·같은 옵션은 두 번 담기지 않는다 (키 순서가 달라도 같은 값이다)",
+  rejectedWith(/uq_cart_items_product_options/, () =>
+    asUser(owner, `insert into public.cart_items
+       (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P1}', '{"b":2,"a":1}'::jsonb, '${owner}', 10000000);`, cartFixture)),
+);
+check(
+  "옵션이 다르면 별개 항목으로 담긴다",
+  asUser(owner, `with i as (
+     insert into public.cart_items (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+     values ('${CART}', '${V}', '${P1}', '{"a":9}'::jsonb, '${owner}', 10000000) returning id)
+     select count(*) from i;`, cartFixture) === "1",
+);
+check(
+  "활성 장바구니는 커플당 하나다",
+  rejectedWith(/uq_carts_active_per_couple/, () =>
+    asUser(owner, `insert into public.carts (couple_id, status) values ('${coupleId}', 'active');`,
+      cartFixture)),
+);
+check(
+  "지나간 장바구니는 여러 개일 수 있다",
+  asUser(owner, `with i as (
+     insert into public.carts (couple_id, status) values ('${coupleId}', 'abandoned') returning id)
+     select count(*) from i;`, cartFixture) === "1",
+);
+check(
+  "같은 대상을 두 번 찜할 수 없다",
+  rejectedWith(/uq_wishlists_target/, () =>
+    asUser(owner, `insert into public.wishlists (couple_id, vendor_id, product_id, added_by, price_at_add)
+       values ('${coupleId}', '${V}', '${P2}', '${owner}', 20000000);`, cartFixture)),
+);
+check(
+  "업체 찜에 가격을 넣을 수 없다 (짝 CHECK)",
+  rejectedWith(/wishlists_price_pair_chk/, () =>
+    sql(`begin;
+      insert into public.wishlists (couple_id, vendor_id, product_id, added_by, price_at_add)
+        values ('${coupleId}', '${V}', null, '${owner}', 1000);
+      rollback;`)),
+);
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
