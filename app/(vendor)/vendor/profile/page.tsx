@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
+import type { StyleTag } from "@/lib/core/schemas/onboarding";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import {
   VENDOR_PROFILE_FIELD_LABEL,
@@ -46,7 +47,7 @@ export default async function VendorProfilePage() {
   const { data: vendor, error } = await supabase
     .from("vendors")
     .select(
-      "id, name, category, status, region_code, address, address_detail, capacity_min, capacity_max, facilities, intro",
+      "id, name, category, status, region_code, address, address_detail, capacity_min, capacity_max, facilities, style_tags, intro",
     )
     .limit(1)
     .maybeSingle();
@@ -175,6 +176,7 @@ export default async function VendorProfilePage() {
                 capacityMin: vendor.capacity_min === null ? "" : String(vendor.capacity_min),
                 capacityMax: vendor.capacity_max === null ? "" : String(vendor.capacity_max),
                 facilities: (vendor.facilities ?? []) as VendorFacility[],
+                styleTags: (vendor.style_tags ?? []) as StyleTag[],
                 intro: vendor.intro ?? "",
               }}
               media={mediaItems}
