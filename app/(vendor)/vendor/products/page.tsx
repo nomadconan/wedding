@@ -13,6 +13,7 @@ import {
   VENDOR_PRICING_NOTICE,
   type ProductStatus,
 } from "@/lib/core/schemas/product";
+import { summarizeAddOns } from "@/lib/core/schemas/product-option";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { requireUser } from "@/lib/supabase/auth";
@@ -84,6 +85,20 @@ export default async function VendorProductsPage() {
     category: vendor.category,
   });
 
+  // 목록에서도 추가금 상태를 사실대로 보여준다 — '미등록'과 '없음'은 다른 정보다(F-V-04).
+  // 상품마다 조회하지 않고 한 번에 읽어 상품별로 나눈다.
+  const { data: allOptions } = await supabase
+    .from("product_options")
+    .select("product_id, price")
+    .in("product_id", (products ?? []).map((row) => row.id));
+
+  const optionsByProduct = new Map<string, { price: number }[]>();
+  for (const option of allOptions ?? []) {
+    const list = optionsByProduct.get(option.product_id) ?? [];
+    list.push({ price: option.price });
+    optionsByProduct.set(option.product_id, list);
+  }
+
   const published = (products ?? []).filter((row) => row.status === "published").length;
 
   return (
@@ -152,9 +167,10 @@ export default async function VendorProductsPage() {
                         amount={product.base_price_total}
                         basePrice={product.base_price_total}
                         taxIncluded={product.price_includes_vat}
-                        // 추가금 사전 등록(product_options)은 S2-04 다. 아직 등록 수단이
-                        // 없으므로 '없음'이 아니라 '미등록'이 사실이다.
-                        addOns={{ kind: "unknown" }}
+                        addOns={summarizeAddOns(
+                          product.add_ons_declared_at,
+                          optionsByProduct.get(product.id) ?? [],
+                        )}
                         plannerFee={{ kind: "unavailable" }}
                         size="sm"
                       />

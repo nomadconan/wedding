@@ -2097,6 +2097,7 @@ export type Database = {
       }
       products: {
         Row: {
+          add_ons_declared_at: string | null
           base_price_total: number
           capacity_max: number | null
           capacity_min: number | null
@@ -2112,6 +2113,7 @@ export type Database = {
           vendor_id: string
         }
         Insert: {
+          add_ons_declared_at?: string | null
           base_price_total: number
           capacity_max?: number | null
           capacity_min?: number | null
@@ -2127,6 +2129,7 @@ export type Database = {
           vendor_id: string
         }
         Update: {
+          add_ons_declared_at?: string | null
           base_price_total?: number
           capacity_max?: number | null
           capacity_min?: number | null

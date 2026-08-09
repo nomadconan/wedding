@@ -12,12 +12,15 @@ import {
   type IncludedItem,
   type ProductStatus,
 } from "@/lib/core/schemas/product";
+import { summarizeAddOns } from "@/lib/core/schemas/product-option";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import { loadOptions } from "@/lib/vendor/product-options";
 import { PRODUCT_COLUMNS, findMemberVendor, publishBlockersOf } from "@/lib/vendor/products";
 
 import { ProductForm, type RateInfo } from "../ProductForm";
+import { ProductOptions } from "./ProductOptions";
 import { PublishPanel } from "./PublishPanel";
 
 export const metadata: Metadata = {
@@ -82,6 +85,10 @@ export default async function ProductDetailPage({
 
   const status = product.status as ProductStatus;
 
+  // 추가금은 상품 총액과 같은 화면에서 확인할 수 있어야 한다(§6 공통 UI 규칙).
+  const options = await loadOptions(supabase, product.id);
+  const addOns = summarizeAddOns(product.add_ons_declared_at, options);
+
   return (
     <AdminShell
       role="vendor"
@@ -118,6 +125,24 @@ export default async function ProductDetailPage({
 
         <Card>
           <CardHeader>
+            <CardTitle className="text-base">추가금 사전 등록</CardTitle>
+            <CardDescription>
+              발생 가능한 추가금을 빠짐없이 적습니다. 등록하지 않은 항목은 계약 이후 청구할 수
+              없습니다.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProductOptions
+              productId={product.id}
+              options={options}
+              declaredAt={product.add_ons_declared_at}
+              canEdit={canEdit}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle className="text-base">상품 정보</CardTitle>
             <CardDescription>
               총액을 바꾸면 감사 로그에 기록되며, 확정된 계약의 정산에는 소급되지 않습니다.
@@ -136,6 +161,7 @@ export default async function ProductDetailPage({
                 priceIncludesVat: product.price_includes_vat,
               }}
               rate={rate}
+              addOns={addOns}
               defaultCategory={vendor?.category ?? product.category}
               canEdit={canEdit}
             />
