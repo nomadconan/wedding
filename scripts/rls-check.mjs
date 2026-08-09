@@ -211,6 +211,10 @@ const PLANNER = "00000000-0000-0000-0000-00000000c005";
 
 /** 커플에 장바구니 1건 + 항목 1건 + 찜 1건을 붙인다. */
 const cartFixture = `
+  -- 앞선 확인이 남긴 진짜 장바구니·찜을 먼저 치운다. 같은 트랜잭션이라 롤백으로 되돌아온다
+  -- (활성 장바구니는 커플당 하나이므로 지우지 않으면 부분 유니크에 걸린다).
+  delete from public.carts where couple_id = '${coupleId}';
+  delete from public.wishlists where couple_id = '${coupleId}';
   insert into public.vendors (id, name, category, status)
     values ('${V}', 'RLS점검업체', 'hall', 'active');
   insert into public.products (id, vendor_id, category, name, base_price_total)
@@ -377,6 +381,34 @@ check(
       insert into public.wishlists (couple_id, vendor_id, product_id, added_by, price_at_add)
         values ('${coupleId}', '${V}', null, '${owner}', 1000);
       rollback;`)),
+);
+
+// ── 장바구니 쓰기 (S3-05) ───────────────────────────────────────────────────
+// 화면·API 가 생겼으므로 **쓰기 경로**도 DB 가 막는지 본다. 앱 코드를 고쳐도 남의
+// 장바구니가 열리면 안 된다.
+if (memberOf === "1") {
+  check(
+    "배우자는 플래너 선택을 바꿀 수 있다 (당사자)",
+    asUser(partner, `with u as (update public.cart_items set planner_selected = true returning id)
+       select count(*) from u;`, cartFixture) === "1",
+  );
+}
+check(
+  "남은 남의 플래너 선택을 바꿀 수 없다",
+  asUser(outsider, `with u as (update public.cart_items set planner_selected = true returning id)
+     select count(*) from u;`, cartFixture) === "0",
+);
+check(
+  "남은 남의 찜을 지울 수 없다",
+  asUser(outsider, `with d as (delete from public.wishlists returning id) select count(*) from d;`,
+    cartFixture) === "0",
+);
+check(
+  "비로그인은 장바구니에 담을 수 없다",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asAnon(`insert into public.cart_items
+       (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+       values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${owner}', 20000000);`, cartFixture)),
 );
 
 // =============================================================================

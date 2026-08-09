@@ -65,6 +65,7 @@ export async function ExploreResults({ params }: { params: string }) {
 
   const user = await getSessionUser();
   const inCart = user ? await cartProductIds(user.id) : new Set<string>();
+  const wished = user ? await wishedProductIds(user.id) : new Set<string>();
 
   return (
     <div className="space-y-4">
@@ -117,6 +118,7 @@ export async function ExploreResults({ params }: { params: string }) {
               <VendorCard
                 row={row}
                 inCart={inCart.has(row.productId)}
+                inWishlist={wished.has(row.productId)}
                 signedIn={Boolean(user)}
                 showAvailability={input.date !== null}
               />
@@ -210,3 +212,19 @@ async function cartProductIds(userId: string): Promise<Set<string>> {
 }
 
 export default ExploreResults;
+
+/** 우리 커플이 찜한 상품 id. 카드의 '찜함' 표시에만 쓴다. */
+async function wishedProductIds(userId: string): Promise<Set<string>> {
+  const membership = await findMyCouple(userId);
+  if (!membership) return new Set();
+
+  const admin = createAdminClient();
+
+  const { data } = await admin
+    .from("wishlists")
+    .select("product_id")
+    .eq("couple_id", membership.coupleId)
+    .not("product_id", "is", null);
+
+  return new Set((data ?? []).map((row) => (row as { product_id: string }).product_id));
+}

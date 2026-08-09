@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+import { CartActions } from "@/components/domain/CartActions";
 import { PriceDisplay, formatKrw } from "@/components/domain/PriceDisplay";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -73,6 +72,7 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
 
   const user = await getSessionUser();
   const inCart = user ? await cartProducts(user.id) : new Set<string>();
+  const wished = user ? await wishedProducts(user.id) : new Set<string>();
 
   return (
     <div className="space-y-4">
@@ -151,26 +151,16 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
                 <p className="text-caption text-muted-foreground">{ADD_ONS_POLICY_NOTICE}</p>
               </div>
 
-              {user ? (
-                <button
-                  type="button"
-                  disabled
-                  data-testid="add-to-cart"
-                  className="w-full rounded-md bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground disabled:opacity-60"
-                  // 담기 동작(POST /api/cart)은 S3-05 다. 버튼과 담긴 상태만 먼저 둔다.
-                  title="장바구니 담기는 곧 열립니다"
-                >
-                  {inCart.has(product.id) ? "담김" : "담기 준비 중"}
-                </button>
-              ) : (
-                <Link
-                  href={`/login?next=${encodeURIComponent(`/explore/${vendorId}`)}`}
-                  data-testid="add-to-cart-guest"
-                  className="block w-full rounded-md bg-secondary px-3 py-2 text-center text-sm font-medium text-secondary-foreground"
-                >
-                  로그인하고 담기
-                </Link>
-              )}
+              <div className="flex">
+                <CartActions
+                  productId={product.id}
+                  vendorId={vendorId}
+                  inCart={inCart.has(product.id)}
+                  inWishlist={wished.has(product.id)}
+                  signedIn={Boolean(user)}
+                  next={`/explore/${vendorId}`}
+                />
+              </div>
             </CardContent>
           </Card>
         );
@@ -200,3 +190,21 @@ async function cartProducts(userId: string): Promise<Set<string>> {
 }
 
 export default VendorProducts;
+
+/** 우리 커플이 찜한 상품 id. 버튼의 '찜함' 표시에만 쓴다. */
+async function wishedProducts(userId: string): Promise<Set<string>> {
+  const membership = await findMyCouple(userId);
+  if (!membership) return new Set();
+
+  const admin = createAdminClient();
+
+  const { data } = await admin
+    .from("wishlists")
+    .select("product_id")
+    .eq("couple_id", membership.coupleId)
+    .not("product_id", "is", null);
+
+  return new Set(
+    (data ?? []).map((row) => (row as { product_id: string }).product_id),
+  );
+}
