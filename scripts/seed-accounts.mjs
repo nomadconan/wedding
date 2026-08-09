@@ -36,6 +36,12 @@ const ACCOUNTS = [
     displayName: "업체 대표",
     note: "vendor owner (vendor_members)",
   },
+  {
+    email: "staff@local.test",
+    role: "vendor_staff",
+    displayName: "업체 담당자",
+    note: "vendor staff - cannot change price/settlement (S2-07)",
+  },
 ];
 
 // ── args ────────────────────────────────────────────────────────────────────
@@ -163,7 +169,7 @@ async function upsertAccount(account) {
  * `status = 'pending'` + 신청서 `submitted` 로 둔다. 그래야 admin 계정으로
  * `/admin/vendors` 에서 **실제 승인 플로우를 처음부터 밟아 볼 수 있다.**
  */
-async function seedVendor(vendorUser) {
+async function seedVendor(vendorUser, staffUser) {
   const members = await rest(
     `vendor_members?user_id=eq.${vendorUser.id}&select=vendor_id&limit=1`,
   );
@@ -194,6 +200,23 @@ async function seedVendor(vendorUser) {
         vendor_id: vendorId,
         user_id: vendorUser.id,
         vendor_role: "owner",
+      }),
+    });
+  }
+
+  // staff 계정을 같은 업체에 붙인다. 권한 제한(가격·정산 불가)을 화면에서 확인하려면
+  // 담당자 계정이 실제로 있어야 한다(S2-07).
+  const staffMembers = await rest(
+    `vendor_members?vendor_id=eq.${vendorId}&user_id=eq.${staffUser.id}&select=id&limit=1`,
+  );
+
+  if (staffMembers.length === 0) {
+    await rest("vendor_members", {
+      method: "POST",
+      body: JSON.stringify({
+        vendor_id: vendorId,
+        user_id: staffUser.id,
+        vendor_role: "staff",
       }),
     });
   }
@@ -244,7 +267,8 @@ async function main() {
   }
 
   const vendorUser = results.find((row) => row.email === "vendor@local.test");
-  const vendor = await seedVendor(vendorUser);
+  const staffUser = results.find((row) => row.email === "staff@local.test");
+  const vendor = await seedVendor(vendorUser, staffUser);
 
   console.log("  accounts");
   for (const row of results) {
@@ -260,12 +284,15 @@ async function main() {
   console.log("  vendor data");
   console.log(`    vendor      : ${vendor.name} (${vendor.status})`);
   console.log(`    application : ${vendor.applicationStatus}`);
+  console.log("    members     : vendor@local.test (owner) + staff@local.test (staff)");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);
   console.log(`    2. ${APP_URL}/admin/vendors  -> approve the seeded application`);
   console.log(`    3. ${APP_URL}/login          -> vendor@local.test`);
   console.log(`    4. ${APP_URL}/vendor/apply , /vendor/profile , /vendor/products`);
+  console.log(`    5. ${APP_URL}/vendor/members -> staff@local.test 로 로그인하면`);
+  console.log("       판매가/추가금 저장이 막히는 것을 확인할 수 있다");
   console.log("");
   console.log("  re-arm the approval demo: npm run seed:accounts -- --reset");
   console.log("");

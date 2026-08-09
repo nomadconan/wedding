@@ -40,12 +40,14 @@ type NavItem = { href: string; label: string; icon: LucideIcon };
 /** 업체 어드민 (F-V-01~F-V-14, §6.3) */
 const VENDOR_NAV: NavItem[] = [
   { href: "/vendor", label: "대시보드", icon: LayoutDashboard },
+  { href: "/vendor/profile", label: "업체 프로필", icon: Store },
   { href: "/vendor/products", label: "상품·가격", icon: Package },
   { href: "/vendor/pricing", label: "다이내믹 프라이싱", icon: Tag },
   { href: "/vendor/inventory", label: "재고 캘린더", icon: CalendarRange },
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
-  { href: "/vendor/bookings", label: "예약", icon: Store },
+  { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
+  { href: "/vendor/members", label: "멤버 관리", icon: Users },
   { href: "/vendor/settings", label: "설정", icon: Settings },
 ];
 
