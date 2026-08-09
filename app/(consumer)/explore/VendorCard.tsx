@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { CartActions } from "@/components/domain/CartActions";
 import { PriceDisplay, type PriceAddOns } from "@/components/domain/PriceDisplay";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +26,8 @@ export type VendorCardProps = {
   row: ExploreRow;
   /** 이미 장바구니에 담긴 상품인지. 비로그인이면 항상 false 다. */
   inCart: boolean;
+  /** 이미 찜한 상품인지. */
+  inWishlist: boolean;
   /** 담기 버튼의 동작. 로그인 전이면 로그인으로 보낸다. */
   signedIn: boolean;
   /**
@@ -49,7 +52,13 @@ const AVAILABILITY_TONE: Record<AvailabilityState["kind"], string> = {
   unknown: "bg-muted text-muted-foreground",
 };
 
-export function VendorCard({ row, inCart, signedIn, showAvailability }: VendorCardProps) {
+export function VendorCard({
+  row,
+  inCart,
+  inWishlist,
+  signedIn,
+  showAvailability,
+}: VendorCardProps) {
   const availability = row.availability;
 
   return (
@@ -128,26 +137,14 @@ export function VendorCard({ row, inCart, signedIn, showAvailability }: VendorCa
           >
             자세히 보기
           </Link>
-          {signedIn ? (
-            <button
-              type="button"
-              disabled
-              data-testid="add-to-cart"
-              className="flex-1 rounded-md bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground disabled:opacity-60"
-              // 담기 동작(POST /api/cart)은 S3-05 다. 버튼과 담긴 상태만 먼저 둔다.
-              title="장바구니 담기는 곧 열립니다"
-            >
-              {inCart ? "담김" : "담기 준비 중"}
-            </button>
-          ) : (
-            <Link
-              href={`/login?next=${encodeURIComponent(`/explore/${row.vendorId}`)}`}
-              data-testid="add-to-cart-guest"
-              className="flex-1 rounded-md bg-secondary px-3 py-2 text-center text-sm font-medium text-secondary-foreground"
-            >
-              로그인하고 담기
-            </Link>
-          )}
+          <CartActions
+            productId={row.productId}
+            vendorId={row.vendorId}
+            inCart={inCart}
+            inWishlist={inWishlist}
+            signedIn={signedIn}
+            next={`/explore/${row.vendorId}`}
+          />
         </div>
       </CardContent>
     </Card>
