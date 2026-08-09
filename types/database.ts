@@ -3017,33 +3017,51 @@ export type Database = {
       }
       vendors: {
         Row: {
+          address: string | null
+          address_detail: string | null
           badge_flags: string[]
           biz_no_enc: string | null
+          capacity_max: number | null
+          capacity_min: number | null
           category: string
           created_at: string
+          facilities: string[]
           id: string
+          intro: string | null
           name: string
           region_code: string | null
           status: Database["public"]["Enums"]["vendor_status"]
           updated_at: string
         }
         Insert: {
+          address?: string | null
+          address_detail?: string | null
           badge_flags?: string[]
           biz_no_enc?: string | null
+          capacity_max?: number | null
+          capacity_min?: number | null
           category: string
           created_at?: string
+          facilities?: string[]
           id?: string
+          intro?: string | null
           name: string
           region_code?: string | null
           status?: Database["public"]["Enums"]["vendor_status"]
           updated_at?: string
         }
         Update: {
+          address?: string | null
+          address_detail?: string | null
           badge_flags?: string[]
           biz_no_enc?: string | null
+          capacity_max?: number | null
+          capacity_min?: number | null
           category?: string
           created_at?: string
+          facilities?: string[]
           id?: string
+          intro?: string | null
           name?: string
           region_code?: string | null
           status?: Database["public"]["Enums"]["vendor_status"]
