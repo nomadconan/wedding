@@ -510,5 +510,73 @@ check(
     asAnon(`update public.price_index set p50 = 1 where id = '${IDX}';`, indexFixture)),
 );
 
+// ── 마이페이지 · 개인정보 (S3-09) ───────────────────────────────────────────
+// 삭제 요청은 **본인만** 보고, 처리 상태를 스스로 바꿀 수 없어야 한다. 사용자가
+// 자기 요청을 completed 로 만들면 F-A-08 의 SLA 추적이 통째로 무너진다.
+const REQ = "00000000-0000-0000-0000-0000000dd001";
+
+const deletionFixture = `
+  delete from public.data_deletion_requests where user_id in ('${owner}', '${outsider}');
+  insert into public.data_deletion_requests (id, user_id, scope, status)
+    values ('${REQ}', '${owner}', 'account', 'pending');
+`;
+
+check(
+  "본인은 자기 삭제 요청을 본다",
+  asUser(owner, `select count(*) from public.data_deletion_requests where id = '${REQ}';`,
+    deletionFixture) === "1",
+);
+check(
+  "남은 남의 삭제 요청을 못 본다",
+  asUser(outsider, `select count(*) from public.data_deletion_requests where id = '${REQ}';`,
+    deletionFixture) === "0",
+);
+check(
+  "비로그인은 삭제 요청을 못 본다",
+  asAnon(`select count(*) from public.data_deletion_requests where id = '${REQ}';`,
+    deletionFixture) === "0",
+);
+// 정책이 pending -> cancelled 전이 하나만 연다(0018).
+check(
+  "본인은 접수 상태의 요청을 거둘 수 있다",
+  asUser(owner, `with u as (update public.data_deletion_requests set status = 'cancelled',
+       completed_at = now() where id = '${REQ}' returning id) select count(*) from u;`,
+    deletionFixture) === "1",
+);
+// 정책이 도착 상태를 cancelled 로 못박았으므로, 다른 상태로의 전이는 **0행이 아니라
+// 오류**로 끊긴다(with check 위반). 조용히 무시되는 것보다 낫다.
+check(
+  "본인도 요청을 완료 처리할 수는 없다",
+  rejectedWith(/row-level security/i, () =>
+    asUser(owner, `update public.data_deletion_requests set status = 'completed',
+       completed_at = now() where id = '${REQ}';`, deletionFixture)),
+);
+check(
+  "처리가 시작된 요청은 거둘 수 없다",
+  asUser(owner, `with u as (update public.data_deletion_requests set status = 'cancelled',
+       completed_at = now() where id = '${REQ}' returning id) select count(*) from u;`,
+    `${deletionFixture}
+     update public.data_deletion_requests set status = 'in_progress' where id = '${REQ}';`) === "0",
+);
+check(
+  "열린 요청은 사람당 하나다 (부분 유니크)",
+  rejectedWith(/uq_deletion_requests_open_per_user/, () =>
+    sql(`begin;
+      ${deletionFixture}
+      insert into public.data_deletion_requests (user_id, scope, status)
+        values ('${owner}', 'service_data', 'pending');
+      rollback;`)),
+);
+check(
+  "남은 남의 프로필을 못 본다",
+  asUser(outsider, `select count(*) from public.profiles where user_id = '${owner}';`) === "0",
+);
+check(
+  "남은 남의 동의 이력을 못 본다",
+  asUser(outsider, `select count(*) from public.consents where user_id = '${owner}';`,
+    `insert into public.consents (user_id, consent_type, version)
+       values ('${owner}', 'terms', 'v1');`) === "0",
+);
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
