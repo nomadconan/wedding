@@ -195,7 +195,7 @@ export default function DesignSystemPage() {
       {/* ── 도메인 컴포넌트 ────────────────────────────────────────────── */}
       <Section
         title="도메인 컴포넌트"
-        note="서비스 핵심 가치(가격 정찰제·유료 노출 없음·AI 고지)를 화면에서 지키는 컴포넌트다."
+        note="서비스 핵심 가치(가격 정찰제·광고 반영 없음·AI 고지)를 화면에서 지키는 컴포넌트다."
       >
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>

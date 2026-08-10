@@ -57,3 +57,21 @@ export const BROKER_NOTICE_TERMS_LABEL = "이용약관";
 export function hasBrokerNotice(value: string): boolean {
   return value.includes(BROKER_NOTICE_REQUIRED_PHRASE);
 }
+
+/**
+ * 광고·유료 노출에 대한 주장 (D-03 · **D-25**)
+ *
+ * **"유료 노출 없음" 은 정확하지 않다.** 플랫폼은 거래 수수료를 받고, 업체는 우리에게
+ * 돈을 낸다. 우리가 실제로 지키는 것은 **"그 돈이 검색 순위에 반영되지 않는다"** 이며,
+ * 그것이 검증 가능한 주장이다. 지키지 못할 넓은 말 대신 지키는 만큼만 말한다.
+ *
+ * 화면은 이 상수를 그대로 렌더한다 — 화면마다 문구를 다시 쓰면 주장이 갈린다.
+ */
+export const NO_PAID_RANKING_CLAIM = "검색 순위에 광고를 반영하지 않습니다";
+
+/** 위 주장의 부연. 무엇을 받지 않는지 항목으로 밝힌다. */
+export const NO_PAID_RANKING_DETAIL =
+  "업체로부터 상위 노출비·배너 광고비·제휴 리베이트를 받지 않습니다. 수익은 거래가 성사된 뒤의 수수료와 소비자 멤버십에서 나옵니다.";
+
+/** 목록 배지처럼 좁은 자리에 쓰는 짧은 표기. */
+export const NO_PAID_RANKING_SHORT = "광고 반영 없음";

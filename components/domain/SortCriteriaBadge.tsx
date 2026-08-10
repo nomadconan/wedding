@@ -1,12 +1,13 @@
 import { ArrowUpDown } from "lucide-react";
 
+import { NO_PAID_RANKING_SHORT } from "@/lib/core/legal";
 import { cn } from "@/lib/utils";
 
 /**
  * 정렬 기준 배지 (T-04b)
  *
  * 명세서 §6 공통 UI 규칙 / CLAUDE.md §2.2:
- *   "정렬·추천 결과에는 기준 배지를 노출한다(**유료 노출 없음을 UI에서 증명**)."
+ *   "정렬·추천 결과에는 기준 배지를 노출한다(**광고가 순위에 반영되지 않음을 UI에서 증명**)."
  *
  * 이 배지는 장식이 아니라 **증거**다. 광고·제휴 수익을 받지 않는 구조(D-03)를
  * 사용자가 화면에서 직접 확인할 수 있게 만드는 장치다.
@@ -34,7 +35,7 @@ export type SortCriteriaBadgeProps = {
   /** API 가 함께 내려준 정렬 기준 코드. */
   criteria: SortCriteriaCode;
   /**
-   * "유료 노출 없음" 문구를 함께 보일지 여부.
+   * 광고 반영 없음 표기를 함께 보일지 여부.
    * 목록 상단에는 true(기본), 카드 안 반복 노출에는 false 를 쓴다.
    */
   showNoPaidPlacement?: boolean;
@@ -58,7 +59,9 @@ export function SortCriteriaBadge({
 
       {showNoPaidPlacement ? (
         <span className="inline-flex items-center rounded-md bg-brand-50 px-2 py-1 text-caption font-medium text-brand-700">
-          유료 노출 없음
+          {/* D-25: "유료 노출 없음" 은 정확하지 않다 — 업체는 수수료를 낸다.
+              우리가 지키는 것은 그 돈이 **순위에 반영되지 않는다**는 것이다. */}
+          {NO_PAID_RANKING_SHORT}
         </span>
       ) : null}
     </div>
