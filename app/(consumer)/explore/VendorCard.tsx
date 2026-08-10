@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { CartActions } from "@/components/domain/CartActions";
+import { bpToPercentText } from "@/lib/core/pricing/dynamic";
+import { NO_INDEX_BASELINE_NOTE } from "@/lib/core/pricing/price-index";
 import { PriceDisplay, type PriceAddOns } from "@/components/domain/PriceDisplay";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,6 +37,8 @@ export type VendorCardProps = {
    * 날짜가 없으면 '미확인'조차 사실이 아니다 — 물어본 적이 없기 때문이다.
    */
   showAvailability: boolean;
+  /** 참가격 대비 편차를 보일지. 그 기준으로 정렬했을 때만 보인다. */
+  showGap: boolean;
 };
 
 /** DB 의 추가금 상태를 화면 상태로 옮긴다. '없음'과 '미등록'을 섞지 않는다(S2-04). */
@@ -58,6 +62,7 @@ export function VendorCard({
   inWishlist,
   signedIn,
   showAvailability,
+  showGap,
 }: VendorCardProps) {
   const availability = row.availability;
 
@@ -97,6 +102,23 @@ export function VendorCard({
           size="sm"
           label="판매가"
         />
+
+        {/*
+          참가격 대비 편차(F-C-09 · S3-08). **기준이 없으면 0이 아니라 '기준 없음'** 이다 —
+          지수가 없는 것은 업체가 한 일이 아니라 아직 표본이 모이지 않았다는 우리 쪽 사정이다.
+        */}
+        {showGap ? (
+          <p className="text-caption" data-testid="index-gap" data-state={row.gapBp === null ? "no-baseline" : "measured"}>
+            {row.gapBp === null ? (
+              <span className="text-muted-foreground">{NO_INDEX_BASELINE_NOTE}</span>
+            ) : (
+              <span className={row.gapBp < 0 ? "text-success" : "text-muted-foreground"}>
+                참가격 중앙값보다 {bpToPercentText(Math.abs(row.gapBp))}{" "}
+                {row.gapBp < 0 ? "낮아요" : row.gapBp > 0 ? "높아요" : "같아요"}
+              </span>
+            )}
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-1.5">
           {row.styleTags.slice(0, 3).map((tag) => (

@@ -1,6 +1,8 @@
 import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ZodIssue } from "zod";
 
+import { compareByGap, priceGapBp } from "@/lib/core/pricing/price-index";
+import { indexKey, loadPriceIndexMap } from "@/lib/pricing/price-index-query";
 import {
   EXPLORE_FILTER_LABEL,
   EXPLORE_PAGE_SIZE,
@@ -39,6 +41,13 @@ export type ExploreRow = {
   capacityMin: number | null;
   capacityMax: number | null;
   addOns: { declaredAt: string | null; count: number; total: number };
+  /**
+   * 참가격 중앙값 대비 편차(bp). 음수면 지수보다 싸다.
+   * **지수가 없으면 null 이다** — 0을 주면 "딱 중간값" 이라는 없는 사실을 말하게 된다.
+   */
+  gapBp: number | null;
+  /** 비교 기준이 된 중앙값. 화면이 "무엇과 견줬는지" 를 밝히기 위해 함께 준다. */
+  indexP50: number | null;
   availability: AvailabilityState;
   createdAt: string;
 };
@@ -164,6 +173,11 @@ function baseProductQuery(client: SupabaseClient, filter: ExploreFilter) {
       break;
     case "recent":
       query = query.order("created_at", { ascending: false }).order("id", { ascending: true });
+      break;
+    case "price_index_gap":
+      // 편차는 참가격 인덱스와 맞춰 봐야 나오므로 DB 가 정렬할 수 없다. 후보를 넉넉히
+      // 읽어 메모리에서 세운다('자리 있는 곳만' 과 같은 방식이며 상한을 화면에 알린다).
+      query = query.order("base_price_total", { ascending: true }).order("id", { ascending: true });
       break;
   }
 
@@ -306,9 +320,11 @@ export async function searchVendors(
   let query = baseProductQuery(client, filter);
   if (vendorIds !== null) query = query.in("vendor_id", vendorIds);
 
-  // '자리 있는 곳만' 은 슬롯을 본 뒤에야 판정되므로 페이지 잘라내기 전에 더 넉넉히 읽는다.
-  const fetchTo = filter.onlyAvailable ? AVAILABILITY_SCAN_LIMIT - 1 : from + EXPLORE_PAGE_SIZE - 1;
-  const fetchFrom = filter.onlyAvailable ? 0 : from;
+  // '자리 있는 곳만'(슬롯)과 '참가격 대비'(지수)는 다른 테이블을 봐야 판정되므로
+  // 페이지를 잘라내기 전에 후보를 넉넉히 읽는다. 상한에 걸리면 화면이 그 사실을 알린다.
+  const scanAll = filter.onlyAvailable || filter.sort === "price_index_gap";
+  const fetchTo = scanAll ? AVAILABILITY_SCAN_LIMIT - 1 : from + EXPLORE_PAGE_SIZE - 1;
+  const fetchFrom = scanAll ? 0 : from;
 
   const { data, count, error } = await query.range(fetchFrom, fetchTo);
   if (error) throw error;
@@ -319,11 +335,45 @@ export async function searchVendors(
   const availability = await availabilityByProduct(client, products, filter.date);
 
   let total = count ?? products.length;
-  const truncated = filter.onlyAvailable && (count ?? 0) > AVAILABILITY_SCAN_LIMIT;
+  const truncated = scanAll && (count ?? 0) > AVAILABILITY_SCAN_LIMIT;
 
   if (filter.onlyAvailable) {
     products = products.filter((row) => availability.get(row.id)?.kind === "available");
     total = products.length;
+  }
+
+  // 참가격 인덱스는 지역·카테고리 칸으로 붙는다(S3-08).
+  const indexMap = await loadPriceIndexMap(
+    client,
+    products.flatMap((product) => {
+      const vendor = vendorLookup.get(product.vendor_id);
+
+      return vendor?.region_code ? [{ regionCode: vendor.region_code, category: vendor.category }] : [];
+    }),
+  );
+
+  const gapOf = (product: ProductRow): { gapBp: number | null; p50: number | null } => {
+    const vendor = vendorLookup.get(product.vendor_id);
+    const row = vendor?.region_code
+      ? (indexMap.get(indexKey(vendor.region_code, vendor.category)) ?? null)
+      : null;
+    const p50 = row?.p50 ?? null;
+
+    return { gapBp: priceGapBp(product.base_price_total, p50), p50 };
+  };
+
+  if (filter.sort === "price_index_gap") {
+    // 기준이 없는 항목은 **빼지 않고 맨 뒤에** 둔다(compareByGap).
+    products = [...products].sort((a, b) =>
+      compareByGap(
+        { id: a.id, gapBp: gapOf(a).gapBp },
+        { id: b.id, gapBp: gapOf(b).gapBp },
+      ),
+    );
+  }
+
+  if (scanAll) {
+    if (filter.onlyAvailable) total = products.length;
     products = products.slice(from, from + EXPLORE_PAGE_SIZE);
   }
 
@@ -352,6 +402,11 @@ export async function searchVendors(
       capacityMin: product.capacity_min,
       capacityMax: product.capacity_max,
       addOns: { declaredAt: product.add_ons_declared_at, ...summary },
+      ...(() => {
+        const { gapBp, p50 } = gapOf(product);
+
+        return { gapBp, indexP50: p50 };
+      })(),
       availability: availability.get(product.id) ?? { kind: "unknown" },
       createdAt: product.created_at,
     }];

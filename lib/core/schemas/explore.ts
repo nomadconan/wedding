@@ -21,7 +21,7 @@ import { VENDOR_CATEGORIES, VendorCategorySchema } from "./vendor";
  * 이번 단계에서 **실제로 계산할 수 있는** 정렬만 연다.
  * `SortCriteriaBadge` 의 코드 집합 중 부분집합이며, 배지는 이 코드를 그대로 받는다.
  */
-export const EXPLORE_SORTS = ["price_asc", "price_desc", "recent"] as const;
+export const EXPLORE_SORTS = ["price_asc", "price_desc", "price_index_gap", "recent"] as const;
 
 export type ExploreSort = (typeof EXPLORE_SORTS)[number];
 
@@ -38,6 +38,11 @@ export const ExploreSortSchema = z.enum(EXPLORE_SORTS);
 export const DEFAULT_EXPLORE_SORT: ExploreSort = "price_asc";
 
 /**
+ * **참가격 대비 편차 순은 S3-08 에서 열었다.** 지수가 없는 지역·카테고리의 업체는
+ * 목록에서 빼지 않고 **맨 뒤에 두고 '비교 기준 없음'** 으로 적는다 — 빼면 지수가 있는
+ * 지역의 업체가 유리해지는 노출 비대칭이 생기고, 그건 업체가 한 일이 아니라 아직
+ * 표본이 모이지 않았다는 우리 쪽 사정이다(재고 캘린더 판단과 같은 결).
+ *
  * **지금 열지 않는 정렬과 그 이유.**
  *
  * 목록에서 조용히 빼면 "그런 정렬은 없다"로 읽힌다. 데이터가 없어서 못 하는 것과
@@ -55,12 +60,6 @@ export const EXPLORE_SORT_PENDING: { code: string; label: string; reason: string
     label: "응답 속도 순",
     reason: "문의·채팅 응답 기록이 아직 없습니다.",
     task: "S4-12",
-  },
-  {
-    code: "price_index_gap",
-    label: "참가격 대비 편차 순",
-    reason: "참가격 인덱스를 아직 만들지 않았습니다.",
-    task: "S3-08",
   },
   {
     code: "available_date",
