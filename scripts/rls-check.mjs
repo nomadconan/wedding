@@ -116,6 +116,10 @@ const outsider = idOf("vendor@local.test");
 // 플래너 위임 시험용. 커플 구성원만 아니면 된다 — 플래너 판정은 couple_members 가
 // 아니라 planner_engagements 로만 이뤄지고, 그것을 확인하는 것이 이 검사의 목적이다.
 const vendorStaff = idOf("staff@local.test");
+// 채팅·문의(S4-01)는 **네 종류의 남**이 필요하다: 타 커플 당사자 · 타 업체 멤버 ·
+// 위임받은 플래너 · 운영자. 시드 계정 6개로 그 넷을 다 세우려면 아래처럼 겹쳐 쓴다.
+const adminUser = idOf("admin@local.test");
+const opsUser = idOf("ops@local.test");
 
 if (!owner || !partner || !outsider) {
   console.error("시드 계정이 없다. npm run seed:accounts 를 먼저 실행한다.");
@@ -788,6 +792,590 @@ check(
     `insert into public.notification_prefs (user_id, topic, channel_flags)
        values ('${owner}', 'care', '{}'::jsonb);`) === "0",
 );
+
+// =============================================================================
+// 채팅 · 문의게시판 (S4-01)
+// -----------------------------------------------------------------------------
+// 확인하는 경계는 다섯이다.
+//   1) 격리 — 타 커플 · 타 업체 · 플래너 · 운영자 · 비로그인
+//   2) 편(sender_type) 위조 금지 — 사칭하면 D-23 증적이 거짓이 된다
+//   3) 불변성 — 메시지는 아무도 수정·삭제할 수 없고, 회수는 뷰가 가린다
+//   4) 유도값 — 읽음·정렬 기준·SLA 시계는 트리거의 것이며 당사자가 못 만진다
+//   5) 문의 공개 설정 — 업체는 내릴 수만 있고 올릴 수는 없다
+//
+// **역할 배치** (시드 계정을 겹쳐 쓴다)
+//   owner·partner      커플 당사자 (우리 커플)
+//   outsider           대화 상대 업체 CV 의 owner  (커플에는 남이다)
+//   vendorStaff        같은 업체 CV 의 staff       (방은 조직 단위임을 확인한다)
+//   adminUser          타 업체 OV 의 owner + 우리 커플의 위임 플래너
+//   opsUser            타 커플 OC 의 owner + 운영자(ops)
+// =============================================================================
+if (!adminUser || !opsUser || !vendorStaff) {
+  console.log("SKIP  채팅·문의 항목 — admin/ops/staff 시드 계정이 없다");
+} else {
+  const CV = "00000000-0000-0000-0000-00000000a001"; // 대화 상대 업체
+  const OV = "00000000-0000-0000-0000-00000000a002"; // 타 업체
+  const OC = "00000000-0000-0000-0000-00000000a003"; // 타 커플
+  const ROOM = "00000000-0000-0000-0000-00000000a004"; // 우리 커플 ↔ CV
+  const OROOM = "00000000-0000-0000-0000-00000000a005"; // 타 커플 ↔ CV
+  const MSG_C = "00000000-0000-0000-0000-00000000a006"; // 고객이 보낸 메시지
+  const MSG_V = "00000000-0000-0000-0000-00000000a007"; // 업체가 보낸 메시지
+  const QPUB = "00000000-0000-0000-0000-00000000a008"; // 공개 질문
+  const QPRIV = "00000000-0000-0000-0000-00000000a009"; // 비공개 질문
+  const CPLANNER = "00000000-0000-0000-0000-00000000a00a";
+
+  // 두 업체 · 두 커플 · 두 방 · 두 메시지 · 두 질문. 전부 트랜잭션 안에서 만들고
+  // 되돌린다(장바구니 픽스처와 같은 방식이다).
+  const chatFixture = `
+    insert into public.vendors (id, name, category, status)
+      values ('${CV}', 'RLS대화업체', 'hall', 'active'),
+             ('${OV}', 'RLS타업체', 'hall', 'active');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${CV}', '${outsider}', 'owner'),
+             ('${CV}', '${vendorStaff}', 'staff'),
+             ('${OV}', '${adminUser}', 'owner');
+    insert into public.couples (id, owner_id, stage)
+      values ('${OC}', '${opsUser}', 'onboarding');
+    insert into public.couple_members (couple_id, user_id, member_role)
+      values ('${OC}', '${opsUser}', 'owner');
+    insert into public.chat_rooms (id, couple_id, vendor_id)
+      values ('${ROOM}', '${coupleId}', '${CV}'),
+             ('${OROOM}', '${OC}', '${CV}');
+    insert into public.chat_messages (id, room_id, sender_id, sender_type, body)
+      values ('${MSG_C}', '${ROOM}', '${owner}', 'couple', '견적 문의드립니다'),
+             ('${MSG_V}', '${ROOM}', '${outsider}', 'vendor', '안내드립니다');
+    insert into public.qna_posts (id, vendor_id, author_id, title, body, is_public)
+      values ('${QPUB}', '${CV}', '${owner}', '공개 질문', '주차 가능한가요', true),
+             ('${QPRIV}', '${CV}', '${owner}', '비공개 질문', '연락처 남깁니다', false);
+  `;
+
+  // ── 1) 당사자는 본다 ──────────────────────────────────────────────────────
+  check(
+    "고객은 자기 방을 본다",
+    asUser(owner, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+      chatFixture) === "1",
+  );
+  check(
+    "고객은 방의 메시지를 본다",
+    asUser(owner, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      chatFixture) === "2",
+  );
+
+  if (memberOf === "1") {
+    check(
+      "배우자도 같은 방을 본다 (커플 양측이 방을 공유한다 · §3.7)",
+      asUser(partner, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+        chatFixture) === "1",
+    );
+    check(
+      "배우자도 같은 방에 쓸 수 있다",
+      asUser(partner, `with i as (
+         insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${partner}', 'couple', '배우자입니다') returning id)
+         select count(*) from i;`, chatFixture) === "1",
+    );
+  }
+
+  // 방은 사람 단위가 아니라 **조직 단위** 1:1 이다 — staff 도 같은 방에 들어온다.
+  check(
+    "업체 staff 도 같은 방을 본다 (방은 조직 단위다)",
+    asUser(vendorStaff, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+      chatFixture) === "1",
+  );
+  check(
+    "업체 staff 도 응대할 수 있다",
+    asUser(vendorStaff, `with i as (
+       insert into public.chat_messages (room_id, sender_id, sender_type, body)
+       values ('${ROOM}', '${vendorStaff}', 'vendor', 'staff 응대') returning id)
+       select count(*) from i;`, chatFixture) === "1",
+  );
+  // 업체 인박스(F-V-15)는 그 업체의 모든 방을 본다 — 우리 커플 방 + 타 커플 방.
+  check(
+    "업체는 자기 업체의 방을 모두 본다 (인박스)",
+    asUser(outsider, `select count(*) from public.chat_rooms
+       where id in ('${ROOM}', '${OROOM}');`, chatFixture) === "2",
+  );
+
+  // ── 2) 타 커플 · 타 업체 · 운영자 · 비로그인 격리 ─────────────────────────
+  check(
+    "타 커플 당사자는 우리 방을 못 본다",
+    asUser(opsUser, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "타 커플 당사자는 우리 메시지를 못 본다",
+    asUser(opsUser, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "타 업체 멤버는 우리 방을 못 본다",
+    asUser(adminUser, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "타 업체 멤버는 우리 메시지를 못 본다",
+    asUser(adminUser, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      chatFixture) === "0",
+  );
+  // opsUser 는 profiles.role='ops' 라 is_operator() 가 참이다. 그래도 클라이언트
+  // 세션으로는 아무것도 열리지 않는다 — 운영자 열람은 서비스롤 경유만이다(§3.9).
+  check(
+    "운영자도 클라이언트 세션으로는 남의 대화를 못 본다 (서비스롤 경유만)",
+    asUser(opsUser, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "남의 방에는 쓸 수 없다 (42501)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(opsUser, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${opsUser}', 'couple', '끼어들기');`, chatFixture)),
+  );
+
+  for (const [label, table] of [
+    ["비로그인은 방을 못 본다", "chat_rooms"],
+    ["비로그인은 메시지를 못 본다", "chat_messages"],
+  ]) {
+    check(label, asAnon(`select count(*) from public.${table};`, chatFixture) === "0");
+  }
+  check(
+    "비로그인은 방을 열 수 없다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asAnon(`insert into public.chat_rooms (couple_id, vendor_id)
+         values ('${coupleId}', '${OV}');`, chatFixture)),
+  );
+  // 뷰는 anon 에서 권한 자체를 회수했다 — RLS 보다 한 겹 앞에서 끊긴다.
+  check(
+    "비로그인은 회수 뷰에 접근조차 못 한다 (권한 없음)",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.chat_messages_visible;`, chatFixture)),
+  );
+
+  // ── 3) 플래너 — 위임 범위에 채팅을 넣어도 열리지 않는다 ───────────────────
+  // §3.9 의 채팅 행은 "커플 구성원과 업체 멤버만" 이라 쓰고, 상담 행은 "위임 플래너"
+  // 를 명시한다. 그 차이가 의도임을 확인한다. 장바구니(S3-04)에서 읽기를 준 것과
+  // 갈리는 이유는 0021 헬퍼 블록에 적었다 — 대화에는 상대 당사자가 있다.
+  const chatPlannerFixture = `${chatFixture}
+    insert into public.planners (id, user_id, status)
+      values ('${CPLANNER}', '${adminUser}', 'active');
+    insert into public.planner_engagements
+      (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+      values ('${CPLANNER}', '${coupleId}',
+              '{"tables":["carts","wishlists","chat_rooms","chat_messages"]}'::jsonb,
+              'active', now() - interval '1 day', now() + interval '30 days');
+  `;
+
+  check(
+    "위임 범위에 채팅을 적어도 플래너는 방을 못 본다 (§3.9 — 채팅에 플래너는 없다)",
+    asUser(adminUser, `select count(*) from public.chat_rooms where id = '${ROOM}';`,
+      chatPlannerFixture) === "0",
+  );
+  check(
+    "플래너는 메시지도 못 본다",
+    asUser(adminUser, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      chatPlannerFixture) === "0",
+  );
+  check(
+    "플래너는 고객을 대신해 쓸 수 없다 (누가 약속했는가가 흔들린다 · D-23)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(adminUser, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${adminUser}', 'couple', '대신 씁니다');`, chatPlannerFixture)),
+  );
+
+  // ── 4) 편(sender_type) 위조 금지 ──────────────────────────────────────────
+  check(
+    "고객은 업체 편으로 쓸 수 없다 (42501)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${owner}', 'vendor', '업체 사칭');`, chatFixture)),
+  );
+  check(
+    "업체는 고객 편으로 쓸 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(outsider, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${outsider}', 'couple', '고객 사칭');`, chatFixture)),
+  );
+  check(
+    "system 카드는 클라이언트가 만들 수 없다 (서버 전용 · §3.7)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(outsider, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', null, 'system', '상담 일정 제안');`, chatFixture)),
+  );
+  check(
+    "남의 이름으로 쓸 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${outsider}', 'couple', '이름 도용');`, chatFixture)),
+  );
+  check(
+    "본문도 첨부도 없는 메시지는 만들 수 없다",
+    rejectedWith(/chat_messages_not_empty_chk/, () =>
+      asUser(owner, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${owner}', 'couple', '   ');`, chatFixture)),
+  );
+
+  // ── 5) 불변성 — 수정·삭제는 권한 자체가 없다 ─────────────────────────────
+  // 정책의 부재가 아니라 **권한의 회수**여야 한다. 정책만 없으면 실패가 오류가 아니라
+  // 조용한 0행이라 "지웠다" 고 믿는 코드가 생긴다(0019 와 같은 판단).
+  check(
+    "고객은 자기 메시지도 고칠 수 없다 (권한 회수)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.chat_messages set body = '고쳤다' where id = '${MSG_C}';`,
+        chatFixture)),
+  );
+  check(
+    "업체도 자기 메시지를 고칠 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.chat_messages set body = '고쳤다' where id = '${MSG_V}';`,
+        chatFixture)),
+  );
+  check(
+    "메시지는 아무도 지울 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `delete from public.chat_messages where id = '${MSG_C}';`, chatFixture)),
+  );
+  check(
+    "읽음 표시도 손으로 찍을 수 없다 (트리거가 유도한다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.chat_messages set read_at = now() where id = '${MSG_C}';`,
+        chatFixture)),
+  );
+  check(
+    "방도 지울 수 없다 (분쟁 이력)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `delete from public.chat_rooms where id = '${ROOM}';`, chatFixture)),
+  );
+
+  // 회수: 본문은 남고 뷰가 가린다.
+  const retractedFixture = `${chatFixture}
+    update public.chat_messages set retracted_at = now(), retracted_by = '${outsider}'
+      where id = '${MSG_V}';
+  `;
+
+  check(
+    "회수된 메시지는 뷰에서 본문이 가려진다",
+    asUser(owner, `select count(*) from public.chat_messages_visible
+       where id = '${MSG_V}' and body is null and attachments = '[]'::jsonb;`,
+      retractedFixture) === "1",
+  );
+  check(
+    "회수돼도 원본은 표에 남는다 (운영자 조율용 · D-23)",
+    sql(`begin;
+      ${retractedFixture}
+      select count(*) from public.chat_messages
+        where id = '${MSG_V}' and body is not null and retracted_by = '${outsider}';
+      rollback;`) === "1",
+  );
+  check(
+    "회수되지 않은 메시지는 뷰에서 그대로 보인다",
+    asUser(owner, `select count(*) from public.chat_messages_visible
+       where id = '${MSG_C}' and body is not null;`, retractedFixture) === "1",
+  );
+  // 뷰가 우회로가 되면 안 된다 — security_invoker 라 밑의 RLS 를 그대로 통과한다.
+  check(
+    "뷰로도 남의 방은 열리지 않는다 (security_invoker)",
+    asUser(opsUser, `select count(*) from public.chat_messages_visible
+       where room_id = '${ROOM}';`, chatFixture) === "0",
+  );
+
+  // ── 6) 읽음 두 층 — 메시지의 read_at 은 참여자 읽음에서 유도된다 ──────────
+  check(
+    "고객이 읽으면 업체 메시지의 read_at 이 채워진다 (트리거 유도)",
+    asUser(owner, `insert into public.chat_room_reads (room_id, user_id, last_read_at)
+         values ('${ROOM}', '${owner}', now());
+       select count(*) from public.chat_messages
+         where id = '${MSG_V}' and read_at is not null;`, chatFixture) === "1",
+  );
+  check(
+    "자기가 보낸 메시지는 자기가 읽어도 read_at 이 채워지지 않는다",
+    asUser(owner, `insert into public.chat_room_reads (room_id, user_id, last_read_at)
+         values ('${ROOM}', '${owner}', now());
+       select count(*) from public.chat_messages
+         where id = '${MSG_C}' and read_at is null;`, chatFixture) === "1",
+  );
+  check(
+    "읽음은 뒤로 갈 수 없다 (단조 증가)",
+    asUser(owner, `insert into public.chat_room_reads (room_id, user_id, last_read_at)
+         values ('${ROOM}', '${owner}', now());
+       update public.chat_room_reads set last_read_at = now() - interval '10 days'
+         where room_id = '${ROOM}' and user_id = '${owner}';
+       select count(*) from public.chat_room_reads
+         where room_id = '${ROOM}' and user_id = '${owner}'
+           and last_read_at > now() - interval '1 hour';`, chatFixture) === "1",
+  );
+  check(
+    "남의 읽음 기록을 만들 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.chat_room_reads (room_id, user_id)
+         values ('${ROOM}', '${outsider}');`, chatFixture)),
+  );
+
+  const readFixture = `${chatFixture}
+    insert into public.chat_room_reads (room_id, user_id, last_read_at)
+      values ('${ROOM}', '${outsider}', now());
+  `;
+
+  check(
+    "자기 읽음 기록은 본다",
+    asUser(outsider, `select count(*) from public.chat_room_reads
+       where room_id = '${ROOM}';`, readFixture) === "1",
+  );
+  // 상대 조직의 누가 몇 시에 봤는지까지 열면 업체 staff 의 근태를 고객이 들여다본다.
+  // 읽음 여부는 chat_messages.read_at 한 비트로 충분하다.
+  check(
+    "상대 편의 읽음 기록은 볼 수 없다 (근태 노출 방지)",
+    asUser(owner, `select count(*) from public.chat_room_reads
+       where room_id = '${ROOM}';`, readFixture) === "0",
+  );
+  check(
+    "비로그인은 읽음 기록을 못 본다",
+    asAnon(`select count(*) from public.chat_room_reads;`, readFixture) === "0",
+  );
+  check(
+    "읽음은 지울 수 없다 (\"안 읽었다\" 를 만들 수 없다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `delete from public.chat_room_reads where room_id = '${ROOM}';`,
+        readFixture)),
+  );
+
+  // ── 7) 방의 유일성 · 개설 권한 ────────────────────────────────────────────
+  check(
+    "같은 커플·업체에 방은 하나뿐이다 (UNIQUE — 한 점의 중복이다)",
+    rejectedWith(/uq_chat_rooms_couple_vendor/, () =>
+      asUser(owner, `insert into public.chat_rooms (couple_id, vendor_id)
+         values ('${coupleId}', '${CV}');`, chatFixture)),
+  );
+  check(
+    "고객은 다른 승인 업체와 새 방을 열 수 있다",
+    asUser(owner, `with i as (insert into public.chat_rooms (couple_id, vendor_id)
+       values ('${coupleId}', '${OV}') returning id) select count(*) from i;`,
+      chatFixture) === "1",
+  );
+  check(
+    "심사 중 업체와는 방을 열 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.chat_rooms (couple_id, vendor_id)
+         values ('${coupleId}', '${OV}');`,
+        `${chatFixture}
+         update public.vendors set status = 'pending' where id = '${OV}';`)),
+  );
+  // 업체가 먼저 말을 걸 수 있으면 채팅이 영업 창구가 된다(§2.2, D-03).
+  check(
+    "업체는 방을 먼저 열 수 없다 (영업 창구 방지)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(adminUser, `insert into public.chat_rooms (couple_id, vendor_id)
+         values ('${coupleId}', '${OV}');`, chatFixture)),
+  );
+  check(
+    "차단된 방에는 쓸 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.chat_messages (room_id, sender_id, sender_type, body)
+         values ('${ROOM}', '${owner}', 'couple', '차단 후 발신');`,
+        `${chatFixture}
+         update public.chat_rooms set status = 'blocked' where id = '${ROOM}';`)),
+  );
+  check(
+    "차단된 방도 읽기는 남는다",
+    asUser(owner, `select count(*) from public.chat_messages where room_id = '${ROOM}';`,
+      `${chatFixture}
+       update public.chat_rooms set status = 'blocked' where id = '${ROOM}';`) === "2",
+  );
+
+  // ── 8) 담당자 배정 (F-V-15) ───────────────────────────────────────────────
+  check(
+    "업체는 자기 구성원을 담당자로 배정한다",
+    asUser(outsider, `with u as (update public.chat_rooms set assigned_to = '${vendorStaff}'
+       where id = '${ROOM}' returning id) select count(*) from u;`, chatFixture) === "1",
+  );
+  check(
+    "업체 밖 사람은 담당자가 될 수 없다",
+    rejectedWith(/구성원이어야/, () =>
+      asUser(outsider, `update public.chat_rooms set assigned_to = '${owner}'
+         where id = '${ROOM}';`, chatFixture)),
+  );
+  check(
+    "고객은 상대 조직의 담당자를 지정할 수 없다",
+    rejectedWith(/업체만/, () =>
+      asUser(owner, `update public.chat_rooms set assigned_to = '${vendorStaff}'
+         where id = '${ROOM}';`, chatFixture)),
+  );
+
+  // ── 9) 정렬 기준 · SLA 시계는 트리거의 것이다 ─────────────────────────────
+  check(
+    "당사자도 정렬 기준(last_message_at)을 손댈 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.chat_rooms set last_message_at = now()
+         where id = '${ROOM}';`, chatFixture)),
+  );
+  check(
+    "업체도 SLA 시계를 끌 수 없다 (답변으로만 꺼진다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.chat_rooms set awaiting_vendor_since = null
+         where id = '${ROOM}';`, chatFixture)),
+  );
+  check(
+    "업체가 답하면 SLA 시계가 꺼진다",
+    asUser(owner, `select count(*) from public.chat_rooms where id = '${ROOM}'
+       and awaiting_vendor_since is null and last_message_at is not null;`,
+      chatFixture) === "1",
+  );
+  check(
+    "고객이 다시 물으면 SLA 시계가 켜진다",
+    sql(`begin;
+      ${chatFixture}
+      insert into public.chat_messages (room_id, sender_id, sender_type, body)
+        values ('${ROOM}', '${owner}', 'couple', '다시 문의');
+      select count(*) from public.chat_rooms
+        where id = '${ROOM}' and awaiting_vendor_since is not null;
+      rollback;`) === "1",
+  );
+  // 고객이 세 번 더 물어도 SLA 시계는 **첫 질문**에서 흘러야 한다.
+  check(
+    "추가 질문이 와도 SLA 시계는 첫 질문 시각을 유지한다",
+    sql(`begin;
+      ${chatFixture}
+      update public.chat_rooms set awaiting_vendor_since = '2026-01-01 00:00:00+00'
+        where id = '${ROOM}';
+      insert into public.chat_messages (room_id, sender_id, sender_type, body)
+        values ('${ROOM}', '${owner}', 'couple', '또 문의');
+      select count(*) from public.chat_rooms
+        where id = '${ROOM}' and awaiting_vendor_since = '2026-01-01 00:00:00+00';
+      rollback;`) === "1",
+  );
+
+  // ── 10) 문의게시판 (F-C-28 · F-V-16) ──────────────────────────────────────
+  check(
+    "비로그인은 공개 질문만 본다",
+    asAnon(`select count(*) from public.qna_posts where id in ('${QPUB}', '${QPRIV}');`,
+      chatFixture) === "1",
+  );
+  check(
+    "작성자는 자기 비공개 질문을 본다",
+    asUser(owner, `select count(*) from public.qna_posts where id = '${QPRIV}';`,
+      chatFixture) === "1",
+  );
+  check(
+    "해당 업체는 비공개 질문을 본다 (답해야 한다)",
+    asUser(outsider, `select count(*) from public.qna_posts where id = '${QPRIV}';`,
+      chatFixture) === "1",
+  );
+  check(
+    "타 업체는 비공개 질문을 못 본다",
+    asUser(adminUser, `select count(*) from public.qna_posts where id = '${QPRIV}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "제3자는 비공개 질문을 못 본다",
+    asUser(opsUser, `select count(*) from public.qna_posts where id = '${QPRIV}';`,
+      chatFixture) === "0",
+  );
+  check(
+    "심사 중 업체의 공개 질문은 비로그인에게 보이지 않는다",
+    asAnon(`select count(*) from public.qna_posts where id = '${QPUB}';`,
+      `${chatFixture}
+       update public.vendors set status = 'pending' where id = '${CV}';`) === "0",
+  );
+
+  // 공개 설정: 업체는 **내리는 방향만**. 올리면 설정 변경이 아니라 유출이다.
+  check(
+    "업체는 공개 질문을 비공개로 내릴 수 있다 (F-V-16 공개 설정 변경)",
+    asUser(outsider, `with u as (update public.qna_posts set is_public = false
+       where id = '${QPUB}' returning id) select count(*) from u;`, chatFixture) === "1",
+  );
+  check(
+    "업체는 비공개 질문을 공개로 올릴 수 없다",
+    rejectedWith(/작성자만/, () =>
+      asUser(outsider, `update public.qna_posts set is_public = true where id = '${QPRIV}';`,
+        chatFixture)),
+  );
+  check(
+    "작성자는 자기 질문을 공개로 올릴 수 있다",
+    asUser(owner, `with u as (update public.qna_posts set is_public = true
+       where id = '${QPRIV}' returning id) select count(*) from u;`, chatFixture) === "1",
+  );
+  check(
+    "업체는 고객 질문의 본문을 고칠 수 없다",
+    rejectedWith(/작성자만/, () =>
+      asUser(outsider, `update public.qna_posts set body = '업체가 고친 질문'
+         where id = '${QPUB}';`, chatFixture)),
+  );
+  check(
+    "질문의 소속 업체는 아무도 바꿀 수 없다 (권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.qna_posts set vendor_id = '${OV}' where id = '${QPUB}';`,
+        chatFixture)),
+  );
+  check(
+    "질문은 아무도 지울 수 없다 (상태로 내린다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `delete from public.qna_posts where id = '${QPUB}';`, chatFixture)),
+  );
+  check(
+    "남의 이름으로 질문할 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.qna_posts (vendor_id, author_id, title, body)
+         values ('${CV}', '${opsUser}', '사칭 질문', '본문');`, chatFixture)),
+  );
+
+  // 답변 — 미답변 큐에서 빠지는 것까지 트리거가 한다.
+  check(
+    "업체가 답하면 질문이 미답변 큐에서 빠진다 (트리거)",
+    asUser(outsider, `insert into public.qna_answers (post_id, responder_id, body)
+         values ('${QPUB}', '${outsider}', '가능합니다');
+       select status from public.qna_posts where id = '${QPUB}';`, chatFixture) === "answered",
+  );
+  check(
+    "업체 아닌 사람은 답변을 달 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.qna_answers (post_id, responder_id, body)
+         values ('${QPUB}', '${owner}', '고객이 답한다');`, chatFixture)),
+  );
+  check(
+    "타 업체는 남의 질문에 답할 수 없다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(adminUser, `insert into public.qna_answers (post_id, responder_id, body)
+         values ('${QPUB}', '${adminUser}', '타 업체가 답한다');`, chatFixture)),
+  );
+
+  // 답변의 가시성은 질문을 따라간다 — "비공개 질문의 답변은 작성자에게만"(F-V-16).
+  const answerFixture = `${chatFixture}
+    insert into public.qna_answers (post_id, responder_id, body)
+      values ('${QPRIV}', '${outsider}', '비공개 답변입니다');
+  `;
+
+  check(
+    "비공개 질문의 답변은 비로그인에게 보이지 않는다",
+    asAnon(`select count(*) from public.qna_answers where post_id = '${QPRIV}';`,
+      answerFixture) === "0",
+  );
+  check(
+    "비공개 질문의 답변은 작성자에게 보인다",
+    asUser(owner, `select count(*) from public.qna_answers where post_id = '${QPRIV}';`,
+      answerFixture) === "1",
+  );
+  check(
+    "비공개 질문의 답변은 타 업체에게 보이지 않는다",
+    asUser(adminUser, `select count(*) from public.qna_answers where post_id = '${QPRIV}';`,
+      answerFixture) === "0",
+  );
+  check(
+    "답변은 지울 수 없다 (질문자가 본 답변이 사라지면 안 된다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `delete from public.qna_answers where post_id = '${QPRIV}';`,
+        answerFixture)),
+  );
+  check(
+    "업체는 자기 답변의 본문을 고칠 수 있다 (게시된 문서다)",
+    asUser(outsider, `with u as (update public.qna_answers set body = '정정합니다'
+       where post_id = '${QPRIV}' returning id) select count(*) from u;`,
+      answerFixture) === "1",
+  );
+  check(
+    "답변자 이름은 바꿀 수 없다 (권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.qna_answers set responder_id = '${vendorStaff}'
+         where post_id = '${QPRIV}';`, answerFixture)),
+  );
+}
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

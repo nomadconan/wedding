@@ -511,6 +511,156 @@ export type Database = {
           },
         ]
       }
+      chat_messages: {
+        Row: {
+          attachments: Json
+          body: string | null
+          created_at: string
+          id: string
+          read_at: string | null
+          retracted_at: string | null
+          retracted_by: string | null
+          room_id: string
+          sender_id: string | null
+          sender_type: Database["public"]["Enums"]["chat_sender_type"]
+        }
+        Insert: {
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          retracted_at?: string | null
+          retracted_by?: string | null
+          room_id: string
+          sender_id?: string | null
+          sender_type: Database["public"]["Enums"]["chat_sender_type"]
+        }
+        Update: {
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          retracted_at?: string | null
+          retracted_by?: string | null
+          room_id?: string
+          sender_id?: string | null
+          sender_type?: Database["public"]["Enums"]["chat_sender_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "chat_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_room_reads: {
+        Row: {
+          created_at: string
+          id: string
+          last_read_at: string
+          last_read_message_id: string | null
+          room_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_read_at?: string
+          last_read_message_id?: string | null
+          room_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_read_at?: string
+          last_read_message_id?: string | null
+          room_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_room_reads_last_read_message_id_fkey"
+            columns: ["last_read_message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_room_reads_last_read_message_id_fkey"
+            columns: ["last_read_message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages_visible"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_room_reads_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "chat_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_rooms: {
+        Row: {
+          assigned_to: string | null
+          awaiting_vendor_since: string | null
+          couple_id: string
+          created_at: string
+          id: string
+          last_message_at: string | null
+          status: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          awaiting_vendor_since?: string | null
+          couple_id: string
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          awaiting_vendor_since?: string | null
+          couple_id?: string
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_rooms_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_rooms_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       commission_rates: {
         Row: {
           created_at: string
@@ -2363,6 +2513,88 @@ export type Database = {
           },
         ]
       }
+      qna_answers: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          post_id: string
+          responder_id: string
+          updated_at: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          post_id: string
+          responder_id: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          post_id?: string
+          responder_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qna_answers_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "qna_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      qna_posts: {
+        Row: {
+          answered_at: string | null
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          is_public: boolean
+          status: string
+          title: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          answered_at?: string | null
+          author_id: string
+          body: string
+          created_at?: string
+          id?: string
+          is_public?: boolean
+          status?: string
+          title: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          answered_at?: string | null
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          is_public?: boolean
+          status?: string
+          title?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qna_posts_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quote_items: {
         Row: {
           amount: number
@@ -3267,17 +3499,66 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      chat_messages_visible: {
+        Row: {
+          attachments: Json | null
+          body: string | null
+          created_at: string | null
+          id: string | null
+          read_at: string | null
+          retracted_at: string | null
+          room_id: string | null
+          sender_id: string | null
+          sender_type: Database["public"]["Enums"]["chat_sender_type"] | null
+        }
+        Insert: {
+          attachments?: never
+          body?: never
+          created_at?: string | null
+          id?: string | null
+          read_at?: string | null
+          retracted_at?: string | null
+          room_id?: string | null
+          sender_id?: string | null
+          sender_type?: Database["public"]["Enums"]["chat_sender_type"] | null
+        }
+        Update: {
+          attachments?: never
+          body?: never
+          created_at?: string | null
+          id?: string | null
+          read_at?: string | null
+          retracted_at?: string | null
+          room_id?: string | null
+          sender_id?: string | null
+          sender_type?: Database["public"]["Enums"]["chat_sender_type"] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "chat_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
+      can_read_qna_post: { Args: { p_post_id: string }; Returns: boolean }
       cart_couple_id: { Args: { p_cart_id: string }; Returns: string }
+      chat_room_couple_id: { Args: { p_room_id: string }; Returns: string }
+      chat_room_is_open: { Args: { p_room_id: string }; Returns: boolean }
+      chat_room_vendor_id: { Args: { p_room_id: string }; Returns: string }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean
       }
+      is_active_vendor: { Args: { p_vendor_id: string }; Returns: boolean }
       is_any_planner: { Args: never; Returns: boolean }
       is_any_vendor_member: { Args: never; Returns: boolean }
+      is_chat_room_member: { Args: { p_room_id: string }; Returns: boolean }
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
@@ -3290,12 +3571,14 @@ export type Database = {
       }
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
+      qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
       timemultirange: { Args: never; Returns: unknown }
     }
     Enums: {
       ai_feature: "planner" | "report" | "estimate"
       booking_status: "hold" | "confirmed" | "cancelled" | "fulfilled"
+      chat_sender_type: "couple" | "vendor" | "system"
       commission_scope_type: "global" | "category" | "vendor"
       content_post_type: "guide" | "price_report" | "glossary"
       couple_member_role: "owner" | "partner" | "planner"
@@ -3455,6 +3738,7 @@ export const Constants = {
     Enums: {
       ai_feature: ["planner", "report", "estimate"],
       booking_status: ["hold", "confirmed", "cancelled", "fulfilled"],
+      chat_sender_type: ["couple", "vendor", "system"],
       commission_scope_type: ["global", "category", "vendor"],
       content_post_type: ["guide", "price_report", "glossary"],
       couple_member_role: ["owner", "partner", "planner"],

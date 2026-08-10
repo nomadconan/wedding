@@ -195,7 +195,7 @@
 
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
-| S4-01 | **마이그레이션 3차 — 채팅·문의게시판** | [ ] | T-03 | §3.7 `chat_rooms`·`chat_messages`·`qna_posts`·`qna_answers` |
+| S4-01 | **마이그레이션 3차 — 채팅·문의게시판** | [x] | T-03 | §3.7 `chat_rooms`·`chat_messages`·`qna_posts`·`qna_answers` **+ `chat_room_reads` 신설** · §3.10 Storage 버킷 잔여 4종. 방은 **커플·업체 조합당 하나**(UNIQUE — 부분 유니크로 세대를 쪼갠 장바구니와 갈린다) · 메시지는 **어떤 역할도 수정·삭제 불가**(권한 회수)이고 회수는 `retracted_at` 묘비 + `chat_messages_visible` 뷰로 가린다 · 읽음은 **두 층**(메시지의 `read_at` 은 참여자 `chat_room_reads` 에서 트리거가 유도) · **플래너는 채팅에 접근하지 않는다**(§3.9 가 상담에만 플래너를 명시한다) · 본문은 평문(§7.3 채팅 행) · **Realtime publication 은 열지 않았다**(O-11 — S4-04 소관). `db:rls` 케이스 84개 추가 |
 | S4-02 | **마이그레이션 4차 — 상담·보증금·가용시간** | [~] | T-03 | §3.3 `vendor_availability`, §3.4 `consultations`·`consultation_deposits` |
 | S4-03 | **마이그레이션 5차 — 증거 보존** | [x] | T-03 | §3.8. `notifications` +4컬럼(발송·도달·열람·실패 분리) · `audit_logs.resolution_basis` · `entity_events` 당사자 열람 정책 6 + 운영자 1. **insert-only 를 정책의 부재가 아니라 권한 회수로** 못박았고, `notifications` UPDATE 는 `read_at` 컬럼으로 좁혔다. 기록 래퍼 `lib/audit/record.ts` 를 만들어 호출부 24곳을 옮겼다 |
 | S4-04 | 실시간 채팅 (소비자·업체) | [ ] | S4-01, S2-01, S3-01 | F-C-27, F-V-15. **완료 조건에 S3-11 홈의 '최근 대화' 연결 포함** |
@@ -212,10 +212,20 @@
 
 > ### 4단계 착수 순서 (S3-10b 정리)
 >
-> **선행이 이미 충족된 태스크** — S4-01 · S4-02(잔여) · S4-03 (전부 T-03만 요구) · S4-05(S4-01 후) · S4-06(S4-02 부분 완료분으로 충족) · S4-12(S2-03·S3-01 완료).
-> **선행 대기** — S4-04(S4-01) · S4-07(S4-06) · S4-08(S4-07 + **S5-02** 5단계) · S4-09(S4-08·S4-03) · S4-10(S4-09) · S4-11(S4-07) · S4-13(S4-03) · S4-14(S4-13).
+> **선행이 이미 충족된 태스크** — S4-02(잔여) · S4-04·S4-05(S4-01 완료로 풀림) · S4-06(S4-02 부분 완료분으로 충족) · S4-12(S2-03·S3-01 완료).
+> **선행 대기** — S4-07(S4-06) · S4-08(S4-07 + **S5-02** 5단계) · S4-09(S4-08·S4-03) · S4-10(S4-09) · S4-11(S4-07) · S4-14(S4-13).
 >
-> ~~**S4-03**~~ · ~~**S4-13**~~ **완료.** 알림 인프라가 섰으므로 **대기 중이던 넷의 선행이 풀렸다** — S3-06 가격 변동 알림 배치 · S3-01 커플 초대 메일 · S2-09 미가입자 초대 · S4-14 업체 알림 설정. 각 태스크가 `lib/notify/send.ts` 의 `sendNotification()` 을 부르고 `lib/core/schemas/notification.ts` 에 문장 틀을 더하면 된다. 다음은 **S4-01**(채팅 마이그레이션) 또는 **S4-12**(표준 문의·견적)이며, 둘 중 하나가 끝나야 `sla-escalation` 이 대상을 갖는다.
+> ~~**S4-03**~~ · ~~**S4-13**~~ · ~~**S4-01**~~ **완료.** 알림 인프라가 섰으므로 **대기 중이던 넷의 선행이 풀렸다** — S3-06 가격 변동 알림 배치 · S3-01 커플 초대 메일 · S2-09 미가입자 초대 · S4-14 업체 알림 설정. 각 태스크가 `lib/notify/send.ts` 의 `sendNotification()` 을 부르고 `lib/core/schemas/notification.ts` 에 문장 틀을 더하면 된다.
+>
+> **S4-01 이 푼 것** — **S4-04**(실시간 채팅)·**S4-05**(문의게시판)의 선행이 풀렸다. 그리고 `sla-escalation`(S4-13 잔여)이 훑을 대상이 스키마로는 생겼다 — `chat_rooms.awaiting_vendor_since` 한 컬럼만 보면 미응답 방이 나오도록 만들어 뒀다. 다만 **행이 쌓이는 것은 S4-04 부터**이므로 배치 구현은 여전히 S4-04(또는 S4-12) 뒤다.
+>
+> **S4-01 이 S4-04·S4-05 에 남긴 것**
+> · `chat_messages` 대신 **`chat_messages_visible` 뷰를 읽는다** — 회수된 메시지의 본문을 가리는 자리가 거기다. 표를 직접 읽으면 회수가 화면에 반영되지 않는다.
+> · **회수·`system` 카드는 서비스롤 경로**다. 클라이언트에는 `chat_messages` UPDATE 권한이 없고 `sender_type='system'` INSERT 정책도 없다(상담 일정 제안 카드가 여기 해당한다).
+> · **읽음 처리는 `chat_room_reads` upsert 한 번**이다. 메시지의 `read_at` 은 트리거가 유도하므로 앱이 따로 쓰지 않는다.
+> · **첨부는 `chat-attachments` 서명 URL 전용**이다. `storage.objects` 에 정책이 없으므로 서버가 `is_chat_room_member()` 를 확인한 뒤 URL 을 발급해야 하고, 컬럼에는 객체 키만 담는다.
+> · **유사 질문 노출(F-C-28)의 검색 인덱스는 S4-05 가 만든다** — trigram·tsvector·임베딩 중 무엇을 쓰느냐가 인덱스 모양을 정하므로 미리 고르지 않았다.
+> · **Realtime publication 은 비어 있다.** O-11 을 Supabase Realtime 으로 결론지으면 새 마이그레이션에 `alter publication supabase_realtime add table public.chat_messages;` 한 줄이다(0021 파일 끝 주석 참조).
 >
 > (아래는 S4-03 을 첫 태스크로 고른 근거 기록) 다음은 **S4-13(알림센터·발송 증적)** 이다 — 선행 S4-03 이 풀렸고, 이것이 열리면 S3-06 가격 변동 알림 · S3-01 커플 초대 메일 · S2-09 미가입자 초대 · S4-14 가 함께 풀린다. 병행으로 S4-01(채팅 마이그레이션)·S4-12(표준 문의·견적)도 착수 가능하다.
 >
@@ -385,13 +395,13 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | 태스크 | 신규 테이블 | 변경 |
 |---|---|---|
 | ~~S3-04~~ (완료) | ~~`carts`, `cart_items`, `wishlists`~~ | `cart_couple_id()` 헬퍼 추가 |
-| S4-01 | `chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers` | — |
+| ~~S4-01~~ (완료) | ~~`chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers`~~ + **`chat_room_reads`**(참여자별 읽음 — 커플 둘·업체 여럿이라 메시지 한 컬럼에 안 담긴다) | 뷰 `chat_messages_visible`, ENUM `chat_sender_type`, 헬퍼 `is_active_vendor()`·`is_chat_room_member()`·`can_read_qna_post()` 등 7, 트리거 5, `entity_events` 열람 정책 4, Storage 버킷 4, `recordEvent()` 엔티티 타입 +4 |
 | S4-02 | ~~`vendor_availability`~~ (완료), `consultations`, `consultation_deposits` | — |
 | ~~S4-03~~ (완료) | ~~`entity_events`~~ (S2-01 에서 앞당겨 생성) | `notifications` +4컬럼, `audit_logs.resolution_basis`, `entity_events` 열람 정책 7, `is_operator()` |
 | S5-01 | ~~`commission_rates`~~, ~~`planner_fee_rates`~~ (완료), `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
 | S6-01 | `planner_scopes` | — |
 
-**신규 테이블 16개.** 각 마이그레이션에는 RLS 정책을 같은 파일에 포함한다(§3.9, CLAUDE.md §5.5). `entity_events`는 **insert-only** — UPDATE·DELETE 정책을 부여하지 않는다.
+**신규 테이블 17개**(S4-01 이 `chat_room_reads` 를 더해 16 → 17). 각 마이그레이션에는 RLS 정책을 같은 파일에 포함한다(§3.9, CLAUDE.md §5.5). `entity_events`는 **insert-only** — UPDATE·DELETE 정책을 부여하지 않는다. `chat_messages` 도 같은 이유로 **UPDATE·DELETE 권한을 회수**했다(수정·삭제 대신 회수 묘비).
 
 ---
 
@@ -407,7 +417,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | 수수료 요율 **값** | O-02. **구조는 S5-01·S5-02에서 완성**되므로 값은 오픈 전까지만 정하면 된다 | S5-03 |
 | 결제 분할 비율·유예 기간·보증금액 | 운영 정책 결정. 전부 DB 파라미터라 미확정 상태로 개발 가능(§7.4) | S5-06, S6-05, S4-08 |
 | 에스크로 집행 로직 | O-03 법무 결론. 컬럼·훅만 유지 | S5-06 |
-| Storage 버킷 생성 | §3.10. `chat-attachments` 포함 | S4-01 |
+| ~~Storage 버킷 생성~~ **(완료 · S4-01)** | ~~§3.10. `chat-attachments` 포함~~ — 6종이 모두 섰다. `vendor-media`(공개, 0009) · `vendor-documents`(0008) · `chat-attachments`·`contracts-raw`·`reports`·`contracts-signed`(0021, 전부 비공개). 비공개 5종은 `storage.objects` 에 정책이 없어 **서명 URL 전용**이다 | ~~S4-01~~ |
 | `(dev)` 라우트 그룹 차단 | 배포 전 미들웨어·플래그 처리 | S8-05 |
 | ESLint `no-restricted-imports` · 커버리지 80% | 위 "S8-05 CI 파이프라인 — 포함 항목" 참조 | S8-05 |
 
@@ -586,10 +596,11 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | planners | 3.7 | T-03 | 완료 |
 | planner_engagements | 3.7 | T-03 | 완료 |
 | **planner_scopes** | 3.7 | S6-01 | 미착수 |
-| **chat_rooms** | 3.7 | S4-01 | 미착수 |
-| **chat_messages** | 3.7 | S4-01 | 미착수 |
-| **qna_posts** | 3.7 | S4-01 | 미착수 |
-| **qna_answers** | 3.7 | S4-01 | 미착수 |
+| **chat_rooms** | 3.7 | S4-01 | 완료 |
+| **chat_messages** | 3.7 | S4-01 | 완료 |
+| **chat_room_reads** | 3.7 (신설) | S4-01 | 완료 — 명세 표에 없는 테이블이다. §3.7 의 `chat_messages.read_at` 한 컬럼으로는 "커플 둘·업체 여럿 중 **누가** 읽었는가" 를 담을 수 없어 참여자별 층을 나눴다. 메시지의 `read_at`(상대 편 최초 열람)은 이 표에서 트리거가 유도한다 |
+| **qna_posts** | 3.7 | S4-01 | 완료 |
+| **qna_answers** | 3.7 | S4-01 | 완료 |
 | content_posts | 3.7 | T-03 | 완료 |
 | notifications | 3.7 | T-03 / 확장 S4-03 | 완료 |
 | notification_prefs | 3.7 | T-03 | 완료 |
@@ -688,7 +699,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | price-index-refresh (Cron, 주 1회) | 배치 | S8-10 | 미착수 — **산출 로직은 S3-08 에서 순수 함수로 준비했다**(`buildPriceIndex`). S8-10 은 표본을 읽어 넘기고 `price_index`·`price_sources` 에 적재하면 된다 |
 | settlement-aggregate (Cron, 월 2회) | 배치 | S5-07 | 미착수 |
 | price-anomaly-scan (Cron, 매일) | 배치 | S8-10 | 미착수 |
-| sla-escalation (Cron, 1시간) | 배치 | S4-13 | 미착수 — **대상이 없다.** 문의(S4-12)·채팅(S4-04)이 생긴 뒤에 만든다 |
+| sla-escalation (Cron, 1시간) | 배치 | S4-13 | 미착수 — **훑을 자리는 S4-01 이 만들었다**(`chat_rooms.awaiting_vendor_since` + 부분 인덱스 `idx_chat_rooms_awaiting_vendor`). 다만 **행이 쌓이는 것은 S4-04 부터**이므로 문의(S4-12)·채팅(S4-04) 뒤에 만든다 |
 | consultation-confirm-request (Cron, 1시간) | 배치 | S4-09 | 미착수 |
 | consultation-resolve (Cron, 1시간) | 배치 | S4-09 | 미착수 |
 | planner-payout-due (Cron, 매일) | 배치 | S6-05 | 미착수 |
