@@ -1666,8 +1666,11 @@ export type Database = {
       }
       notifications: {
         Row: {
+          attempt_count: number
+          body_hash: string | null
           channel: string
           created_at: string
+          dedupe_key: string | null
           delivered_at: string | null
           failed_at: string | null
           failure_reason: string | null
@@ -1676,13 +1679,17 @@ export type Database = {
           provider_message_id: string | null
           read_at: string | null
           sent_at: string | null
+          template_key: string | null
           topic: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          attempt_count?: number
+          body_hash?: string | null
           channel: string
           created_at?: string
+          dedupe_key?: string | null
           delivered_at?: string | null
           failed_at?: string | null
           failure_reason?: string | null
@@ -1691,13 +1698,17 @@ export type Database = {
           provider_message_id?: string | null
           read_at?: string | null
           sent_at?: string | null
+          template_key?: string | null
           topic: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          attempt_count?: number
+          body_hash?: string | null
           channel?: string
           created_at?: string
+          dedupe_key?: string | null
           delivered_at?: string | null
           failed_at?: string | null
           failure_reason?: string | null
@@ -1706,6 +1717,7 @@ export type Database = {
           provider_message_id?: string | null
           read_at?: string | null
           sent_at?: string | null
+          template_key?: string | null
           topic?: string
           updated_at?: string
           user_id?: string

@@ -588,7 +588,7 @@ const evidenceFixture = `
   insert into public.entity_events (id, entity_type, entity_id, event_type, actor_id, actor_role)
     values ('${EV}', 'couple', '${coupleId}', 'rls_check', '${owner}', 'consumer');
   insert into public.notifications (id, user_id, topic, channel, sent_at)
-    values ('${NOTI}', '${owner}', 'rls_check', 'email', now());
+    values ('${NOTI}', '${owner}', 'dday', 'email', now());
   insert into public.audit_logs (actor_id, actor_role, action, target_type, target_id)
     values ('${owner}', 'consumer', 'rls_check', 'couple', '${coupleId}');
 `;
@@ -698,6 +698,95 @@ check(
       insert into public.audit_logs (action, target_type, resolution_basis)
         values ('chk', 'couple', array[]::uuid[]);
       rollback;`)),
+);
+
+// ── 알림 (S4-13) ────────────────────────────────────────────────────────────
+// S4-03 이 세운 경계를 그대로 지키는지 본다 — 본인만 보고, **read_at 만** 고친다.
+// 새로 생긴 컬럼(dedupe_key·attempt_count·template_key·body_hash)도 닫혀 있어야 한다.
+const NT = "00000000-0000-0000-0000-0000000nn001".replace(/n/g, "1");
+
+const notifyFixture = `
+  delete from public.notifications where user_id = '${owner}';
+  insert into public.notifications
+    (id, user_id, topic, channel, template_key, payload_json, dedupe_key, sent_at, delivered_at)
+    values ('${NT}', '${owner}', 'dday', 'in_app', 'dday.remind', '{"days":30}'::jsonb,
+            'dday.remind:x:d-30', now(), now());
+`;
+
+check(
+  "본인은 자기 알림을 본다",
+  asUser(owner, `select count(*) from public.notifications where id = '${NT}';`,
+    notifyFixture) === "1",
+);
+check(
+  "남은 남의 알림을 못 본다",
+  asUser(outsider, `select count(*) from public.notifications where id = '${NT}';`,
+    notifyFixture) === "0",
+);
+check(
+  "본인은 읽음을 남길 수 있다",
+  asUser(owner, `with u as (update public.notifications set read_at = now()
+     where id = '${NT}' returning id) select count(*) from u;`, notifyFixture) === "1",
+);
+check(
+  "본인도 발송 시각은 못 바꾼다 (S4-03 경계 유지)",
+  rejectedWith(/permission denied/i, () =>
+    asUser(owner, `update public.notifications set sent_at = null where id = '${NT}';`,
+      notifyFixture)),
+);
+check(
+  "본인도 멱등 열쇠는 못 바꾼다",
+  rejectedWith(/permission denied/i, () =>
+    asUser(owner, `update public.notifications set dedupe_key = null where id = '${NT}';`,
+      notifyFixture)),
+);
+check(
+  "본인도 시도 횟수는 못 바꾼다",
+  rejectedWith(/permission denied/i, () =>
+    asUser(owner, `update public.notifications set attempt_count = 99 where id = '${NT}';`,
+      notifyFixture)),
+);
+check(
+  "본인도 알림을 새로 만들 수 없다 (서버 전용)",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asUser(owner, `insert into public.notifications (user_id, topic, channel)
+       values ('${owner}', 'dday', 'in_app');`, notifyFixture)),
+);
+check(
+  "비로그인은 알림을 못 본다",
+  asAnon(`select count(*) from public.notifications where id = '${NT}';`, notifyFixture) === "0",
+);
+// 멱등은 DB 가 지킨다 — 애플리케이션 확인만으로는 동시 실행에서 둘 다 통과한다.
+check(
+  "같은 사람에게 같은 열쇠는 하나뿐이다",
+  rejectedWith(/uq_notifications_dedupe/, () =>
+    sql(`begin;
+      ${notifyFixture}
+      insert into public.notifications (user_id, topic, channel, dedupe_key)
+        values ('${owner}', 'dday', 'in_app', 'dday.remind:x:d-30');
+      rollback;`)),
+);
+check(
+  "정의되지 않은 채널은 거부한다",
+  rejectedWith(/notifications_channel_chk/, () =>
+    sql(`begin;
+      insert into public.notifications (user_id, topic, channel)
+        values ('${owner}', 'dday', '비둘기');
+      rollback;`)),
+);
+// 수신 설정은 사용자의 것이다.
+check(
+  "본인은 수신 설정을 만들 수 있다",
+  asUser(owner, `with i as (
+     insert into public.notification_prefs (user_id, topic, channel_flags)
+     values ('${owner}', 'dday', '{"email":false}'::jsonb) returning id)
+     select count(*) from i;`) === "1",
+);
+check(
+  "남의 수신 설정은 못 본다",
+  asUser(outsider, `select count(*) from public.notification_prefs where user_id = '${owner}';`,
+    `insert into public.notification_prefs (user_id, topic, channel_flags)
+       values ('${owner}', 'care', '{}'::jsonb);`) === "0",
 );
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
