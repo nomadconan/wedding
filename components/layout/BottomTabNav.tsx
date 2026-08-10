@@ -1,6 +1,6 @@
 "use client";
 
-import { Heart, Home, Search, ShoppingBag } from "lucide-react";
+import { Heart, Home, Search, ShoppingBag, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -24,6 +24,8 @@ import { cn } from "@/lib/utils";
  *    총액이 공개된 업체 목록이다.
  *  · **장바구니·찜**은 담아 둔 것으로 돌아오는 경로다. 비교(`/explore/compare`)와
  *    업체 상세는 2차 화면이라 각각의 1차 화면에서 들어간다.
+ *  · **마이**가 마지막이다(S3-09). 계정·개인정보는 자주 오는 곳이 아니라 끝에 둔다.
+ *    이로써 다섯 칸이 찼다 — 여기서 더 늘리지 않는다.
  *
  * 빈 자리를 채우려고 없는 화면을 넣지 않는다. 5개는 상한이지 목표가 아니다.
  */
@@ -32,6 +34,7 @@ const TABS = [
   { href: "/explore", label: "탐색", icon: Search },
   { href: "/cart", label: "장바구니", icon: ShoppingBag },
   { href: "/wishlist", label: "찜", icon: Heart },
+  { href: "/me", label: "마이", icon: User },
 ] as const;
 
 export type ConsumerTabHref = (typeof TABS)[number]["href"];
