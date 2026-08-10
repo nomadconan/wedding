@@ -183,7 +183,7 @@ export const ASSETS = {
     path: "/images/icons/icon-no-paid-placement@24x24.svg",
     width: 24,
     height: 24,
-    alt: "유료 노출 없음",
+    alt: "검색 순위에 광고 반영 없음",
     note: "정렬 기준 배지 아이콘 (CLAUDE.md §2.2 / §6 공통 UI 규칙). 목록·추천 결과에 상시 노출.",
   },
 } as const satisfies Record<string, AssetSlot>;
