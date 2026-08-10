@@ -121,6 +121,7 @@ export async function ExploreResults({ params }: { params: string }) {
                 inWishlist={wished.has(row.productId)}
                 signedIn={Boolean(user)}
                 showAvailability={input.date !== null}
+                showGap={result.sort === "price_index_gap"}
               />
             </li>
           ))}

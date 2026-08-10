@@ -475,5 +475,40 @@ check(
     asAnon(`update public.products set base_price_total = 1;`, exploreFixture)),
 );
 
+// ── 참가격 인덱스 (S3-08) ───────────────────────────────────────────────────
+// `/prices/[region]/[category]` 는 비로그인 SEO 페이지다. anon 이 지수를 읽을 수
+// 있어야 하고, **표본 추적(price_sources)은 읽을 수 없어야** 한다 — 그 안에는 어느
+// 업체의 어느 값이 표본이 됐는지가 그대로 들어 있다(§3.9 정책 없음 = 기본 거부).
+const IDX = "00000000-0000-0000-0000-0000000ff001";
+
+const indexFixture = `
+  insert into public.price_index
+    (id, region_code, category, guest_bucket, season, p25, p50, p75, sample_size,
+     source_type, collected_at, version)
+    values ('${IDX}', 'RLS시', 'hall', 'all', 'all', 10000000, 20000000, 30000000, 7,
+            'registered_price', now(), 'rls-check');
+  insert into public.price_sources (index_id, source_name, raw_value)
+    values ('${IDX}', 'vendor_registered_price', 10000000);
+`;
+
+check(
+  "비로그인은 참가격 지수를 읽는다 (공개 데이터)",
+  asAnon(`select count(*) from public.price_index where id = '${IDX}';`, indexFixture) === "1",
+);
+check(
+  "비로그인은 표본 추적을 읽을 수 없다",
+  asAnon(`select count(*) from public.price_sources where index_id = '${IDX}';`, indexFixture) === "0",
+);
+check(
+  "로그인 사용자도 표본 추적은 못 본다 (운영 큐레이션 정보)",
+  asUser(owner, `select count(*) from public.price_sources where index_id = '${IDX}';`,
+    indexFixture) === "0",
+);
+check(
+  "비로그인은 지수를 고칠 수 없다",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asAnon(`update public.price_index set p50 = 1 where id = '${IDX}';`, indexFixture)),
+);
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
