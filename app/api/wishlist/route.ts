@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { WishlistMutationSchema } from "@/lib/core/schemas/cart";
 import { loadWishlist } from "@/lib/cart/wishlist";
@@ -118,13 +119,11 @@ export async function POST(request: NextRequest) {
   if (error || !created) return fail(500, "WISHLIST_ADD_FAILED", "찜하지 못했습니다.");
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "wishlist",
-    entity_id: created.id,
-    event_type: "wishlist_added",
-    actor_id: ctx.user.id,
-    actor_role: ctx.user.role,
-    source: "web",
+  await recordEvent({
+    entityType: "wishlist",
+    entityId: created.id,
+    eventType: "wishlist_added",
+    actor: { id: ctx.user.id, role: ctx.user.role },
   });
 
   return ok({ wishlistId: created.id }, { status: 201 });
@@ -146,13 +145,11 @@ export async function DELETE(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "wishlist",
-    entity_id: id,
-    event_type: "wishlist_removed",
-    actor_id: ctx.user.id,
-    actor_role: ctx.user.role,
-    source: "web",
+  await recordEvent({
+    entityType: "wishlist",
+    entityId: id,
+    eventType: "wishlist_removed",
+    actor: { id: ctx.user.id, role: ctx.user.role },
   });
 
   return ok({ id });

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   INVITE_TTL_HOURS,
@@ -131,14 +132,12 @@ export async function POST(request: NextRequest) {
       return fail(500, "COUPLE_INVITE_ISSUE_FAILED", "초대 코드를 만들지 못했습니다.");
     }
 
-    await admin.from("entity_events").insert({
-      entity_type: "couple",
-      entity_id: membership.coupleId,
-      event_type: "couple_invite_issued",
-      actor_id: user.id,
-      actor_role: user.role,
-      source: "web",
-    });
+    await recordEvent({
+    entityType: "couple",
+    entityId: membership.coupleId,
+    eventType: "couple_invite_issued",
+    actor: { id: user.id, role: user.role },
+  });
 
     // TODO(S4-13): 알림 인프라가 붙으면 여기서 초대 메일·알림톡을 발송하고
     // notifications 에 발송 이력을 남긴다(D-23 — 발송·수신·열람 분리 기록).
@@ -196,14 +195,12 @@ export async function POST(request: NextRequest) {
     .update({ accepted_by: user.id, accepted_at: new Date().toISOString() })
     .eq("id", invite.id);
 
-  await admin.from("entity_events").insert({
-    entity_type: "couple",
-    entity_id: invite.couple_id,
-    event_type: "couple_invite_accepted",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: "partner",
-    source: "web",
+  await recordEvent({
+    entityType: "couple",
+    entityId: invite.couple_id,
+    eventType: "couple_invite_accepted",
+    afterState: "partner",
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ coupleId: invite.couple_id, role: "partner" });

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { PriceRuleInputSchema } from "@/lib/core/schemas/price-rule";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -104,15 +105,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: before.vendor_id,
-    event_type: "price_rule_updated",
-    actor_id: user.id,
-    actor_role: user.role,
-    before_state: before.is_active ? "active" : "inactive",
-    after_state: updated.is_active ? "active" : "inactive",
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: before.vendor_id,
+    eventType: "price_rule_updated",
+    beforeState: before.is_active ? "active" : "inactive",
+    afterState: updated.is_active ? "active" : "inactive",
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ rule: updated });

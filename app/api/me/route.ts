@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { ProfileUpdateSchema, unlinkBlocker } from "@/lib/core/schemas/me";
 import { findMyCouple } from "@/lib/couple/membership";
@@ -59,16 +60,14 @@ export async function PUT(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "profile",
-    entity_id: user.id,
-    event_type: "profile_updated",
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordEvent({
+    entityType: "profile",
+    entityId: user.id,
+    eventType: "profile_updated",
     // 마케팅 수신 동의의 켜고 끔은 증적으로 남긴다(D-23) — 나중에 "동의한 적 없다" 는
     // 다툼이 생기는 항목이다. 이름·연락처 값은 남기지 않는다(§7.3 증적 최소화).
-    after_state: input.marketingOptIn ? "marketing_on" : "marketing_off",
-    source: "web",
+    afterState: input.marketingOptIn ? "marketing_on" : "marketing_off",
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ displayName: input.displayName, marketingOptIn: input.marketingOptIn });
@@ -107,14 +106,12 @@ export async function DELETE() {
 
   if (error) return fail(500, "COUPLE_UNLINK_FAILED", "연동을 해제하지 못했습니다.");
 
-  await admin.from("entity_events").insert({
-    entity_type: "couple",
-    entity_id: membership.coupleId,
-    event_type: "couple_member_left",
-    actor_id: user.id,
-    actor_role: user.role,
-    before_state: membership.role,
-    source: "web",
+  await recordEvent({
+    entityType: "couple",
+    entityId: membership.coupleId,
+    eventType: "couple_member_left",
+    beforeState: membership.role,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ coupleId: membership.coupleId, left: true });
