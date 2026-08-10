@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { ProductInputSchema } from "@/lib/core/schemas/product";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
@@ -84,14 +85,12 @@ export async function POST(request: NextRequest) {
   if (error) return fail(500, "VENDOR_PRODUCT_SAVE_FAILED", "상품을 저장하지 못했습니다.");
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "product",
-    entity_id: created.id,
-    event_type: "product_created",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: "draft",
-    source: "web",
+  await recordEvent({
+    entityType: "product",
+    entityId: created.id,
+    eventType: "product_created",
+    afterState: "draft",
+    actor: { id: user.id, role: user.role },
   });
 
   await admin.from("audit_logs").insert({

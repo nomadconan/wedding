@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { PriceRuleInputSchema } from "@/lib/core/schemas/price-rule";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -96,14 +97,12 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendor.id,
-    event_type: "price_rule_created",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: input.ruleType,
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendor.id,
+    eventType: "price_rule_created",
+    afterState: input.ruleType,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ rule: created }, { status: 201 });

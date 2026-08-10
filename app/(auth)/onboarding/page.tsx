@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ErrorState } from "@/components/ui/ErrorState";
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
 import { findMyCouple } from "@/lib/couple/membership";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -66,9 +65,12 @@ export default async function OnboardingPage() {
   const complete = isOnboardingComplete(answers.map((answer) => answer.question));
 
   // 활동 기록 — 누가 무엇을 했는지 표기한다(§2.1). 증적은 entity_events 가 갖는다.
-  const admin = createAdminClient();
+  //
+  // **세션 클라이언트로 읽는다.** S4-03 이 커플 이벤트 열람 정책을 추가하기 전에는
+  // 서비스롤로 읽고 있었는데, 그러면 "내 커플 것만 보인다" 는 경계가 RLS 가 아니라
+  // 이 파일의 `.eq()` 두 줄이 된다. 이제 정책이 있으므로 DB 가 판정한다.
   const { data: activity } = membership
-    ? await admin
+    ? await supabase
         .from("entity_events")
         .select("id, event_type, actor_id, occurred_at")
         .eq("entity_type", "couple")

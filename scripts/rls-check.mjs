@@ -578,5 +578,127 @@ check(
        values ('${owner}', 'terms', 'v1');`) === "0",
 );
 
+// ── 증거 보존 (S4-03) ───────────────────────────────────────────────────────
+// entity_events 는 **insert-only** 다(D-23). 정책의 부재로 강제되므로, 정책이 하나라도
+// 잘못 열리면 증적이 당사자에게 고쳐진다 — 그러면 증적이 아니다.
+const EV = "00000000-0000-0000-0000-0000000ee001";
+const NOTI = "00000000-0000-0000-0000-0000000ee002";
+
+const evidenceFixture = `
+  insert into public.entity_events (id, entity_type, entity_id, event_type, actor_id, actor_role)
+    values ('${EV}', 'couple', '${coupleId}', 'rls_check', '${owner}', 'consumer');
+  insert into public.notifications (id, user_id, topic, channel, sent_at)
+    values ('${NOTI}', '${owner}', 'rls_check', 'email', now());
+  insert into public.audit_logs (actor_id, actor_role, action, target_type, target_id)
+    values ('${owner}', 'consumer', 'rls_check', 'couple', '${coupleId}');
+`;
+
+check(
+  "당사자는 자기 커플 이벤트를 본다",
+  asUser(owner, `select count(*) from public.entity_events where id = '${EV}';`,
+    evidenceFixture) === "1",
+);
+check(
+  "남은 남의 이벤트를 못 본다",
+  asUser(outsider, `select count(*) from public.entity_events where id = '${EV}';`,
+    evidenceFixture) === "0",
+);
+check(
+  "비로그인은 이벤트를 못 본다",
+  asAnon(`select count(*) from public.entity_events where id = '${EV}';`, evidenceFixture) === "0",
+);
+// insert-only — 어떤 역할에도 쓰기 정책이 없다. 권한 자체가 없어 오류로 끊긴다.
+check(
+  "당사자도 이벤트를 고칠 수 없다 (insert-only)",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asUser(owner, `update public.entity_events set memo = '조작' where id = '${EV}';`,
+      evidenceFixture)),
+);
+check(
+  "당사자도 이벤트를 지울 수 없다 (insert-only)",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asUser(owner, `delete from public.entity_events where id = '${EV}';`, evidenceFixture)),
+);
+check(
+  "당사자도 이벤트를 새로 쓸 수 없다 (서버 전용)",
+  rejectedWith(/permission denied|row-level security/i, () =>
+    asUser(owner, `insert into public.entity_events (entity_type, entity_id, event_type)
+       values ('couple', '${coupleId}', '위조');`, evidenceFixture)),
+);
+
+// notifications — 본인만 보고, **읽음만** 고칠 수 있다.
+check(
+  "본인은 자기 알림을 본다",
+  asUser(owner, `select count(*) from public.notifications where id = '${NOTI}';`,
+    evidenceFixture) === "1",
+);
+check(
+  "남은 남의 알림을 못 본다",
+  asUser(outsider, `select count(*) from public.notifications where id = '${NOTI}';`,
+    evidenceFixture) === "0",
+);
+check(
+  "본인은 읽음 시각을 남길 수 있다",
+  asUser(owner, `with u as (update public.notifications set read_at = now()
+     where id = '${NOTI}' returning id) select count(*) from u;`, evidenceFixture) === "1",
+);
+// 컬럼 단위 GRANT 로 막는다 — RLS 는 컬럼을 가르지 못한다(0019).
+check(
+  "본인도 발송 시각은 고칠 수 없다 (증적을 당사자가 못 바꾼다)",
+  rejectedWith(/permission denied/i, () =>
+    asUser(owner, `update public.notifications set sent_at = null where id = '${NOTI}';`,
+      evidenceFixture)),
+);
+check(
+  "본인도 도달 시각은 고칠 수 없다",
+  rejectedWith(/permission denied/i, () =>
+    asUser(owner, `update public.notifications set delivered_at = now() where id = '${NOTI}';`,
+      evidenceFixture)),
+);
+
+// audit_logs — 정책 없음(서비스롤 전용).
+check(
+  "당사자도 감사 로그를 못 본다",
+  asUser(owner, `select count(*) from public.audit_logs;`, evidenceFixture) === "0",
+);
+check(
+  "비로그인도 감사 로그를 못 본다",
+  asAnon(`select count(*) from public.audit_logs;`, evidenceFixture) === "0",
+);
+
+// 발송·도달·열람 순서를 DB 가 지킨다.
+check(
+  "도달이 발송보다 앞설 수 없다",
+  rejectedWith(/notifications_delivery_order_chk/, () =>
+    sql(`begin;
+      insert into public.notifications (user_id, topic, channel, sent_at, delivered_at)
+        values ('${owner}', 'chk', 'email', now(), now() - interval '1 hour');
+      rollback;`)),
+);
+check(
+  "사유 없는 실패를 적을 수 없다",
+  rejectedWith(/notifications_failure_pair_chk/, () =>
+    sql(`begin;
+      insert into public.notifications (user_id, topic, channel, failed_at)
+        values ('${owner}', 'chk', 'email', now());
+      rollback;`)),
+);
+check(
+  "성공과 실패를 동시에 주장할 수 없다",
+  rejectedWith(/notifications_failed_not_delivered_chk/, () =>
+    sql(`begin;
+      insert into public.notifications (user_id, topic, channel, sent_at, delivered_at, failed_at, failure_reason)
+        values ('${owner}', 'chk', 'email', now(), now(), now(), 'bounced');
+      rollback;`)),
+);
+check(
+  "근거를 적었다면 비어 있을 수 없다",
+  rejectedWith(/audit_logs_resolution_basis_not_empty_chk/, () =>
+    sql(`begin;
+      insert into public.audit_logs (action, target_type, resolution_basis)
+        values ('chk', 'couple', array[]::uuid[]);
+      rollback;`)),
+);
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

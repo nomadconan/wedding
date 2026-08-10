@@ -101,17 +101,20 @@ const PILLARS = [
     cta: "추가금 확인하기",
   },
   {
-    title: "광고가 순위를 바꾸지 않습니다",
-    body: "상담·예약·계약·리뷰 실적으로만 정렬합니다.",
+    /**
+     * **"살 수 없다" 는 지금도 사실이다** — 광고 구좌 자체가 없다. 정책도 그대로
+     * 담기고, 나중에 실적 지표가 붙어도 문구를 고칠 필요가 없다.
+     *
+     * 이전 문구("상담·예약·계약·리뷰 실적으로만 정렬합니다")는 아직 하지 않는 일을
+     * 현재형으로 말했다. 그래서 같은 카드에 '지금 열려 있는 정렬' 을 덧붙여 두었는데,
+     * 문구가 사실이 된 지금은 그 각주가 필요 없다 — 지금 무엇으로 정렬하는지는
+     * 목록 화면의 **정렬 기준 배지**가 결과와 함께 말한다(D-03). 랜딩에서 정렬
+     * 목록을 다시 세는 것은 같은 사실을 두 곳에서 관리하는 일이 된다.
+     */
+    title: "광고비로 순위를 살 수 없습니다",
+    body: "순위는 실적 지표로만 정합니다. 광고 구좌는 검색 결과와 분리해 표시합니다.",
     href: null,
     cta: null,
-    /**
-     * **지금 열려 있는 정렬을 함께 적는다.**
-     * 실적 기반 정렬은 후기(S8-02)·예약(S5-06) 데이터가 쌓여야 성립한다. 위 문장만
-     * 두면 아직 하지 않는 일을 현재형으로 말하게 되므로, 무엇이 지금 동작하는지를
-     * 같은 카드에서 밝힌다(랜딩 전체에서 지켜 온 원칙).
-     */
-    note: "지금 열려 있는 정렬은 가격·최근 등록·참가격 대비입니다. 실적 기반 정렬은 후기·예약 기록이 쌓이면 엽니다.",
   },
 ] as const;
 
@@ -205,11 +208,6 @@ export default function LandingPage() {
                   <CardContent className="space-y-2 pt-5">
                     <p className="text-sm font-semibold text-foreground">{item.title}</p>
                     <p className="text-caption text-muted-foreground">{item.body}</p>
-                    {"note" in item && item.note ? (
-                      <p className="text-caption text-muted-foreground" data-testid="pillar-note">
-                        {item.note}
-                      </p>
-                    ) : null}
                     {item.href && item.cta ? (
                       <Link href={item.href} className="text-sm font-medium text-brand-600">
                         {item.cta}

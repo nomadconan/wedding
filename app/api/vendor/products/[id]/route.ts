@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   ProductInputFieldsSchema,
@@ -132,16 +133,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   const admin = createAdminClient();
 
   if (input.status !== undefined && input.status !== before.status) {
-    await admin.from("entity_events").insert({
-      entity_type: "product",
-      entity_id: id,
-      event_type: `product_${input.status}`,
-      actor_id: user.id,
-      actor_role: user.role,
-      before_state: before.status,
-      after_state: input.status,
-      source: "web",
-    });
+    await recordEvent({
+    entityType: "product",
+    entityId: id,
+    eventType: `product_${input.status}`,
+    beforeState: before.status,
+    afterState: input.status,
+    actor: { id: user.id, role: user.role },
+  });
   }
 
   // 가격 변경은 정산과 직결되므로 값까지 남긴다(§7.2).

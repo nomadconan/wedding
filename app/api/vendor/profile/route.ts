@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   VENDOR_MEDIA_MAX,
@@ -246,16 +247,14 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    await admin.from("entity_events").insert({
-      entity_type: "vendor",
-      entity_id: vendorId,
-      event_type: "vendor_profile_updated",
-      actor_id: user.id,
-      actor_role: user.role,
-      source: "web",
-      // 필드 이름만 남긴다. 값은 audit_logs 가 갖는다(CLAUDE.md §5.3).
-      memo: changedFields.join(","),
-    });
+    await recordEvent({
+    entityType: "vendor",
+    entityId: vendorId,
+    eventType: "vendor_profile_updated",
+    // 필드 이름만 남긴다. 값은 audit_logs 가 갖는다(CLAUDE.md §5.3).
+    memo: changedFields.join(","),
+    actor: { id: user.id, role: user.role },
+  });
   }
 
   return ok({ vendor: updated, uploads, changedFields });

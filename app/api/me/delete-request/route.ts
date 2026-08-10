@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { DeletionRequestSchema } from "@/lib/core/schemas/me";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -57,14 +58,12 @@ export async function POST(request: NextRequest) {
   // 증적을 남긴다(D-23). **사유 본문은 넣지 않는다** — 개인정보가 섞일 수 있고,
   // 분쟁에 필요한 것은 '무엇을 썼는가' 가 아니라 '언제 어떤 상태였는가' 다(§7.3).
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "data_deletion_request",
-    entity_id: created.id,
-    event_type: "deletion_requested",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: created.scope,
-    source: "web",
+  await recordEvent({
+    entityType: "data_deletion_request",
+    entityId: created.id,
+    eventType: "deletion_requested",
+    afterState: created.scope,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok(
@@ -98,14 +97,12 @@ export async function DELETE(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "data_deletion_request",
-    entity_id: id,
-    event_type: "deletion_request_cancelled",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: "cancelled",
-    source: "web",
+  await recordEvent({
+    entityType: "data_deletion_request",
+    entityId: id,
+    eventType: "deletion_request_cancelled",
+    afterState: "cancelled",
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ id, status: "cancelled" });

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { parseInventoryCsv } from "@/lib/core/inventory/csv";
 import {
@@ -165,15 +166,13 @@ async function writeEvent(
 ) {
   const admin = createAdminClient();
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendorId,
-    event_type: `inventory_slots_${action}`,
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: String(count),
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendorId,
+    eventType: `inventory_slots_${action}`,
+    afterState: String(count),
     memo: mode ? `${mode} · ${count}건` : `${count}건`,
+    actor: { id: user.id, role: user.role },
   });
 
   await admin.from("audit_logs").insert({

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   ONBOARDING_QUESTIONS,
@@ -109,15 +110,13 @@ export async function POST(request: NextRequest) {
 
     membership = { coupleId: created.id, role: "owner" };
 
-    await admin.from("entity_events").insert({
-      entity_type: "couple",
-      entity_id: created.id,
-      event_type: "couple_created",
-      actor_id: user.id,
-      actor_role: user.role,
-      after_state: "onboarding",
-      source: "web",
-    });
+    await recordEvent({
+    entityType: "couple",
+    entityId: created.id,
+    eventType: "couple_created",
+    afterState: "onboarding",
+    actor: { id: user.id, role: user.role },
+  });
   }
 
   const coupleId = membership.coupleId;
@@ -163,16 +162,14 @@ export async function POST(request: NextRequest) {
 
   if (complete) {
     // 활동 로그에 작성자를 남긴다(§2.1 — 커플 중 누가 했는지 표기).
-    await admin.from("entity_events").insert({
-      entity_type: "couple",
-      entity_id: coupleId,
-      event_type: "onboarding_completed",
-      actor_id: user.id,
-      actor_role: user.role,
-      before_state: "onboarding",
-      after_state: "active",
-      source: "web",
-    });
+    await recordEvent({
+    entityType: "couple",
+    entityId: coupleId,
+    eventType: "onboarding_completed",
+    beforeState: "onboarding",
+    afterState: "active",
+    actor: { id: user.id, role: user.role },
+  });
 
     // TODO(S7-08 · S7-07): 여기서 초기 체크리스트(F-C-04)와 예산 배분 초안(F-C-05)을
     // 만든다. 지금 임시 생성 로직을 넣지 않는다 — 룰이 정해지기 전에 만든 태스크는

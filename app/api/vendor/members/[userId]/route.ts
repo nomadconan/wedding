@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   VendorMemberRoleChangeSchema,
@@ -103,15 +104,13 @@ export async function PATCH(
     after_json: { member_user_id: userId, vendor_role: parsed.data.role },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendor.id,
-    event_type: "vendor_member_role_changed",
-    actor_id: user.id,
-    actor_role: user.role,
-    before_state: before?.role ?? null,
-    after_state: parsed.data.role,
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendor.id,
+    eventType: "vendor_member_role_changed",
+    beforeState: before?.role ?? null,
+    afterState: parsed.data.role,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ member: updated });
@@ -169,14 +168,12 @@ export async function DELETE(
     before_json: { member_user_id: userId, vendor_role: deleted.vendor_role },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendor.id,
-    event_type: "vendor_member_removed",
-    actor_id: user.id,
-    actor_role: user.role,
-    before_state: deleted.vendor_role,
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendor.id,
+    eventType: "vendor_member_removed",
+    beforeState: deleted.vendor_role,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ userId });

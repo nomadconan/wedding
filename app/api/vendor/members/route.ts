@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   UNREGISTERED_INVITE_MESSAGE,
@@ -88,14 +89,12 @@ export async function POST(request: NextRequest) {
     after_json: { member_user_id: invited.id, vendor_role: role },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendor.id,
-    event_type: "vendor_member_invited",
-    actor_id: user.id,
-    actor_role: user.role,
-    after_state: role,
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendor.id,
+    eventType: "vendor_member_invited",
+    afterState: role,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({ member: created }, { status: 201 });

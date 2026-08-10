@@ -236,6 +236,7 @@ export type Database = {
           created_at: string
           id: string
           ip_hash: string | null
+          resolution_basis: string[] | null
           target_id: string | null
           target_type: string
           updated_at: string
@@ -249,6 +250,7 @@ export type Database = {
           created_at?: string
           id?: string
           ip_hash?: string | null
+          resolution_basis?: string[] | null
           target_id?: string | null
           target_type: string
           updated_at?: string
@@ -262,6 +264,7 @@ export type Database = {
           created_at?: string
           id?: string
           ip_hash?: string | null
+          resolution_basis?: string[] | null
           target_id?: string | null
           target_type?: string
           updated_at?: string
@@ -1665,8 +1668,12 @@ export type Database = {
         Row: {
           channel: string
           created_at: string
+          delivered_at: string | null
+          failed_at: string | null
+          failure_reason: string | null
           id: string
           payload_json: Json
+          provider_message_id: string | null
           read_at: string | null
           sent_at: string | null
           topic: string
@@ -1676,8 +1683,12 @@ export type Database = {
         Insert: {
           channel: string
           created_at?: string
+          delivered_at?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
           id?: string
           payload_json?: Json
+          provider_message_id?: string | null
           read_at?: string | null
           sent_at?: string | null
           topic: string
@@ -1687,8 +1698,12 @@ export type Database = {
         Update: {
           channel?: string
           created_at?: string
+          delivered_at?: string | null
+          failed_at?: string | null
+          failure_reason?: string | null
           id?: string
           payload_json?: Json
+          provider_message_id?: string | null
           read_at?: string | null
           sent_at?: string | null
           topic?: string
@@ -3254,6 +3269,7 @@ export type Database = {
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
+      is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {

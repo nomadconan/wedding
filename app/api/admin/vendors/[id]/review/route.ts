@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { failValidation, fail, ok } from "@/lib/api/response";
 import { VendorReviewInputSchema } from "@/lib/core/schemas/vendor";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -108,16 +109,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     after_json: { application_status: nextStatus, business_number_verified: businessNumberVerified },
   });
 
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendorId,
-    event_type: `vendor_review_${action}`,
-    actor_id: user.id,
-    actor_role: user.role,
-    before_state: application.status,
-    after_state: nextStatus,
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendorId,
+    eventType: `vendor_review_${action}`,
+    beforeState: application.status,
+    afterState: nextStatus,
     source: "admin",
     memo: note ?? null,
+    actor: { id: user.id, role: user.role },
   });
 
   return ok({

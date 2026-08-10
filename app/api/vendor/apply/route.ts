@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { failValidation, fail, ok } from "@/lib/api/response";
 import { VendorApplicationInputSchema } from "@/lib/core/schemas/vendor";
 import {
@@ -177,16 +178,14 @@ export async function POST(request: NextRequest) {
   }
 
   // 상태 전이를 증적으로 남긴다(D-23). memo 에 원문·경로를 담지 않는다.
-  await admin.from("entity_events").insert({
-    entity_type: "vendor",
-    entity_id: vendorId,
-    event_type: "vendor_application_submitted",
-    actor_id: user.id,
-    actor_role: "vendor_owner",
-    before_state: beforeStatus,
-    after_state: "submitted",
-    source: "web",
+  await recordEvent({
+    entityType: "vendor",
+    entityId: vendorId,
+    eventType: "vendor_application_submitted",
+    beforeState: beforeStatus,
+    afterState: "submitted",
     memo: beforeStatus === null ? "최초 신청" : "재제출",
+    actor: { id: user.id, role: "vendor_owner" },
   });
 
   return ok(

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { CartMutationSchema } from "@/lib/core/schemas/cart";
 import { loadCart } from "@/lib/cart/loader";
@@ -78,17 +79,24 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient();
   const { user, membership } = ctx;
 
-  const event = async (eventType: string, entityId: string, after?: string) => {
-    await admin.from("entity_events").insert({
-      entity_type: "cart",
-      entity_id: entityId,
-      event_type: eventType,
-      actor_id: user.id,
-      actor_role: user.role,
-      ...(after === undefined ? {} : { after_state: after }),
-      source: "web",
+  /**
+   * **`entityType` 은 테이블 이름이다.** 장바구니 자체(`carts`)와 담긴 항목
+   * (`cart_items`)은 다른 테이블이라 같은 이름으로 적으면 `entity_id` 가 어느 쪽
+   * 행인지 알 수 없다. 그 위에는 열람 정책을 쓸 수 없다(S4-03 · 0019).
+   */
+  const event = (
+    entityType: "cart" | "cart_item",
+    eventType: string,
+    entityId: string,
+    afterState?: string,
+  ) =>
+    recordEvent({
+      entityType,
+      entityId,
+      eventType,
+      ...(afterState === undefined ? {} : { afterState }),
+      actor: { id: user.id, role: user.role },
     });
-  };
 
   // ── 플래너 선택 토글 ──────────────────────────────────────────────────────
   // **커플 당사자만 바꿀 수 있다.** 이 스위치는 플래너 자신의 수수료가 붙느냐를 정하므로
@@ -104,7 +112,7 @@ export async function POST(request: NextRequest) {
       return fail(403, "CART_ITEM_FORBIDDEN", "이 항목을 바꿀 권한이 없습니다.");
     }
 
-    await event("cart_planner_toggled", parsed.data.itemId, String(parsed.data.selected));
+    await event("cart_item", "cart_planner_toggled", parsed.data.itemId, String(parsed.data.selected));
 
     return ok({ itemId: parsed.data.itemId, plannerSelected: parsed.data.selected });
   }
@@ -126,7 +134,7 @@ export async function POST(request: NextRequest) {
       return fail(403, "CART_ITEM_FORBIDDEN", "이 항목을 바꿀 권한이 없습니다.");
     }
 
-    await event("cart_options_changed", parsed.data.itemId);
+    await event("cart_item", "cart_options_changed", parsed.data.itemId);
 
     return ok({ itemId: parsed.data.itemId });
   }
@@ -193,7 +201,7 @@ export async function POST(request: NextRequest) {
     if (error || !created) return fail(500, "CART_CREATE_FAILED", "장바구니를 만들지 못했습니다.");
 
     cartId = created.id;
-    await event("cart_created", cartId);
+    await event("cart", "cart_created", cartId);
   }
 
   const { data: item, error: addError } = await supabase
@@ -226,7 +234,7 @@ export async function POST(request: NextRequest) {
     await supabase.from("wishlists").delete().eq("id", wishlistId);
   }
 
-  await event(wishlistId ? "cart_item_moved_from_wishlist" : "cart_item_added", item.id);
+  await event("cart_item", wishlistId ? "cart_item_moved_from_wishlist" : "cart_item_added", item.id);
 
   return ok({ cartId, itemId: item.id }, { status: 201 });
 }
@@ -252,13 +260,11 @@ export async function DELETE(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  await admin.from("entity_events").insert({
-    entity_type: "cart",
-    entity_id: itemId,
-    event_type: "cart_item_removed",
-    actor_id: ctx.user.id,
-    actor_role: ctx.user.role,
-    source: "web",
+  await recordEvent({
+    entityType: "cart_item",
+    entityId: itemId,
+    eventType: "cart_item_removed",
+    actor: { id: ctx.user.id, role: ctx.user.role },
   });
 
   return ok({ itemId });
