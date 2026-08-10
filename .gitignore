@@ -44,3 +44,5 @@ supabase/.branches/
 
 # Local scratch
 filelist.txt
+# 개발 중 찍은 스크린샷. 소스가 아니며 Public 리포에 둘 이유가 없다(S3-11).
+이미지캡춰/

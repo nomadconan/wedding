@@ -7,7 +7,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * 두 가지 일을 한다.
  *  1) **세션 쿠키 갱신** — Supabase 액세스 토큰은 만료되므로 요청마다 갱신 기회를 준다.
  *     이걸 하지 않으면 서버 컴포넌트가 만료된 세션을 보고 사용자를 튕겨낸다.
- *  2) **미인증 차단** — `/vendor/**`·`/admin/**`·`/onboarding`·`/cart`·`/wishlist` 는
+ *  2) **미인증 차단** — `/vendor/**`·`/admin/**`·`/onboarding`·`/home`·`/cart`·`/wishlist` 는
  *     로그인 없이 열리지 않는다. 탐색(`/explore`)은 반대로 **비로그인도 열린다**(§1.4 guest) —
  *     담기부터 로그인이 필요하다.
  *
@@ -25,6 +25,7 @@ const PROTECTED_PREFIXES = [
   "/vendor",
   "/admin",
   "/onboarding",
+  "/home",
   "/cart",
   "/wishlist",
   // 탐색은 열려 있지만 **비교는 장바구니 기반**이라 로그인이 필요하다(S3-07).
