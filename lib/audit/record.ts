@@ -31,6 +31,13 @@ export type EntityType =
   | "cart"
   | "cart_item"
   | "wishlist"
+  // S4-01. 채팅 본문·첨부 경로는 memo 에 넣지 않는다 — 아래 3번 원칙 그대로다.
+  // 채팅에서 남길 사실은 "무엇을 말했는가" 가 아니라 "방이 열렸다·회수됐다·담당자가
+  // 바뀌었다" 같은 상태 전이다. 말한 내용은 chat_messages 가 이미 들고 있다.
+  | "chat_room"
+  | "chat_message"
+  | "qna_post"
+  | "qna_answer"
   | "profile"
   | "data_deletion_request";
 
