@@ -32,10 +32,44 @@ const SOCIAL_PROVIDERS = [
 
 const SOCIAL_ENABLED = process.env.NEXT_PUBLIC_SOCIAL_AUTH_ENABLED === "true";
 
+/**
+ * 역할별 착지 지점.
+ *
+ * 프로필 행이 아직 없으면(가입 직후 upsert 전이거나 실패) 소비자로 본다 —
+ * `profiles.role` 기본값이 consumer 이고, 잘못 보내더라도 운영자·업체 화면은
+ * 각자의 가드가 다시 막는다. 최종 경계는 RLS 다(§1.4 NOTE).
+ */
+async function landingFor(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return "/home";
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  switch (profile?.role) {
+    case "admin":
+    case "ops":
+      return "/admin/vendors";
+    case "vendor_owner":
+    case "vendor_staff":
+      return "/vendor";
+    default:
+      return "/home";
+  }
+}
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") ?? "/vendor/apply";
+  /**
+   * `next` 가 있으면 그리로 간다(보호 경로에서 튕겨 온 경우).
+   * 없으면 **역할에 따라** 정한다 — S3-11 이전에는 업체 화면뿐이라 `/vendor/apply` 로
+   * 고정돼 있었고, 소비자가 로그인하면 자기와 무관한 입점 신청 화면에 떨어졌다.
+   */
+  const nextPath = searchParams.get("next");
   const denied = searchParams.get("denied") === "1";
 
   const [mode, setMode] = useState<Mode>("signin");
@@ -80,7 +114,7 @@ export function LoginForm() {
         if (signInError) throw signInError;
       }
 
-      router.push(nextPath);
+      router.push(nextPath ?? (await landingFor(supabase)));
       router.refresh();
     } catch (caught) {
       // 서버 예외 메시지를 그대로 보여주지 않는다(CLAUDE.md §5.3).
@@ -179,7 +213,9 @@ export function LoginForm() {
                 await supabase.auth.signInWithOAuth({
                   provider: provider.id as "google",
                   options: {
-                    redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+                    // 소셜은 콜백에서 돌아오므로 역할을 아직 모른다. `next` 가 없으면 홈으로
+                    // 보내고, 업체·운영자는 각 화면의 가드가 다시 자기 자리로 돌린다.
+                    redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath ?? "/home")}`,
                   },
                 });
               }}

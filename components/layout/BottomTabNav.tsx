@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarCheck, FileSearch, MessageCircle, Search, Wallet } from "lucide-react";
+import { Heart, Home, Search, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -12,16 +12,26 @@ import { cn } from "@/lib/utils";
  * 라우트 그룹 `(consumer)` 의 1차 경로와 1:1로 대응한다(명세서 §6.2).
  * 탭은 5개를 넘기지 않는다 — 375px 에서 6개부터는 터치 타깃이 44px 아래로 내려간다(§7.5).
  *
- * 탐색을 첫 번째에 두는 이유: 이 서비스의 주인공은 **가격 정찰제**이고,
- * 사용자가 가장 먼저 만나야 하는 것은 총액이 공개된 업체 목록이기 때문이다.
- * AI 플래너·계약 검토는 신뢰를 보조하는 기능이라 그다음에 온다.
+ * **지금 도달 가능한 화면만 가리킨다**(S3-11 에서 정리). T-04b 시점의 탭 넷
+ * (플래너·검토·예산·체크인)은 대응 화면이 아직 없어 누르면 404 로 갔다. 없는 화면을
+ * 가리키는 탭은 "만들어 두고 켜지 않는" 것이 아니라 **깨진 것을 켜 둔** 상태다.
+ * 각 화면이 생기는 태스크는 `docs/TASKS.md` 에 적어 뒀다
+ * (플래너 S7-06 · 검토 S7-03 · 예산 S7-07 · 체크리스트 S7-08 · 마이페이지 S3-09).
+ *
+ * 순서의 근거 —
+ *  · **홈**이 첫째다. 로그인한 사용자가 돌아올 자리이고, 흩어진 화면의 진입점이다.
+ *  · **탐색**이 둘째다. 이 서비스의 주인공은 가격 정찰제이고 사용자가 만나야 할 것은
+ *    총액이 공개된 업체 목록이다.
+ *  · **장바구니·찜**은 담아 둔 것으로 돌아오는 경로다. 비교(`/explore/compare`)와
+ *    업체 상세는 2차 화면이라 각각의 1차 화면에서 들어간다.
+ *
+ * 빈 자리를 채우려고 없는 화면을 넣지 않는다. 5개는 상한이지 목표가 아니다.
  */
 const TABS = [
+  { href: "/home", label: "홈", icon: Home },
   { href: "/explore", label: "탐색", icon: Search },
-  { href: "/planner", label: "플래너", icon: MessageCircle },
-  { href: "/reports", label: "검토", icon: FileSearch },
-  { href: "/budget", label: "예산", icon: Wallet },
-  { href: "/checkin", label: "체크인", icon: CalendarCheck },
+  { href: "/cart", label: "장바구니", icon: ShoppingBag },
+  { href: "/wishlist", label: "찜", icon: Heart },
 ] as const;
 
 export type ConsumerTabHref = (typeof TABS)[number]["href"];
