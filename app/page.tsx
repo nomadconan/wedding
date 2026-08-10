@@ -29,23 +29,23 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
-  title: "웨딩클리어 — 업체가 등록한 총액이 그대로 보입니다",
+  title: "웨딩클리어 — 웨딩도 이제 장바구니에 담으세요",
   description:
-    "웨딩 업체의 총액과 추가금을 등록된 그대로 공개합니다. 검색 순위에 광고를 반영하지 않으며, 정렬 기준을 화면에 함께 보여줍니다.",
+    "상품을 보고, 가격을 보고, 골라서 담습니다. 웨딩홀도 스드메도 총액과 추가금이 상품 정보에 적혀 있습니다.",
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     url: "/",
     siteName: "웨딩클리어",
-    title: "웨딩클리어 — 업체가 등록한 총액이 그대로 보입니다",
+    title: "웨딩클리어 — 웨딩도 이제 장바구니에 담으세요",
     description:
-      "총액·추가금·플래너 수수료를 한 블록에서 봅니다. 검색 순위에 광고를 반영하지 않습니다.",
+      "상품을 보고, 가격을 보고, 골라서 담습니다. 담아서 나란히 비교하세요.",
     images: [{ url: "/images/brand/brand-og-default@1200x630.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "웨딩클리어 — 업체가 등록한 총액이 그대로 보입니다",
-    description: "총액·추가금·플래너 수수료를 한 블록에서 봅니다.",
+    title: "웨딩클리어 — 웨딩도 이제 장바구니에 담으세요",
+    description: "상품을 보고, 가격을 보고, 골라서 담습니다.",
     images: ["/images/brand/brand-og-default@1200x630.png"],
   },
 };
@@ -67,7 +67,7 @@ const JSON_LD = {
       url: APP_URL,
       logo: `${APP_URL}/images/brand/brand-logo@240x64.svg`,
       description:
-        "웨딩 업체의 총액과 추가금을 등록된 그대로 공개하는 직거래 플랫폼. 검색 순위에 광고를 반영하지 않는다.",
+        "웨딩 상품을 진열하고 판매가를 공개하는 웨딩 직거래 플랫폼. 담아서 총액으로 비교한다.",
     },
     {
       "@type": "WebSite",
@@ -80,25 +80,38 @@ const JSON_LD = {
   ],
 };
 
-/** 지금 **실제로 쓸 수 있는** 것만 CTA 를 갖는다. */
-const AVAILABLE = [
+/**
+ * 뒷받침 3가지 (확정 카피).
+ *
+ * **화면 언어를 쇼핑몰에 맞춘다** — 상품·담기·비교·총액. 기존 웨딩 시장은 상품과
+ * 가격을 알 수 없고 플래너가 소개하며 값을 정하는 구조였다. 여기서는 상품이 진열되고
+ * 판매가가 정해져 있다는 것이 제품의 주장이므로, 말도 그 구조를 따라야 한다.
+ */
+const PILLARS = [
   {
-    title: "총액으로 비교하기",
-    body: "업체가 등록한 판매가와 사전 등록된 추가금을 한 화면에서 봅니다. 추가금을 적지 않은 업체는 '미등록'이라고 그대로 적습니다.",
+    title: "담아서 나란히 비교하세요",
+    body: "여러 업체를 담아 총액을 한 화면에서 봅니다.",
     href: "/explore",
-    cta: "업체 둘러보기",
+    cta: "상품 보러 가기",
   },
   {
-    title: "담아 두고 나란히 견주기",
-    body: "여러 업체를 담아 실총액 기준으로 정렬해 비교합니다. 배우자와 같은 목록을 함께 봅니다.",
-    href: "/cart",
-    cta: "장바구니 열기",
+    title: "추가금까지 상품 정보에 있습니다",
+    body: "사전에 적지 않은 항목은 나중에 청구할 수 없습니다.",
+    href: "/explore",
+    cta: "추가금 확인하기",
   },
   {
-    title: "지역별 가격 분포",
-    body: "지역·카테고리별 가격 분포를 표본수·출처·수집일과 함께 공개합니다. 표본이 모자라면 숫자를 만들지 않고 그렇다고 적습니다.",
-    href: "/explore",
-    cta: "지역부터 고르기",
+    title: "광고가 순위를 바꾸지 않습니다",
+    body: "상담·예약·계약·리뷰 실적으로만 정렬합니다.",
+    href: null,
+    cta: null,
+    /**
+     * **지금 열려 있는 정렬을 함께 적는다.**
+     * 실적 기반 정렬은 후기(S8-02)·예약(S5-06) 데이터가 쌓여야 성립한다. 위 문장만
+     * 두면 아직 하지 않는 일을 현재형으로 말하게 되므로, 무엇이 지금 동작하는지를
+     * 같은 카드에서 밝힌다(랜딩 전체에서 지켜 온 원칙).
+     */
+    note: "지금 열려 있는 정렬은 가격·최근 등록·참가격 대비입니다. 실적 기반 정렬은 후기·예약 기록이 쌓이면 엽니다.",
   },
 ] as const;
 
@@ -136,20 +149,24 @@ export default function LandingPage() {
         </header>
 
         <main className="mx-auto w-full max-w-5xl px-gutter pb-16">
-          {/* ── 가치 제안 ─────────────────────────────────────────────── */}
+          {/* ── 가치 제안 (확정 카피) ──────────────────────────────────
+              쇼핑몰 컨셉을 문장 구조로 그대로 옮긴다 — 보고, 고르고, 담는다. */}
           <section className="space-y-4 py-8" data-testid="landing-hero">
-            <Badge variant="secondary">{NO_PAID_RANKING_CLAIM}</Badge>
+            {/* 태그라인을 헤드라인 위에 둔다. 이 서비스가 무엇을 뒤집는지가 먼저 오고
+                (상담 → 쇼핑), 헤드라인이 그래서 무엇을 하라는지 말한다. */}
+            <p className="text-sm font-medium text-brand-600" data-testid="landing-tagline">
+              웨딩 준비, 상담이 아니라 쇼핑입니다
+            </p>
 
             <h1 className="text-display-lg text-foreground">
-              업체가 등록한 총액이
+              웨딩도 이제
               <br />
-              그대로 보입니다
+              장바구니에 담으세요
             </h1>
 
             <p className="text-base text-muted-foreground">
-              웨딩 준비에서 가장 어려운 것은 &lsquo;얼마인지 모르는 것&rsquo;입니다. 웨딩클리어는
-              업체가 등록한 판매가와 추가금을 있는 그대로 공개하고, 무엇으로 줄 세웠는지를
-              결과와 함께 보여줍니다.
+              상품을 보고, 가격을 보고, 골라서 담습니다.
+              <br className="hidden sm:block" /> 웨딩홀도 스드메도 열어보면 다 적혀 있습니다.
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -158,7 +175,7 @@ export default function LandingPage() {
                 className="rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground"
                 data-testid="cta-explore"
               >
-                가격부터 보기
+                상품 둘러보기
               </Link>
               <Link
                 href="/vendor/apply"
@@ -178,6 +195,32 @@ export default function LandingPage() {
             />
           </section>
 
+          {/* ── 뒷받침 3가지 (확정 카피) ────────────────────────────────
+              히어로 바로 다음이다. 주장을 읽은 사람이 근거를 찾을 자리이고,
+              세 문장이 각각 탐색·상품 정보·정렬로 이어진다. */}
+          <section className="space-y-3 py-8">
+            <div className="grid gap-3 sm:grid-cols-3">
+              {PILLARS.map((item) => (
+                <Card key={item.title} data-testid="landing-pillar">
+                  <CardContent className="space-y-2 pt-5">
+                    <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                    <p className="text-caption text-muted-foreground">{item.body}</p>
+                    {"note" in item && item.note ? (
+                      <p className="text-caption text-muted-foreground" data-testid="pillar-note">
+                        {item.note}
+                      </p>
+                    ) : null}
+                    {item.href && item.cta ? (
+                      <Link href={item.href} className="text-sm font-medium text-brand-600">
+                        {item.cta}
+                      </Link>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </section>
+
           {/* ── 가격을 어떻게 보여주는가 ───────────────────────────────
               **참가격 지수 숫자를 걸지 않는다.** 표본이 모이기 전이라 대부분
               '표본 부족'이고, 그 상태를 첫 화면에 세우면 서비스가 비어 보인다.
@@ -185,10 +228,11 @@ export default function LandingPage() {
               적는가**이므로, 그 규칙을 예시로 보여준다. 금액은 '예시' 임을
               배지로 못박아 시세로 읽히지 않게 한다. */}
           <section className="space-y-3 py-8" data-testid="landing-price-rule">
-            <h2 className="text-display-sm text-foreground">추가금까지 같은 블록에서</h2>
+            <h2 className="text-display-sm text-foreground">상품 정보에 추가금까지 적혀 있습니다</h2>
             <p className="text-sm text-muted-foreground">
               총액만 크게 적고 추가금을 아래에 숨기지 않습니다. 업체가 추가금을 등록하지
               않았다면 &lsquo;미등록&rsquo;이라고 적습니다 — &lsquo;없음&rsquo;과 다른 말입니다.
+              사전에 적지 않은 항목은 계약 이후에 청구할 수 없습니다.
             </p>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -235,24 +279,6 @@ export default function LandingPage() {
               무엇으로 줄 세웠는지 화면에서 확인할 수 있어야 &lsquo;광고가 없다&rsquo;는 말이
               증명됩니다.
             </p>
-          </section>
-
-          {/* ── 지금 쓸 수 있는 것 ─────────────────────────────────────── */}
-          <section className="space-y-3 py-8">
-            <h2 className="text-display-sm text-foreground">지금 쓸 수 있어요</h2>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {AVAILABLE.map((item) => (
-                <Card key={item.title} data-testid="landing-available">
-                  <CardContent className="space-y-2 pt-5">
-                    <p className="text-sm font-semibold text-foreground">{item.title}</p>
-                    <p className="text-caption text-muted-foreground">{item.body}</p>
-                    <Link href={item.href} className="text-sm font-medium text-brand-600">
-                      {item.cta}
-                    </Link>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
           </section>
 
           {/* ── 준비 중 ────────────────────────────────────────────────
