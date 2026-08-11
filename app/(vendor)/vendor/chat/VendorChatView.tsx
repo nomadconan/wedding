@@ -124,6 +124,34 @@ export function VendorChatView({
     void refreshMessages(activeId);
   }, [activeId, refreshMessages]);
 
+  /** 단발 동작 공용 호출. 제안 카드처럼 인자만 다른 것들이 쓴다. */
+  async function call(body: unknown, key: string) {
+    setPendingId(key);
+    setError(null);
+
+    try {
+      const response = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+
+      if (!response.ok || !payload.ok) {
+        setError(payload.error?.message ?? "처리하지 못했어요.");
+
+        return;
+      }
+
+      if (activeId) await refreshMessages(activeId);
+      await refreshRooms();
+    } catch {
+      setError("처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPendingId(null);
+    }
+  }
+
   async function assign(userId: string | null) {
     if (!activeId) return;
 
@@ -317,6 +345,23 @@ export function VendorChatView({
                           {reply.label}
                         </Button>
                       ))}
+
+                      {/* 상담 일정 제안 카드(S4-07). 문구는 서버가 고정으로 넣는다 —
+                          업체가 "잡아 두었다" 처럼 확정으로 읽히는 말을 쓸 수 없게. */}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() =>
+                          void call(
+                            { action: "propose_consultation", roomId: active.id },
+                            `propose-${active.id}`,
+                          )
+                        }
+                        data-testid="propose-consultation"
+                      >
+                        상담 일정 제안
+                      </Button>
                     </div>
                   }
                 />

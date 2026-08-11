@@ -1,12 +1,13 @@
 "use client";
 
 import { CalendarClock, FileText, Paperclip, Undo2 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  CONSULTATION_CARD_PENDING,
+  CONSULTATION_CARD,
   RETRACTED_TEXT,
   RETRACT_CONFIRM,
   canRetract,
@@ -42,6 +43,8 @@ export type ChatThreadProps = {
   attachmentEndpoint: string;
   onRetract?: (messageId: string) => Promise<void> | void;
   pendingId?: string | null;
+  /** 상담 제안 카드가 예약 화면으로 보낼 때 쓴다. 업체 화면에서는 넘기지 않는다. */
+  vendorId?: string;
   className?: string;
 };
 
@@ -52,6 +55,7 @@ export function ChatThread({
   attachmentEndpoint,
   onRetract,
   pendingId,
+  vendorId,
   className,
 }: ChatThreadProps) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -75,7 +79,7 @@ export function ChatThread({
     <ol className={cn("space-y-3", className)} data-testid="chat-thread">
       {messages.map((message) => {
         if (message.senderType === "system") {
-          return <SystemCard key={message.id} message={message} />;
+          return <SystemCard key={message.id} message={message} vendorId={vendorId} />;
         }
 
         const mine = isMine(message.senderType, side);
@@ -165,32 +169,43 @@ export function ChatThread({
 /**
  * system 카드 (§3.7 "상담 일정 제안 카드는 system 메시지로 남긴다")
  *
- * **그리는 쪽만 만들었다.** 보내는 경로는 없다 — F-C-29(상담·탐방 예약)가 S4-07
- * 이라 지금은 존재할 수 없는 상담 id 를 참조하게 된다. 카드에서 예약으로 넘어가는
- * 버튼을 지금 붙이면 없는 화면을 가리키는 버튼이 되고, 그것은 "만들어 두고 켜지
- * 않은 것" 이 아니라 **깨진 것을 켜 둔 상태**다(BottomTabNav 주석의 판단과 같다).
+ * **S4-07 에서 예약으로 연결했다.** S4-04 시점에는 F-C-29 가 없어 버튼을 비활성으로
+ * 두고 담당 태스크만 적었다 — 없는 화면을 가리키는 버튼은 깨진 것을 켜 둔 상태이기
+ * 때문이다. 이제 업체 상세의 예약 폼이 있으므로 그리로 보낸다.
  *
- * 그래서 자리와 이유와 담당 태스크를 그대로 적는다(S2-08·S3-11 표기 원칙).
+ * **카드가 일정을 확정하지 않는다.** 업체의 제안일 뿐이고, 실제 예약은 고객이
+ * 신청하고 업체가 승인해야 성립한다(F-C-29). 그래서 카드는 예약 화면으로 보내는
+ * 안내이지 예약 그 자체가 아니다 — 문구도 그렇게 쓴다.
  */
-function SystemCard({ message }: { message: ChatMessageView }) {
+function SystemCard({ message, vendorId }: { message: ChatMessageView; vendorId?: string }) {
   return (
     <li className="flex justify-center" data-testid="chat-system-card">
       <div className="w-full max-w-[92%] rounded-xl border border-border bg-muted px-3.5 py-3">
         <p className="flex items-center gap-1.5 text-caption font-medium text-foreground">
           <CalendarClock aria-hidden="true" className="h-3.5 w-3.5" />
-          {CONSULTATION_CARD_PENDING.label}
+          {CONSULTATION_CARD.label}
         </p>
 
         {message.body ? (
           <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{message.body}</p>
         ) : null}
 
-        <p className="mt-2 text-caption text-muted-foreground">
-          {CONSULTATION_CARD_PENDING.reason}
-        </p>
-        <Badge variant="outline" className="mt-2">
-          {CONSULTATION_CARD_PENDING.filledBy}에서 연결돼요
-        </Badge>
+        {vendorId ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            asChild
+            data-testid="consultation-card-cta"
+          >
+            <Link href={CONSULTATION_CARD.href(vendorId)}>{CONSULTATION_CARD.cta}</Link>
+          </Button>
+        ) : (
+          <Badge variant="outline" className="mt-2">
+            업체 화면에서는 고객이 예약을 신청해요
+          </Badge>
+        )}
       </div>
     </li>
   );

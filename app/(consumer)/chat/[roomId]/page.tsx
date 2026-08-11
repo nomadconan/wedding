@@ -52,6 +52,7 @@ export default async function ChatRoomPage({ params }: { params: { roomId: strin
           roomId={params.roomId}
           status={loaded.room.status}
           viewerId={user.id}
+          vendorId={loaded.room.vendor_id}
           initialMessages={messages}
           initialLastReadAt={lastReadAt}
         />

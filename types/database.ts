@@ -733,6 +733,212 @@ export type Database = {
         }
         Relationships: []
       }
+      consultation_deposits: {
+        Row: {
+          amount: number
+          attempt_count: number
+          consultation_id: string
+          created_at: string
+          currency: string
+          failure_reason: string | null
+          held_at: string | null
+          id: string
+          idempotency_key: string | null
+          payment_id: string | null
+          provider: string | null
+          provider_ref: string | null
+          refund_id: string | null
+          resolution_reason: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          attempt_count?: number
+          consultation_id: string
+          created_at?: string
+          currency?: string
+          failure_reason?: string | null
+          held_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          payment_id?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          refund_id?: string | null
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          attempt_count?: number
+          consultation_id?: string
+          created_at?: string
+          currency?: string
+          failure_reason?: string | null
+          held_at?: string | null
+          id?: string
+          idempotency_key?: string | null
+          payment_id?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          refund_id?: string | null
+          resolution_reason?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consultation_deposits_consultation_id_fkey"
+            columns: ["consultation_id"]
+            isOneToOne: true
+            referencedRelation: "consultations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consultation_deposits_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consultation_deposits_refund_id_fkey"
+            columns: ["refund_id"]
+            isOneToOne: false
+            referencedRelation: "refunds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consultations: {
+        Row: {
+          approved_at: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          confirm_due_at: string | null
+          couple_confirmed_at: string | null
+          couple_id: string
+          couple_outcome:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+          created_at: string
+          duration_minutes: number
+          ends_at: string
+          id: string
+          location: string | null
+          outcome: Database["public"]["Enums"]["consultation_outcome"] | null
+          planner_id: string | null
+          reject_reason: string | null
+          rejected_at: string | null
+          requested_at: string
+          resolved_at: string | null
+          scheduled_at: string
+          status: Database["public"]["Enums"]["consultation_status"]
+          type: Database["public"]["Enums"]["consultation_type"]
+          updated_at: string
+          vendor_confirmed_at: string | null
+          vendor_id: string
+          vendor_outcome:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+        }
+        Insert: {
+          approved_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          confirm_due_at?: string | null
+          couple_confirmed_at?: string | null
+          couple_id: string
+          couple_outcome?:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+          created_at?: string
+          duration_minutes: number
+          ends_at: string
+          id?: string
+          location?: string | null
+          outcome?: Database["public"]["Enums"]["consultation_outcome"] | null
+          planner_id?: string | null
+          reject_reason?: string | null
+          rejected_at?: string | null
+          requested_at?: string
+          resolved_at?: string | null
+          scheduled_at: string
+          status?: Database["public"]["Enums"]["consultation_status"]
+          type: Database["public"]["Enums"]["consultation_type"]
+          updated_at?: string
+          vendor_confirmed_at?: string | null
+          vendor_id: string
+          vendor_outcome?:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+        }
+        Update: {
+          approved_at?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          confirm_due_at?: string | null
+          couple_confirmed_at?: string | null
+          couple_id?: string
+          couple_outcome?:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+          created_at?: string
+          duration_minutes?: number
+          ends_at?: string
+          id?: string
+          location?: string | null
+          outcome?: Database["public"]["Enums"]["consultation_outcome"] | null
+          planner_id?: string | null
+          reject_reason?: string | null
+          rejected_at?: string | null
+          requested_at?: string
+          resolved_at?: string | null
+          scheduled_at?: string
+          status?: Database["public"]["Enums"]["consultation_status"]
+          type?: Database["public"]["Enums"]["consultation_type"]
+          updated_at?: string
+          vendor_confirmed_at?: string | null
+          vendor_id?: string
+          vendor_outcome?:
+            | Database["public"]["Enums"]["consultation_outcome"]
+            | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consultations_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consultations_planner_id_fkey"
+            columns: ["planner_id"]
+            isOneToOne: false
+            referencedRelation: "planners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consultations_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       content_posts: {
         Row: {
           author_id: string | null
@@ -3634,10 +3840,19 @@ export type Database = {
       chat_room_couple_id: { Args: { p_room_id: string }; Returns: string }
       chat_room_is_open: { Args: { p_room_id: string }; Returns: boolean }
       chat_room_vendor_id: { Args: { p_room_id: string }; Returns: string }
+      consultation_couple_id: {
+        Args: { p_consultation_id: string }
+        Returns: string
+      }
+      consultation_vendor_id: {
+        Args: { p_consultation_id: string }
+        Returns: string
+      }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean
       }
+      inquiry_couple_id: { Args: { p_inquiry_id: string }; Returns: string }
       is_active_vendor: { Args: { p_vendor_id: string }; Returns: boolean }
       is_any_planner: { Args: never; Returns: boolean }
       is_any_vendor_member: { Args: never; Returns: boolean }
@@ -3645,6 +3860,7 @@ export type Database = {
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
+      is_inquiry_vendor: { Args: { p_inquiry_id: string }; Returns: boolean }
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
@@ -3655,9 +3871,12 @@ export type Database = {
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
+      quote_target_id: { Args: { p_quote_id: string }; Returns: string }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      target_couple_id: { Args: { p_target_id: string }; Returns: string }
+      target_vendor_id: { Args: { p_target_id: string }; Returns: string }
       timemultirange: { Args: never; Returns: unknown }
     }
     Enums: {
@@ -3665,6 +3884,21 @@ export type Database = {
       booking_status: "hold" | "confirmed" | "cancelled" | "fulfilled"
       chat_sender_type: "couple" | "vendor" | "system"
       commission_scope_type: "global" | "category" | "vendor"
+      consultation_outcome:
+        | "fulfilled"
+        | "no_show_couple"
+        | "no_show_vendor"
+        | "undetermined"
+      consultation_status:
+        | "requested"
+        | "approved"
+        | "rejected"
+        | "confirmed"
+        | "completed"
+        | "no_show"
+        | "cancelled"
+        | "disputed"
+      consultation_type: "visit_consult" | "venue_tour" | "phone" | "video"
       content_post_type: "guide" | "price_report" | "glossary"
       couple_member_role: "owner" | "partner" | "planner"
       document_type: "contract" | "estimate"
@@ -3825,6 +4059,23 @@ export const Constants = {
       booking_status: ["hold", "confirmed", "cancelled", "fulfilled"],
       chat_sender_type: ["couple", "vendor", "system"],
       commission_scope_type: ["global", "category", "vendor"],
+      consultation_outcome: [
+        "fulfilled",
+        "no_show_couple",
+        "no_show_vendor",
+        "undetermined",
+      ],
+      consultation_status: [
+        "requested",
+        "approved",
+        "rejected",
+        "confirmed",
+        "completed",
+        "no_show",
+        "cancelled",
+        "disputed",
+      ],
+      consultation_type: ["visit_consult", "venue_tour", "phone", "video"],
       content_post_type: ["guide", "price_report", "glossary"],
       couple_member_role: ["owner", "partner", "planner"],
       document_type: ["contract", "estimate"],

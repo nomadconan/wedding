@@ -1665,6 +1665,294 @@ if (!adminUser || !opsUser || !vendorStaff) {
 }
 
 // =============================================================================
+// 상담·탐방 예약 · 노쇼 보증금 (S4-07 · S4-08 · S4-09)
+// -----------------------------------------------------------------------------
+// 확인하는 경계는 다섯이다.
+//   1) 격리 — 타 커플·타 업체·비로그인
+//   2) **플래너는 상담을 본다** — 채팅과 갈리는 지점(§3.9 가 상담에만 명시했다)
+//   3) **슬롯 중복 금지** — 구간 겹침이라 EXCLUDE 다
+//   4) **보증금은 서비스롤 전용** — 당사자가 상태를 못 바꾼다(§3.9)
+//   5) 이행 확인은 자기 칸에만, 한 번만
+// =============================================================================
+if (!adminUser || !opsUser || !vendorStaff) {
+  console.log("SKIP  상담·예약 항목 — 시드 계정이 없다");
+} else {
+  const CV2 = "00000000-0000-0000-0000-00000000d001"; // 상담 업체
+  const OV2 = "00000000-0000-0000-0000-00000000d002"; // 타 업체
+  const OC3 = "00000000-0000-0000-0000-00000000d003"; // 타 커플
+  const CONS = "00000000-0000-0000-0000-00000000d004";
+  const DEP = "00000000-0000-0000-0000-00000000d005";
+  const PL2 = "00000000-0000-0000-0000-00000000d006"; // 플래너
+
+  const consultFixture = `
+    insert into public.vendors (id, name, category, status)
+      values ('${CV2}', 'RLS상담업체', 'hall', 'active'),
+             ('${OV2}', 'RLS상담타업체', 'hall', 'active');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${CV2}', '${outsider}', 'owner'),
+             ('${CV2}', '${vendorStaff}', 'staff'),
+             ('${OV2}', '${adminUser}', 'owner');
+    insert into public.vendor_availability (vendor_id, weekday, start_time, end_time, slot_minutes)
+      values ('${CV2}', 6, '14:00', '17:00', 60);
+    insert into public.couples (id, owner_id, stage)
+      values ('${OC3}', '${opsUser}', 'onboarding');
+    insert into public.couple_members (couple_id, user_id, member_role)
+      values ('${OC3}', '${opsUser}', 'owner');
+    insert into public.consultations
+      (id, couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+      values ('${CONS}', '${coupleId}', '${CV2}', 'visit_consult',
+              '2027-05-15 05:00:00+00', 60, '2027-05-15 06:00:00+00', 'confirmed');
+    insert into public.consultation_deposits
+      (id, consultation_id, amount, status, held_at, idempotency_key)
+      values ('${DEP}', '${CONS}', 30000, 'held', now(), 'rls-check-key');
+  `;
+
+  // ── 1) 당사자는 본다 ──────────────────────────────────────────────────────
+  check(
+    "고객은 자기 예약을 본다",
+    asUser(owner, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultFixture) === "1",
+  );
+  check(
+    "업체는 자기에게 온 예약을 본다",
+    asUser(outsider, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultFixture) === "1",
+  );
+  check(
+    "업체 staff 도 예약을 본다 (일정은 가격·정산이 아니다)",
+    asUser(vendorStaff, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultFixture) === "1",
+  );
+
+  // ── 2) 격리 ──────────────────────────────────────────────────────────────
+  check(
+    "타 커플은 남의 예약을 못 본다",
+    asUser(opsUser, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultFixture) === "0",
+  );
+  check(
+    "타 업체는 남에게 간 예약을 못 본다",
+    asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultFixture) === "0",
+  );
+  for (const [label, table] of [
+    ["비로그인은 예약을 못 본다", "consultations"],
+    ["비로그인은 보증금을 못 본다", "consultation_deposits"],
+  ]) {
+    check(label, asAnon(`select count(*) from public.${table};`, consultFixture) === "0");
+  }
+
+  // ── 3) 플래너 — **채팅과 갈리는 지점** ───────────────────────────────────
+  // §3.9 는 상담 행에만 "위임 플래너" 를 명시한다. 채팅(0021)에서는 뺐다.
+  const consultPlannerFixture = `${consultFixture}
+    insert into public.planners (id, user_id, status) values ('${PL2}', '${adminUser}', 'active');
+    insert into public.planner_engagements
+      (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+      values ('${PL2}', '${coupleId}', '{"tables":["consultations"]}'::jsonb,
+              'active', now() - interval '1 day', now() + interval '30 days');
+  `;
+
+  check(
+    "위임받은 플래너는 상담을 **본다** (채팅과 다르다 — §3.9 가 상담에만 명시)",
+    asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
+      consultPlannerFixture) === "1",
+  );
+  check(
+    "같은 플래너가 채팅은 못 본다 (경계가 표마다 다르다)",
+    asUser(adminUser, `select count(*) from public.chat_rooms;`,
+      `${consultPlannerFixture}
+       insert into public.chat_rooms (couple_id, vendor_id) values ('${coupleId}', '${CV2}');`) === "0",
+  );
+  // 열람은 주되 이행 확인은 못 한다 — 노쇼 판정의 주체는 그 자리에 있던 당사자다.
+  //
+  // **여기서는 오류가 아니라 0행이 정상이다.** `consultations_update` 정책이
+  // 당사자·업체만 통과시키므로 플래너의 UPDATE 는 대상 행을 못 찾고 끝난다. 트리거는
+  // 아예 돌지 않는다. 0019·0021 이 "조용한 0행" 을 권한 회수로 바꾼 것은 **아무도
+  // 써서는 안 되는 표·컬럼**이었기 때문이고, 여기는 당사자가 정상적으로 쓰는 컬럼이라
+  // 행 필터가 맞는 도구다. API 는 그 앞에서 403 으로 분명히 답한다.
+  check(
+    "플래너는 이행 확인을 할 수 없다 (행 정책이 걸러 0행)",
+    asUser(adminUser, `with u as (update public.consultations
+       set couple_outcome = 'fulfilled', couple_confirmed_at = now()
+       where id = '${CONS}' returning id) select count(*) from u;`,
+      consultPlannerFixture) === "0",
+  );
+  check(
+    "위임 범위를 빼면 플래너도 못 본다",
+    asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
+      `${consultFixture}
+       insert into public.planners (id, user_id, status) values ('${PL2}', '${adminUser}', 'active');
+       insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
+         values ('${PL2}', '${coupleId}', '{"tables":["carts"]}'::jsonb, 'active');`) === "0",
+  );
+
+  // ── 4) 슬롯 중복 금지 (구간 겹침이라 EXCLUDE) ────────────────────────────
+  check(
+    "같은 시각에 두 번 확정할 수 없다",
+    rejectedWith(/consultations_no_overlap/, () =>
+      sql(`begin; ${consultFixture}
+        insert into public.consultations
+          (couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+          values ('${OC3}', '${CV2}', 'visit_consult',
+                  '2027-05-15 05:00:00+00', 60, '2027-05-15 06:00:00+00', 'confirmed');
+        rollback;`)),
+  );
+  // 시작 시각이 달라도 겹치면 막는다 — UNIQUE 로는 잡을 수 없는 경우다.
+  check(
+    "시작 시각이 달라도 구간이 겹치면 막는다 (UNIQUE 로는 못 잡는다)",
+    rejectedWith(/consultations_no_overlap/, () =>
+      sql(`begin; ${consultFixture}
+        insert into public.consultations
+          (couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+          values ('${OC3}', '${CV2}', 'visit_consult',
+                  '2027-05-15 05:30:00+00', 60, '2027-05-15 06:30:00+00', 'confirmed');
+        rollback;`)),
+  );
+  check(
+    "맞닿기만 하는 다음 슬롯은 통과한다 (반개구간)",
+    sql(`begin; ${consultFixture}
+      insert into public.consultations
+        (couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+        values ('${OC3}', '${CV2}', 'visit_consult',
+                '2027-05-15 06:00:00+00', 60, '2027-05-15 07:00:00+00', 'confirmed');
+      select count(*) from public.consultations where vendor_id = '${CV2}';
+      rollback;`) === "2",
+  );
+  // 신청만으로는 자리를 차지하지 않는다 — 업체가 후보를 여럿 받아 고를 수 있어야 한다.
+  check(
+    "신청(requested)은 자리를 차지하지 않는다",
+    sql(`begin; ${consultFixture}
+      insert into public.consultations
+        (couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+        values ('${OC3}', '${CV2}', 'visit_consult',
+                '2027-05-15 05:00:00+00', 60, '2027-05-15 06:00:00+00', 'requested');
+      select count(*) from public.consultations where vendor_id = '${CV2}';
+      rollback;`) === "2",
+  );
+  check(
+    "다른 업체의 같은 시각은 막지 않는다",
+    sql(`begin; ${consultFixture}
+      insert into public.consultations
+        (couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+        values ('${OC3}', '${OV2}', 'visit_consult',
+                '2027-05-15 05:00:00+00', 60, '2027-05-15 06:00:00+00', 'confirmed');
+      select count(*) from public.consultations where scheduled_at = '2027-05-15 05:00:00+00';
+      rollback;`) === "2",
+  );
+
+  // ── 5) 보증금은 서비스롤 전용 (§3.9) ─────────────────────────────────────
+  check(
+    "커플 owner 는 보증금을 본다 (금전 건이라 owner 만)",
+    asUser(owner, `select count(*) from public.consultation_deposits where id = '${DEP}';`,
+      consultFixture) === "1",
+  );
+  check(
+    "업체도 보관 여부를 본다 (자리를 비워 둘지 판단해야 한다)",
+    asUser(outsider, `select count(*) from public.consultation_deposits where id = '${DEP}';`,
+      consultFixture) === "1",
+  );
+  check(
+    "고객도 보증금 상태를 바꿀 수 없다 (권한 회수)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.consultation_deposits set status = 'refunded'
+         where id = '${DEP}';`, consultFixture)),
+  );
+  check(
+    "업체도 보증금을 몰취 처리할 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.consultation_deposits set status = 'forfeited'
+         where id = '${DEP}';`, consultFixture)),
+  );
+  // 사유 없는 종결은 집행이 아니라 처분이다(D-24).
+  check(
+    "사유 없이 종결할 수 없다 (서비스롤도)",
+    rejectedWith(/consultation_deposits_resolved_chk/, () =>
+      sql(`begin; ${consultFixture}
+        update public.consultation_deposits set status = 'refunded', resolved_at = now()
+          where id = '${DEP}';
+        rollback;`)),
+  );
+  check(
+    "같은 멱등 열쇠로 두 번 결제할 수 없다",
+    rejectedWith(/consultation_deposits_idempotency_key_key/, () =>
+      sql(`begin; ${consultFixture}
+        insert into public.consultations
+          (id, couple_id, vendor_id, type, scheduled_at, duration_minutes, ends_at, status)
+          values ('00000000-0000-0000-0000-00000000d007', '${coupleId}', '${OV2}', 'visit_consult',
+                  '2027-06-15 05:00:00+00', 60, '2027-06-15 06:00:00+00', 'approved');
+        insert into public.consultation_deposits
+          (consultation_id, amount, status, held_at, idempotency_key)
+          values ('00000000-0000-0000-0000-00000000d007', 30000, 'held', now(), 'rls-check-key');
+        rollback;`)),
+  );
+
+  // ── 6) 이행 확인 — 자기 칸에만, 한 번만 ─────────────────────────────────
+  check(
+    "고객은 자기 칸에 답한다",
+    asUser(owner, `with u as (update public.consultations
+       set couple_outcome = 'fulfilled', couple_confirmed_at = now()
+       where id = '${CONS}' returning id) select count(*) from u;`, consultFixture) === "1",
+  );
+  check(
+    "고객은 업체 칸에 답할 수 없다",
+    rejectedWith(/업체 이행 확인은/, () =>
+      asUser(owner, `update public.consultations
+         set vendor_outcome = 'fulfilled', vendor_confirmed_at = now()
+         where id = '${CONS}';`, consultFixture)),
+  );
+  check(
+    "업체는 고객 칸에 답할 수 없다",
+    rejectedWith(/고객 이행 확인은/, () =>
+      asUser(outsider, `update public.consultations
+         set couple_outcome = 'no_show_couple', couple_confirmed_at = now()
+         where id = '${CONS}';`, consultFixture)),
+  );
+  // 상대 답을 보고 말을 바꿀 수 있으면 대조가 의미를 잃는다.
+  check(
+    "이미 제출한 확인은 바꿀 수 없다",
+    rejectedWith(/이미 제출한/, () =>
+      asUser(owner, `update public.consultations set couple_outcome = 'no_show_vendor'
+         where id = '${CONS}';`,
+        `${consultFixture}
+         update public.consultations set couple_outcome = 'fulfilled',
+           couple_confirmed_at = now() where id = '${CONS}';`)),
+  );
+  check(
+    "판정 결과(outcome)는 당사자가 쓸 수 없다 (권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.consultations set outcome = 'fulfilled'
+         where id = '${CONS}';`, consultFixture)),
+  );
+  check(
+    "확인 기한도 당사자가 미룰 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.consultations set confirm_due_at = now() + interval '99 days'
+         where id = '${CONS}';`, consultFixture)),
+  );
+  check(
+    "예약은 아무도 지울 수 없다 (분쟁의 근거다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `delete from public.consultations where id = '${CONS}';`, consultFixture)),
+  );
+  // 확인 시각과 주장은 짝이다 — 하나만 있으면 대조할 수 없다.
+  check(
+    "주장 없는 확인 시각은 거부한다 (짝 CHECK)",
+    rejectedWith(/consultations_couple_confirm_pair_chk/, () =>
+      sql(`begin; ${consultFixture}
+        update public.consultations set couple_confirmed_at = now() where id = '${CONS}';
+        rollback;`)),
+  );
+
+  // ── 7) 운영 파라미터 ─────────────────────────────────────────────────────
+  check(
+    "보증금액·취소 기한·확인 기한이 전부 app_settings 에 있다",
+    sql(`select count(*) from public.app_settings where key in
+       ('consultation.deposit_amount', 'consultation.free_cancel_hours',
+        'consultation.confirm_due_hours');`) === "3",
+  );
+}
+
+// =============================================================================
 // 실시간 전송 계층 (S4-04 · O-11)
 // -----------------------------------------------------------------------------
 // **무엇을 구독하느냐가 곧 무엇이 소켓을 타느냐다.** postgres_changes 는 바뀐 행을
