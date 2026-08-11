@@ -30,6 +30,7 @@ export const NOTIFICATION_TOPICS = [
   "price_change",
   "couple_invite",
   "chat",
+  "inquiry",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -42,6 +43,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   price_change: "찜한 상품 가격 변동",
   couple_invite: "배우자 초대",
   chat: "업체 채팅 새 메시지",
+  inquiry: "문의·견적",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -52,6 +54,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   price_change: "찜한 상품의 가격이 바뀌면 알려드려요.",
   couple_invite: "배우자 초대와 연동 상태를 알려드려요.",
   chat: "업체와의 대화에 새 메시지가 오면 알려드려요.",
+  inquiry: "보낸 문의에 견적이 도착하거나 업체가 답하면 알려드려요.",
 };
 
 /**
@@ -197,6 +200,26 @@ export const NOTIFICATION_TEMPLATES = {
   "chat.new_message": {
     topic: "chat",
     render: () => "업체와의 대화에 새 메시지가 도착했어요.",
+  },
+  /**
+   * 문의·견적 (S4-12).
+   *
+   * **본문도 업체 이름도 담지 않는다.** 참조(inquiryId·targetId)만 담고 문장은
+   * 고정이다(§7.3). 금액도 넣지 않는다 — 알림은 "도착했다" 만 말하고, 얼마인지는
+   * 견적서가 보여준다. 알림 payload 에 금액이 있으면 그것이 또 하나의 진실이 되고,
+   * 견적이 회수·만료된 뒤에도 남는다.
+   */
+  "inquiry.received": {
+    topic: "inquiry",
+    render: () => "새 문의가 도착했어요. 응답 기한 안에 답해 주세요.",
+  },
+  "inquiry.quote_arrived": {
+    topic: "inquiry",
+    render: () => "요청하신 견적이 도착했어요.",
+  },
+  "inquiry.declined": {
+    topic: "inquiry",
+    render: () => "한 업체가 이번 요청을 받지 않기로 했어요.",
   },
 } as const satisfies Record<
   string,

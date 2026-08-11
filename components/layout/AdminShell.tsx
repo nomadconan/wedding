@@ -5,6 +5,7 @@ import {
   CalendarRange,
   FileText,
   Flag,
+  HelpCircle,
   LayoutDashboard,
   MessageSquare,
   MessagesSquare,
@@ -48,6 +49,8 @@ const VENDOR_NAV: NavItem[] = [
   // 채팅은 문의·견적 위다(S4-04) — 응답 SLA 가 걸린 유일한 화면이라 먼저 눈에 띄어야 한다.
   { href: "/vendor/chat", label: "채팅 응대", icon: MessagesSquare },
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
+  // 문의게시판은 견적 문의와 다른 일이다 — 공개 Q&A 라 다음 고객도 읽는다(S4-05).
+  { href: "/vendor/qna", label: "문의게시판", icon: HelpCircle },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },

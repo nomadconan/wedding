@@ -38,6 +38,11 @@ export type EntityType =
   | "chat_message"
   | "qna_post"
   | "qna_answer"
+  // S4-12. 문의 본문·연락처는 memo 에 넣지 않는다 — 남길 사실은 "보냈다·응답했다·
+  // 거절했다·수락했다" 라는 상태 전이와 셀 수 있는 값(대상 수·금액)이다.
+  | "inquiry"
+  | "inquiry_target"
+  | "quote"
   | "profile"
   | "data_deletion_request";
 

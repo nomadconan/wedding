@@ -1580,25 +1580,46 @@ export type Database = {
       }
       inquiries: {
         Row: {
+          budget_total: number | null
+          categories: string[]
+          closed_at: string | null
           couple_id: string
           created_at: string
+          event_date: string | null
+          guest_count: number | null
           id: string
+          note: string | null
+          region_code: string | null
           request_json: Json
           status: string
           updated_at: string
         }
         Insert: {
+          budget_total?: number | null
+          categories?: string[]
+          closed_at?: string | null
           couple_id: string
           created_at?: string
+          event_date?: string | null
+          guest_count?: number | null
           id?: string
+          note?: string | null
+          region_code?: string | null
           request_json?: Json
           status?: string
           updated_at?: string
         }
         Update: {
+          budget_total?: number | null
+          categories?: string[]
+          closed_at?: string | null
           couple_id?: string
           created_at?: string
+          event_date?: string | null
+          guest_count?: number | null
           id?: string
+          note?: string | null
+          region_code?: string | null
           request_json?: Json
           status?: string
           updated_at?: string
@@ -1616,6 +1637,9 @@ export type Database = {
       inquiry_targets: {
         Row: {
           created_at: string
+          decline_reason_code: string | null
+          declined_at: string | null
+          first_viewed_at: string | null
           id: string
           inquiry_id: string
           responded_at: string | null
@@ -1626,6 +1650,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          decline_reason_code?: string | null
+          declined_at?: string | null
+          first_viewed_at?: string | null
           id?: string
           inquiry_id: string
           responded_at?: string | null
@@ -1636,6 +1663,9 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          decline_reason_code?: string | null
+          declined_at?: string | null
+          first_viewed_at?: string | null
           id?: string
           inquiry_id?: string
           responded_at?: string | null
@@ -2598,38 +2628,67 @@ export type Database = {
       quote_items: {
         Row: {
           amount: number
+          cap_amount: number
           category_code: string
           created_at: string
+          discount_amount: number | null
           id: string
           is_mandatory: boolean
           is_option: boolean
+          item_type: string
           label: string
+          product_id: string | null
+          product_option_id: string | null
           quote_id: string
           updated_at: string
         }
         Insert: {
           amount: number
+          cap_amount: number
           category_code: string
           created_at?: string
+          discount_amount?: number | null
           id?: string
           is_mandatory?: boolean
           is_option?: boolean
+          item_type?: string
           label: string
+          product_id?: string | null
+          product_option_id?: string | null
           quote_id: string
           updated_at?: string
         }
         Update: {
           amount?: number
+          cap_amount?: number
           category_code?: string
           created_at?: string
+          discount_amount?: number | null
           id?: string
           is_mandatory?: boolean
           is_option?: boolean
+          item_type?: string
           label?: string
+          product_id?: string | null
+          product_option_id?: string | null
           quote_id?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "quote_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_items_product_option_id_fkey"
+            columns: ["product_option_id"]
+            isOneToOne: false
+            referencedRelation: "product_options"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "quote_items_quote_id_fkey"
             columns: ["quote_id"]
@@ -2641,34 +2700,58 @@ export type Database = {
       }
       quotes: {
         Row: {
+          base_price_snapshot: number
+          cap_total: number
           created_at: string
+          decided_at: string | null
+          discount_total: number | null
           id: string
           inquiry_target_id: string
-          product_id: string | null
+          pricing_context_json: Json
+          pricing_steps_json: Json
+          product_id: string
+          sent_at: string | null
           status: string
           total_amount: number
           updated_at: string
           valid_until: string | null
+          vendor_memo: string | null
         }
         Insert: {
+          base_price_snapshot: number
+          cap_total: number
           created_at?: string
+          decided_at?: string | null
+          discount_total?: number | null
           id?: string
           inquiry_target_id: string
-          product_id?: string | null
+          pricing_context_json?: Json
+          pricing_steps_json?: Json
+          product_id: string
+          sent_at?: string | null
           status?: string
           total_amount: number
           updated_at?: string
           valid_until?: string | null
+          vendor_memo?: string | null
         }
         Update: {
+          base_price_snapshot?: number
+          cap_total?: number
           created_at?: string
+          decided_at?: string | null
+          discount_total?: number | null
           id?: string
           inquiry_target_id?: string
-          product_id?: string | null
+          pricing_context_json?: Json
+          pricing_steps_json?: Json
+          product_id?: string
+          sent_at?: string | null
           status?: string
           total_amount?: number
           updated_at?: string
           valid_until?: string | null
+          vendor_memo?: string | null
         }
         Relationships: [
           {
@@ -3573,6 +3656,8 @@ export type Database = {
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
       timemultirange: { Args: never; Returns: unknown }
     }
     Enums: {
