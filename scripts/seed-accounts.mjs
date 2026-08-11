@@ -54,6 +54,41 @@ const ACCOUNTS = [
     displayName: "예비부부 B",
     note: "consumer - couple invite acceptor (S3-01)",
   },
+  // ── linked couple fixture (S4-04) ─────────────────────────────────────────
+  // Why two MORE accounts instead of pre-linking couple-a/couple-b:
+  //   db:rls needs a couple that already exists. S0-02 needs couple-a/couple-b to
+  //   have NO couple, so the onboarding first screen stays reachable. The same
+  //   pair cannot serve both. A --flag would work but adds a mode to remember and
+  //   leaves one purpose broken by default. Two extra accounts keep BOTH working
+  //   with no flag: couple-a/b stay pristine, this pair is always linked.
+  {
+    email: "couple-linked-a@local.test",
+    role: "consumer",
+    displayName: "연동 커플 A",
+    note: "consumer - onboarding DONE, linked (fixture for db:rls)",
+  },
+  {
+    email: "couple-linked-b@local.test",
+    role: "consumer",
+    displayName: "연동 커플 B",
+    note: "consumer - partner of couple-linked-a",
+  },
+];
+
+/** Fixed id so re-runs are idempotent and rls-check can find it deterministically. */
+const LINKED_COUPLE_ID = "00000000-0000-0000-0000-00000000c0a1";
+
+/**
+ * Onboarding answers (S3-01, 6 questions). Seeded so `stage='active'` is honest -
+ * a couple marked complete with no answers would be a state the app never produces.
+ */
+const LINKED_COUPLE_ANSWERS = [
+  ["wedding_date", { value: "2027-05-15" }],
+  ["region", { value: "서울 강남" }],
+  ["budget", { value: 40000000 }],
+  ["guest_count", { value: 150 }],
+  ["style", { value: ["modern"] }],
+  ["stage", { value: "venue" }],
 ];
 
 // ── args ────────────────────────────────────────────────────────────────────
@@ -264,6 +299,78 @@ async function seedVendor(vendorUser, staffUser) {
   return { ...vendorRow, applicationStatus: application?.status ?? "-", created };
 }
 
+/**
+ * Linked couple fixture (S4-04).
+ *
+ * WHY this exists: `npm run db:rls` needs a couple to test against, but
+ * `db:reset` leaves none, so the check used to depend on someone walking the
+ * onboarding flow by hand first. That made the RLS suite unrunnable from a clean
+ * database - which is exactly when you most want to run it.
+ *
+ * WHAT IS SEEDED, and why nothing more:
+ *   couple + 2 members + 6 onboarding answers.  That is the minimum that makes
+ *   `stage='active'` a state the app could actually have produced.
+ *
+ * WHAT IS DELIBERATELY NOT SEEDED - carts, wishlists, chat rooms:
+ *   rls-check builds those inside a transaction and rolls them back. Permanent
+ *   rows would collide with its fixtures (the chat fixture would hit
+ *   uq_chat_rooms_couple_vendor, the cart fixture the active-cart partial
+ *   unique). Permanent demo data would also make every empty-state screen
+ *   impossible to review.
+ */
+async function seedLinkedCouple(ownerUser, partnerUser) {
+  const existing = await rest(`couples?id=eq.${LINKED_COUPLE_ID}&select=id`);
+
+  if (existing.length === 0) {
+    await rest("couples", {
+      method: "POST",
+      body: JSON.stringify({
+        id: LINKED_COUPLE_ID,
+        owner_id: ownerUser.id,
+        stage: "active",
+        wedding_date: "2027-05-15",
+        region_code: "서울 강남",
+        guest_count: 150,
+        total_budget: 40000000,
+      }),
+    });
+  }
+
+  for (const [user, role] of [
+    [ownerUser, "owner"],
+    [partnerUser, "partner"],
+  ]) {
+    const member = await rest(
+      `couple_members?couple_id=eq.${LINKED_COUPLE_ID}&user_id=eq.${user.id}&select=id`,
+    );
+
+    if (member.length === 0) {
+      await rest("couple_members", {
+        method: "POST",
+        body: JSON.stringify({
+          couple_id: LINKED_COUPLE_ID,
+          user_id: user.id,
+          member_role: role,
+        }),
+      });
+    }
+  }
+
+  await rest("onboarding_answers?on_conflict=couple_id,question_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(
+      LINKED_COUPLE_ANSWERS.map(([key, value]) => ({
+        couple_id: LINKED_COUPLE_ID,
+        question_key: key,
+        answer_json: value,
+      })),
+    ),
+  });
+
+  return LINKED_COUPLE_ID;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -281,6 +388,11 @@ async function main() {
   const vendorUser = results.find((row) => row.email === "vendor@local.test");
   const staffUser = results.find((row) => row.email === "staff@local.test");
   const vendor = await seedVendor(vendorUser, staffUser);
+
+  const linkedCouple = await seedLinkedCouple(
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+    results.find((row) => row.email === "couple-linked-b@local.test"),
+  );
 
   console.log("  accounts");
   for (const row of results) {
@@ -302,6 +414,13 @@ async function main() {
   console.log("    couple-a@local.test -> /onboarding 6 steps, then issue an invite code");
   console.log("    couple-b@local.test -> accept that code to share one couple");
   console.log("    (both start with no couple - onboarding creates it)");
+  console.log("");
+  console.log("  linked couple fixture (S4-04)");
+  console.log(`    couple id   : ${linkedCouple}`);
+  console.log("    members     : couple-linked-a (owner) + couple-linked-b (partner)");
+  console.log("    onboarding  : complete (6 answers, stage=active)");
+  console.log("    -> npm run db:rls now runs straight after db:reset + this script.");
+  console.log("    -> couple-a / couple-b stay untouched so /onboarding is still demoable.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);

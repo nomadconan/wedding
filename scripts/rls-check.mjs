@@ -11,6 +11,7 @@
 // 실행:  npm run db:rls        (먼저 npm run db:reset && npm run seed:accounts)
 // =============================================================================
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -110,8 +111,13 @@ const users = await (
 
 const idOf = (email) => users.users?.find((u) => u.email === email)?.id ?? null;
 
-const owner = idOf("couple-a@local.test");
-const partner = idOf("couple-b@local.test");
+// **연동 커플 픽스처를 쓴다**(S4-04). 예전에는 couple-a/couple-b 를 썼는데, 그 둘은
+// `db:reset` 직후 커플이 없다 — 온보딩 첫 화면을 확인할 수 있어야 하기 때문이다(S0-02).
+// 그래서 이 검사는 누군가 손으로 온보딩을 밟아 준 뒤에만 돌았다. 깨끗한 DB 에서 돌지
+// 않는 RLS 검사는 가장 필요한 순간에 못 도는 검사다.
+// `seed-accounts.mjs` 가 온보딩을 마친 별도 커플 한 쌍을 만들고, 여기서 그것을 쓴다.
+const owner = idOf("couple-linked-a@local.test");
+const partner = idOf("couple-linked-b@local.test");
 const outsider = idOf("vendor@local.test");
 // 플래너 위임 시험용. 커플 구성원만 아니면 된다 — 플래너 판정은 couple_members 가
 // 아니라 planner_engagements 로만 이뤄지고, 그것을 확인하는 것이 이 검사의 목적이다.
@@ -126,12 +132,15 @@ if (!owner || !partner || !outsider) {
   process.exit(1);
 }
 
-const coupleId = sql("select id from public.couples limit 1;");
+// 시드가 만든 연동 커플을 **소유자로 특정한다.** `limit 1` 로 아무 커플이나 집으면
+// 손으로 만든 커플이 섞였을 때 배우자 연동 여부가 달라져 검사 결과가 흔들린다.
+const coupleId = sql(
+  `select m.couple_id from public.couple_members m
+    where m.user_id = '${owner}' and m.member_role = 'owner' limit 1;`,
+);
 
 if (!coupleId) {
-  console.error(
-    "커플 데이터가 없다. 로그인 후 /onboarding 을 한 번 진행하거나 tmp 플로우 스크립트를 돌린 뒤 실행한다.",
-  );
+  console.error("연동 커플 픽스처가 없다. npm run seed:accounts 를 먼저 실행한다.");
   process.exit(1);
 }
 
@@ -1376,6 +1385,51 @@ if (!adminUser || !opsUser || !vendorStaff) {
          where post_id = '${QPRIV}';`, answerFixture)),
   );
 }
+
+// =============================================================================
+// 실시간 전송 계층 (S4-04 · O-11)
+// -----------------------------------------------------------------------------
+// **무엇을 구독하느냐가 곧 무엇이 소켓을 타느냐다.** postgres_changes 는 바뀐 행을
+// 통째로 보내고 뷰를 거치지 않으므로, `chat_messages` 를 publication 에 넣는 순간
+// 본문이 전송 계층에 흐르고 회수 가림막(chat_messages_visible)이 우회된다.
+// 이 검사는 그 실수를 되돌아오지 못하게 막는다.
+// =============================================================================
+const published = sql(
+  `select coalesce(string_agg(tablename, ',' order by tablename), '')
+     from pg_publication_tables where pubname = 'supabase_realtime';`,
+);
+
+check("실시간 publication 에 chat_rooms 가 있다", published.split(",").includes("chat_rooms"));
+check(
+  "실시간 publication 에 chat_messages 는 **없다** (본문이 소켓을 타면 안 된다)",
+  !published.split(",").includes("chat_messages"),
+);
+// 토픽 목록은 TS 상수와 DB CHECK 두 곳에 있다. S4-04 에서 한쪽만 늘렸다가 발송이
+// **조용히** 실패했다 — 알림 실패가 본 작업을 되돌리지 않게 만들어 둔 탓에 더 조용했다.
+// 두 목록이 어긋나면 여기서 걸린다.
+const dbTopics = sql(
+  `select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.notifications'::regclass and conname = 'notifications_topic_chk';`,
+);
+const codeTopics = readFileSync("lib/core/schemas/notification.ts", "utf8")
+  .match(/export const NOTIFICATION_TOPICS = \[([\s\S]*?)\] as const;/)?.[1]
+  .match(/"([a-z_]+)"/g)
+  ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+check(
+  "알림 토픽 목록이 코드와 DB CHECK 에서 일치한다",
+  codeTopics.length > 0 && codeTopics.every((topic) => dbTopics.includes(`'${topic}'`)),
+  `code=${codeTopics.join(",")}`,
+);
+check(
+  "SLA 기준 시간은 코드가 아니라 app_settings 가 갖는다",
+  sql(`select count(*) from public.app_settings where key = 'chat.sla_response_minutes';`) === "1",
+);
+// 파라미터라도 남의 눈에 띌 이유는 없다. 정책이 없으므로 기본 거부여야 한다.
+check(
+  "비로그인은 운영 파라미터를 못 본다",
+  asAnon(`select count(*) from public.app_settings;`) === "0",
+);
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
