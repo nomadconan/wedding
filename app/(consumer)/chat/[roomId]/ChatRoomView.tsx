@@ -26,12 +26,15 @@ export function ChatRoomView({
   roomId,
   status,
   viewerId,
+  vendorId,
   initialMessages,
   initialLastReadAt,
 }: {
   roomId: string;
   status: ChatRoomStatus;
   viewerId: string;
+  /** 상담 제안 카드가 예약 화면으로 보낼 때 쓴다(S4-07). */
+  vendorId: string;
   initialMessages: ChatMessageView[];
   initialLastReadAt: string | null;
 }) {
@@ -135,6 +138,7 @@ export function ChatRoomView({
         attachmentEndpoint={ENDPOINT}
         onRetract={retract}
         pendingId={pendingId}
+        vendorId={vendorId}
         className="min-h-[40vh]"
       />
 

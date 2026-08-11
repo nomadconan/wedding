@@ -14,6 +14,7 @@ import { VENDOR_FACILITY_LABEL, type VendorFacility } from "@/lib/core/schemas/v
 import { createPublicClient } from "@/lib/explore/query";
 
 import { AvailabilityPanel } from "./AvailabilityPanel";
+import { BookConsultation } from "./BookConsultation";
 import { StartChatButton } from "./StartChatButton";
 import { VendorProducts } from "./VendorProducts";
 
@@ -96,6 +97,9 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
             <AvailabilityPanel vendorId={vendor.id} />
           </CardContent>
         </Card>
+
+        {/* 상담·탐방 예약(F-C-29). 업체가 등록한 시간대에서만 고른다. */}
+        <BookConsultation vendorId={vendor.id} />
 
         {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
         <StartChatButton vendorId={vendor.id} />

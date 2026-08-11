@@ -43,6 +43,10 @@ export type EntityType =
   | "inquiry"
   | "inquiry_target"
   | "quote"
+  // S4-07. 예약·보증금은 **금전과 일정**이라 상태 전이가 곧 분쟁의 근거다(D-23).
+  // memo 에는 금액·사유 코드만 넣는다 — 장소·연락처 같은 식별정보는 넣지 않는다.
+  | "consultation"
+  | "consultation_deposit"
   | "profile"
   | "data_deletion_request";
 

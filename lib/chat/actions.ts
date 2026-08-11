@@ -1,6 +1,7 @@
 import { recordEvent } from "@/lib/audit/record";
 import {
   ATTACHMENT_SIGNED_URL_SECONDS,
+  CONSULTATION_PROPOSAL_BODY,
   attachmentPath,
   messageProblem,
   roomIdFromAttachmentPath,
@@ -338,6 +339,63 @@ export async function assignRoom(
   });
 
   return { assignedTo: (data as { assigned_to: string | null }).assigned_to };
+}
+
+// =============================================================================
+// 상담 일정 제안 카드 (S4-07 · §3.7)
+// =============================================================================
+
+/**
+ * `sender_type='system'` 메시지를 남긴다.
+ *
+ * **서비스롤로 쓴다.** S4-01 의 RLS 는 클라이언트가 system 메시지를 만들지 못하게
+ * 막았다 — 어느 편도 아닌 말을 당사자가 지어낼 수 있으면 그것은 시스템 안내가 아니다.
+ * 그래서 업체의 요청을 받아 **서버가** 쓴다.
+ *
+ * **본문은 고정 문장이다.** 업체가 자유롭게 쓰면 "이 시각으로 잡아 두었다" 처럼
+ * 확정된 것으로 읽히는 말을 쓸 수 있는데, 실제 예약은 고객 신청 + 업체 승인으로만
+ * 성립한다(F-C-29).
+ */
+export async function proposeConsultation(
+  supabase: Client,
+  input: { roomId: string; actorId: string },
+): Promise<{ messageId: string } | ActionFailure> {
+  const room = await assertRoomAccess(supabase, input.roomId);
+  if (!room) {
+    return { status: 404, code: "CHAT_ROOM_NOT_FOUND", message: "대화를 찾을 수 없어요." };
+  }
+
+  if (room.status !== "active") {
+    return { status: 409, code: "CHAT_ROOM_CLOSED", message: "대화가 열려 있지 않아요." };
+  }
+
+  const { data, error } = await createAdminClient()
+    .from("chat_messages")
+    .insert({
+      room_id: input.roomId,
+      sender_id: null,
+      sender_type: "system",
+      body: CONSULTATION_PROPOSAL_BODY,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    return { status: 500, code: "CHAT_PROPOSAL_FAILED", message: "제안 카드를 보내지 못했어요." };
+  }
+
+  const messageId = (data as { id: string }).id;
+
+  await recordEvent({
+    entityType: "chat_message",
+    entityId: messageId,
+    eventType: "consultation_proposed",
+    actor: { id: input.actorId, role: "vendor" },
+    afterState: "sent",
+    memo: null,
+  });
+
+  return { messageId };
 }
 
 // =============================================================================

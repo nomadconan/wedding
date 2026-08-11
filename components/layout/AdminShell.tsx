@@ -2,7 +2,9 @@
 
 import {
   BarChart3,
+  CalendarClock,
   CalendarRange,
+  Clock,
   FileText,
   Flag,
   HelpCircle,
@@ -51,6 +53,9 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
   // 문의게시판은 견적 문의와 다른 일이다 — 공개 Q&A 라 다음 고객도 읽는다(S4-05).
   { href: "/vendor/qna", label: "문의게시판", icon: HelpCircle },
+  // 상담은 문의·견적 다음이다 — 견적을 주고받은 뒤에 만나는 순서가 실제 흐름이다.
+  { href: "/vendor/consultations", label: "상담 일정", icon: CalendarClock },
+  { href: "/vendor/availability", label: "상담 가능 시간", icon: Clock },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },

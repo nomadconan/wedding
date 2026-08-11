@@ -7,6 +7,7 @@ import {
   createAttachmentDownloadUrl,
   createAttachmentUploadUrls,
   markRead,
+  proposeConsultation,
   retractMessage,
   sendMessage,
 } from "@/lib/chat/actions";
@@ -170,6 +171,18 @@ export async function POST(request: NextRequest) {
     });
 
     return "status" in result ? fail(result.status, result.code, result.message) : ok(result);
+  }
+
+  // 상담 일정 제안 카드(S4-07). S4-01 이 자리만 만들어 둔 것을 여기서 연결한다.
+  if (action.action === "propose_consultation") {
+    const result = await proposeConsultation(supabase, {
+      roomId: action.roomId,
+      actorId: user.id,
+    });
+
+    return "status" in result
+      ? fail(result.status, result.code, result.message)
+      : ok(result, { status: 201 });
   }
 
   // 빠른 답변(F-V-15) — 클라이언트가 키를 보내면 **서버가 본문을 되찾는다.**

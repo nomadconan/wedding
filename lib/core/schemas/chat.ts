@@ -131,12 +131,28 @@ export const AssignRoomSchema = z.object({
   userId: uuid.nullable(),
 });
 
+/**
+ * 상담 일정 제안 카드 발송 (S4-07 · §3.7 "상담 일정 제안 카드는 system 메시지로 남긴다")
+ *
+ * **본문을 받지 않는다.** 카드 문구는 `lib/core/chat` 의 고정 문장이다 — 업체가
+ * 자유롭게 쓰면 "이 시각으로 잡아 두었다" 처럼 확정된 것으로 읽히는 말을 쓸 수 있고,
+ * 실제 예약은 고객 신청 + 업체 승인으로만 성립한다(F-C-29).
+ *
+ * 카드는 `sender_type='system'` 이라 S4-01 의 RLS 상 클라이언트가 직접 만들 수 없다.
+ * 그래서 이 동작을 받아 **서버가 서비스롤로** 쓴다.
+ */
+export const ProposeConsultationSchema = z.object({
+  action: z.literal("propose_consultation"),
+  roomId: uuid,
+});
+
 export const VendorChatActionSchema = z.discriminatedUnion("action", [
   SendMessageSchema,
   RetractMessageSchema,
   MarkReadSchema,
   AttachmentUrlSchema,
   AssignRoomSchema,
+  ProposeConsultationSchema,
 ]);
 
 export type VendorChatAction = z.infer<typeof VendorChatActionSchema>;

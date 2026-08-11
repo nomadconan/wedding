@@ -196,24 +196,26 @@
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
 | S4-01 | **마이그레이션 3차 — 채팅·문의게시판** | [x] | T-03 | §3.7 `chat_rooms`·`chat_messages`·`qna_posts`·`qna_answers` **+ `chat_room_reads` 신설** · §3.10 Storage 버킷 잔여 4종. 방은 **커플·업체 조합당 하나**(UNIQUE — 부분 유니크로 세대를 쪼갠 장바구니와 갈린다) · 메시지는 **어떤 역할도 수정·삭제 불가**(권한 회수)이고 회수는 `retracted_at` 묘비 + `chat_messages_visible` 뷰로 가린다 · 읽음은 **두 층**(메시지의 `read_at` 은 참여자 `chat_room_reads` 에서 트리거가 유도) · **플래너는 채팅에 접근하지 않는다**(§3.9 가 상담에만 플래너를 명시한다) · 본문은 평문(§7.3 채팅 행) · **Realtime publication 은 열지 않았다**(O-11 — S4-04 소관). `db:rls` 케이스 84개 추가 |
-| S4-02 | **마이그레이션 4차 — 상담·보증금·가용시간** | [~] | T-03 | §3.3 `vendor_availability`, §3.4 `consultations`·`consultation_deposits` |
+| S4-02 | **마이그레이션 4차 — 상담·보증금·가용시간** | [x] | T-03 | §3.3 `vendor_availability`(0007) + §3.4 `consultations`·`consultation_deposits`(0025, S4-07 과 함께). 슬롯 중복은 **구간 겹침이라 EXCLUDE** · 양측 '주장' 컬럼 2개를 더했다(시각만으로는 §3.11 의 '일치' 를 판정할 수 없다) · 보증금 쓰기는 서비스롤 전용 |
 | S4-03 | **마이그레이션 5차 — 증거 보존** | [x] | T-03 | §3.8. `notifications` +4컬럼(발송·도달·열람·실패 분리) · `audit_logs.resolution_basis` · `entity_events` 당사자 열람 정책 6 + 운영자 1. **insert-only 를 정책의 부재가 아니라 권한 회수로** 못박았고, `notifications` UPDATE 는 `read_at` 컬럼으로 좁혔다. 기록 래퍼 `lib/audit/record.ts` 를 만들어 호출부 24곳을 옮겼다 |
 | S4-04 | 실시간 채팅 (소비자·업체) | [x] | S4-01, S2-01, S3-01 | F-C-27, F-V-15. **S3-11 홈의 '최근 대화' 연결 완료**(준비 중 목록에서 뺐다). **O-11 결정 — Supabase Realtime**(D-29 초안). publication 에 넣은 것은 **`chat_rooms` 하나** — 메시지를 구독하면 본문이 소켓을 타고 회수 가림막을 우회한다. **소켓은 신호, 진실은 재조회**이며 끊기면 폴링으로 내려가고 그 사실을 화면에 적는다. 첨부는 서명 URL 로 Storage 직행(서버를 지나가지 않는다) · 빠른 답변은 **키만 받고 본문은 서버가 되찾는다** · SLA 눈금은 `app_settings` · 상담 카드는 **그리는 쪽만**(S4-07 대기). `db:rls` 172/172 · `tmp/s404-flow.mjs` 52/52 |
 | S4-05 | 문의게시판 | [x] | S4-01 | F-C-28, F-V-16. **S4-12 와 함께 처리**(브리프가 둘을 함께 요구했다 — 표는 S4-12 를 문의·견적으로, S4-05 를 게시판으로 나눈다). 공개/비공개 · 업체 답변 · **유사 질문**(pg_trgm GIN + 3-gram **포함도**. 자카드는 짧은 질의가 긴 글과 견줄 때 분모가 글 길이에 끌려가 구조적으로 낮은 점수가 나온다) · 미답변 큐 |
-| S4-06 | 업체 가능 시간대 등록 | [ ] | S4-02, S2-01 | F-V-17 |
-| S4-07 | 상담·탐방 예약 신청·승인 | [ ] | S4-06, S3-01 | F-C-29. **완료 시 S2-08 대시보드의 '상담·탐방' 지표 연결** |
-| S4-08 | 노쇼 보증금 결제·환불 | [ ] | S4-07, **S5-02** | D-22, §3.11 |
-| S4-09 | 이행 확인·자동 판정 | [ ] | S4-08, S4-03 | §3.11 |
-| S4-10 | 노쇼 분쟁 조율 큐 | [ ] | S4-09 | F-A-16 |
-| S4-11 | 3자 일정 공유·캘린더 동기화 | [ ] | S4-07 | F-C-29 |
+| S4-06 | 업체 가능 시간대 등록 | [x] | S4-02, S2-01 | F-V-17. **S4-07 과 함께 처리** — 표가 S4-07 의 선행으로 잡아 두었고, 시간대가 없으면 예약 흐름 자체가 서지 않는다. `/vendor/availability` · `CRUD /api/vendor/availability`. 겹침 판정은 0007 의 EXCLUDE 가 하고 화면은 그 결과를 문장으로 옮긴다. staff 도 등록한다 |
+| S4-07 | 상담·탐방 예약 신청·승인 | [x] | S4-06, S3-01 | F-C-29. **S2-08 '상담·탐방' 지표 연결 완료.** 신청 → 승인 → (보증금) → 확정. 슬롯 중복은 **EXCLUDE**(승인 시점에 DB 가 거절 — 앱 조회는 경합에서 진다) · `requested` 는 자리를 차지하지 않는다 · 슬롯 길이는 업체 등록값을 박는다 · **채팅의 상담 제안 카드를 연결**했다(S4-04 가 남긴 자리). `db:rls` 235/235 · `tmp/s407-flow.mjs` 76/76 |
+| S4-08 | 노쇼 보증금 결제·환불 | [~] | S4-07, **S5-02** | D-22, §3.11. **골격 완료** — 어댑터 인터페이스 + 로컬 스텁(`lib/payments`), 멱등(`idempotency_key` 유니크)·재시도(상한 3)·실패 기록, 보관→환불/몰취 상태 전이, 종결에 **사유 필수**(D-24). **프로덕션에서 스텁 차단**(알림 스텁보다 위험이 크다 — 돈이다). **실연동은 토스 계약 후**(D-28) 이며 `payments`·`refunds` 연결은 **S5-02** 대기 |
+| S4-09 | 이행 확인·자동 판정 | [x] | S4-08, S4-03 | §3.11. `POST /api/consultations/[id]/confirm`(양측이 각각 호출) · 배치 2종(`consultation-confirm-request`·`consultation-resolve`). 판정은 `lib/core/consultation` 의 **순수 함수 하나**가 한다 — 화면·API·배치가 같은 함수를 쓴다. **양측 무응답 기본값은 환불**이고 한쪽만 응답해도 `disputed` 다. 실행 등록은 **S8-13** |
+| S4-10 | 노쇼 분쟁 조율 큐 | [~] | S4-09 | F-A-16. **큐에 쌓이는 것까지 완료**(S4-07) — `status='disputed'` 전환·부분 인덱스·보증금 `disputed` 보류·판정 근거 이벤트. **운영자 조율 화면(`/admin/consultation-disputes`)은 8단계**라 남겼다 |
+| S4-11 | 3자 일정 공유·캘린더 동기화 | [ ] | S4-07 | F-C-29. **선행 풀림.** `consultations.planner_id` 자리와 §3.9 플래너 열람 정책은 S4-07 이 만들었다(위임 플래너는 상담을 본다 — 채팅과 갈리는 지점). 남은 것은 **외부 캘린더 연동**이며 화면이 그 자리를 '준비 중' 으로 밝히고 있다 |
 | S4-12 | 표준 문의·견적 | [x] | S2-03, S3-01 | F-C-13, F-V-07. **S2-08 '문의' 지표 연결 완료.** 자유 양식 견적을 **스키마로** 막았다 — 항목은 `products`·`product_options` 참조로만 존재하고(CHECK), 이름·분류·옵션 상한은 **트리거가 등록된 행에서 덮어쓴다**. 상한 초과는 CHECK 2개(`quotes_cap_chk`·`quote_items_cap_chk`)로 금지 — **할인만 되고 할증은 안 된다**. 상한이 룰 평가 결과라 DB 가 검증할 수 없어 **쓰기를 서비스롤로 좁혔다**. 견적서에 첨부 컬럼을 두지 않았다. 가격 스냅샷(기준가·상한·제시가·할인액 생성컬럼·계산 근거·룰 단계)으로 룰이 바뀌어도 재현된다. **0005 의 문의 정책 무한 재귀**를 발견해 definer 헬퍼로 끊었다. `db:rls` 204/204 · `tmp/s412-flow.mjs` 83/83 |
 | S4-13 | 알림센터·발송 증적 | [~] | S4-03 | F-C-21, D-23·D-28. 어댑터 인터페이스 + 로컬 스텁 · 멱등(`dedupe_key`)·재시도·실패 기록 · `/notifications` · `dday-notifications` 배치. **`sla-escalation` 은 남겼다** — 대상(문의 S4-12·채팅 S4-04)이 아직 없어 훑을 테이블이 없다. **실제 발송사 연동은 외부 계약 후**(D-28) |
 | S4-14 | **업체 알림·연동 설정** | [ ] | S2-01, S4-13 | F-V-14 — 수신 채널·담당자 배정·영업시간. **T-00c 신설**. 선행 풀림 — `sendNotification()` 과 `notification_prefs` 를 그대로 쓴다 |
 
 > ### 4단계 착수 순서 (S3-10b 정리)
 >
-> **선행이 이미 충족된 태스크** — S4-02(잔여) · S4-06(S4-02 부분 완료분으로 충족).
-> **선행 대기** — S4-07(S4-06) · S4-08(S4-07 + **S5-02** 5단계) · S4-09(S4-08·S4-03) · S4-10(S4-09) · S4-11(S4-07) · S4-14(S4-13).
+> **4단계에 남은 것** — S4-08 잔여(토스 실연동 · `payments`·`refunds` 연결, **S5-02** 대기) · S4-10 조율 화면(8단계) · S4-11 캘린더 동기화 · S4-14(S4-13 완료로 선행은 풀렸다).
+>
+> **S4-07 이 푼 것** — S4-11 의 선행(`planner_id` 자리 + 플래너 열람 정책)이 섰고, S4-10 의 큐가 실제로 쌓이기 시작했다. S5-10(업체 예약·계약 관리)의 선행 S4-07 도 풀렸다.
+> **S4-07 이 남긴 것** — 보증금 실연동(**S4-08 잔여**, D-28) · 운영자 조율 화면(**S4-10**, 8단계) · 외부 캘린더 연동(**S4-11**) · 배치 실행 등록(**S8-13**).
 >
 > **S4-12·S4-05 가 푼 것** — `sla-escalation`(S4-13 잔여)의 로직이 섰다. S2-08 대시보드의 '문의' 지표가 연결됐다. S5-04(표준계약 템플릿)의 선행 S4-12 가 풀렸다.
 > **S4-12 가 남긴 것** — 업체별 견적 템플릿 저장(F-V-07)은 표가 필요해 **S4-14** · 견적 → 계약 전환은 **S5-04·S5-06** · 탐색의 '응답 속도 순' 정렬은 **표본이 쌓이면**(아래 참조).
@@ -254,7 +256,7 @@
 >
 > · **함께 풀린 자리**: S3-05 가 `CartView`·`WishlistView` 에 남긴 `TODO(O-11)`. 같은 방식(`useRoomSignal` 과 같은 모양의 구독 + 재조회)으로 이어 붙이면 된다 — **아직 붙이지 않았다.** 장바구니는 `carts`·`cart_items` 를 publication 에 더해야 하고 그 판단(어느 표를 여는가)은 S3-05 의 자리다.
 
-> **S4-02 진행 상황 — `vendor_availability` 만 끝났다(`[~]`)**
+> **~~S4-02 진행 상황 — `vendor_availability` 만 끝났다(`[~]`)~~ → 완료(S4-07 에서 나머지 2테이블)**
 > 마이그레이션 `20260808000700_vendor_availability.sql`. 요일 단위 반복 규칙이며 날짜 예외는
 > `inventory_slots` 블록 처리로 다룬다(§3.3). 같은 업체·요일의 시간대 겹침은 EXCLUDE로 거부한다.
 > RLS는 형제 테이블 `inventory_slots`와 같은 형태다 — active 업체는 공개 열람, 쓰기는 업체 멤버
@@ -263,8 +265,8 @@
 > **앞당긴 이유** `vendor_availability`는 §3.3 **업체 도메인** 테이블이고, 업체 어드민의 시간대
 > 등록 화면(F-V-17)이 예약 흐름보다 먼저 만들어진다. 예약 테이블과 묶어 둘 이유가 없다.
 >
-> **남은 것** `consultations`·`consultation_deposits` 2테이블. 4단계 예약 흐름(S4-07·S4-08)과
-> 함께 별도 마이그레이션으로 추가한다. 범위에서 뺀 것이 아니다.
+> **~~남은 것~~ 완료** `consultations`·`consultation_deposits` 2테이블을 **0025**(S4-07)에서
+> 예약 흐름과 함께 추가했다. 예고한 대로 별도 마이그레이션이며 범위에서 뺀 적이 없다.
 
 ### 5단계 — 거래
 
@@ -411,7 +413,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 |---|---|---|
 | ~~S3-04~~ (완료) | ~~`carts`, `cart_items`, `wishlists`~~ | `cart_couple_id()` 헬퍼 추가 |
 | ~~S4-01~~ (완료) | ~~`chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers`~~ + **`chat_room_reads`**(참여자별 읽음 — 커플 둘·업체 여럿이라 메시지 한 컬럼에 안 담긴다) | 뷰 `chat_messages_visible`, ENUM `chat_sender_type`, 헬퍼 `is_active_vendor()`·`is_chat_room_member()`·`can_read_qna_post()` 등 7, 트리거 5, `entity_events` 열람 정책 4, Storage 버킷 4, `recordEvent()` 엔티티 타입 +4 |
-| S4-02 | ~~`vendor_availability`~~ (완료), `consultations`, `consultation_deposits` | — |
+| ~~S4-02~~ (완료) | ~~`vendor_availability`~~(0007) · ~~`consultations`·`consultation_deposits`~~(0025, S4-07 과 함께) | ENUM 3, EXCLUDE 1(예약 구간 겹침), 트리거 2, 헬퍼 2 |
 | ~~S4-03~~ (완료) | ~~`entity_events`~~ (S2-01 에서 앞당겨 생성) | `notifications` +4컬럼, `audit_logs.resolution_basis`, `entity_events` 열람 정책 7, `is_operator()` |
 | S5-01 | ~~`commission_rates`~~, ~~`planner_fee_rates`~~ (완료), `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
 | S6-01 | `planner_scopes` | — |
@@ -430,7 +432,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | `detect_rules` 시드 20종 | 근거 **조항 번호** 확정 후. 룰 구현체는 T-04에서 완료 | S7-01 |
 | 표준계약서 조항 문안 | O-03 법무 검수. **템플릿 구조·서명 플로우는 먼저 구현**(§7.7) | S5-04 |
 | 수수료 요율 **값** | O-02. **구조는 S5-01·S5-02에서 완성**되므로 값은 오픈 전까지만 정하면 된다 | S5-03 |
-| 결제 분할 비율·유예 기간·보증금액 | 운영 정책 결정. 전부 DB 파라미터라 미확정 상태로 개발 가능(§7.4) | S5-06, S6-05, S4-08 |
+| 결제 분할 비율·유예 기간·~~보증금액~~ | 운영 정책 결정. 전부 DB 파라미터라 미확정 상태로 개발 가능(§7.4). **보증금액·무료 취소 기한·확인 응답 기한은 `app_settings` 에 자리를 만들었다**(S4-07, 0025) — 값은 운영이 배포 없이 바꾼다 | S5-06, S6-05, ~~S4-08~~ |
 | 에스크로 집행 로직 | O-03 법무 결론. 컬럼·훅만 유지 | S5-06 |
 | ~~Storage 버킷 생성~~ **(완료 · S4-01)** | ~~§3.10. `chat-attachments` 포함~~ — 6종이 모두 섰다. `vendor-media`(공개, 0009) · `vendor-documents`(0008) · `chat-attachments`·`contracts-raw`·`reports`·`contracts-signed`(0021, 전부 비공개). 비공개 5종은 `storage.objects` 에 정책이 없어 **서명 URL 전용**이다 | ~~S4-01~~ |
 | `(dev)` 라우트 그룹 차단 | 배포 전 미들웨어·플래그 처리 | S8-05 |
@@ -525,7 +527,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | F-C-26 | 찜 | 3 | S3-06 (S3-05에서 함께 구현) | 완료 (변동 알림 발송만 S4-13) |
 | F-C-27 | 실시간 채팅 | 4 | S4-04 | 완료 — 읽음 표시·첨부·회수까지. **상담 일정 제안 카드는 그리는 쪽만**(발송은 S4-07) |
 | F-C-28 | 문의게시판 | 4 | S4-05 | 완료 — 공개/비공개 · 유사 질문 노출 · 비로그인 열람 |
-| F-C-29 | 상담·탐방 예약 | 4 | S4-07, S4-08, S4-09, S4-11 | 미착수 |
+| F-C-29 | 상담·탐방 예약 | 4 | S4-07, S4-08, S4-09, S4-11 | 유형 선택·시간대 캘린더·신청·승인·보증금·이행 확인 완료. **캘린더 동기화는 S4-11** |
 | F-C-30 | 조건 검색 | 7 | S7-02 | 미착수 |
 | F-C-31 | 플래너 범위 선택 | 6 | S6-03 | 미착수 |
 | F-V-01 | 입점 신청·검증 | 2 | S2-01 | 완료 |
@@ -544,7 +546,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | F-V-14 | 알림·연동 설정 | 4 | **S4-14**(신설) | 미착수 |
 | F-V-15 | 채팅 응대 | 4 | S4-04 | 완료 — 인박스(미응답 우선)·담당자 배정·SLA 타이머·빠른 답변. **업체별 커스텀 템플릿은 표가 필요해 S4-14** |
 | F-V-16 | 문의게시판 관리 | 4 | S4-05 | 완료 — 답변 작성·수정 · 미답변 큐 · **공개 설정은 내리는 방향만**(올리기는 작성자만, S4-01 트리거) |
-| F-V-17 | 상담 일정 관리 | 4 | S4-06, S4-07, S4-09 | 미착수 |
+| F-V-17 | 상담 일정 관리 | 4 | S4-06, S4-07, S4-09 | 완료 — 가능 시간대 등록 · 승인/거절 · 이행 확인. **노쇼 신고는 별도 동작이 아니라 이행 확인의 한쪽 답**이다(일방 주장이 양측 대조를 건너뛰지 않게) |
 | F-A-01 | 입점 심사 | 2 | S2-01 | 완료 |
 | F-A-02 | 참가격 데이터 큐레이션 | 8 | S8-10 | 미착수 |
 | F-A-03 | 검출 룰·프롬프트 관리 | 8 | S8-06 | 미착수 |
@@ -560,7 +562,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | F-A-13 | 후기 관리 | 8 | S8-11 | 미착수 |
 | F-A-14 | 가격 이상 탐지 | 8 | S8-10 | 미착수 |
 | F-A-15 | 요율 관리 | 5 | S5-03 | 미착수 |
-| F-A-16 | 노쇼 분쟁 조율 | 4 | S4-10 | 미착수 |
+| F-A-16 | 노쇼 분쟁 조율 | 4 | S4-10 | 미착수 — **큐는 쌓이고 있다**(S4-07). 화면은 8단계 |
 | F-A-17 | 위약금 처리 | 5 | S5-08 | 미착수 |
 
 ### B. §3 테이블 (83)
@@ -601,8 +603,8 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | inquiry_targets | 3.4 | T-03 | 완료 |
 | quotes | 3.4 | T-03 | 완료 |
 | quote_items | 3.4 | T-03 | 완료 |
-| **consultations** | 3.4 | S4-02 (잔여) | 미착수 |
-| **consultation_deposits** | 3.4 | S4-02 (잔여) | 미착수 |
+| **consultations** | 3.4 | S4-02 / S4-07(0025) | 완료 |
+| **consultation_deposits** | 3.4 | S4-02 / S4-07(0025) | 완료 |
 | bookings | 3.4 | T-03 / 스냅샷 컬럼 2개는 S5-01 (잔여) | 진행중 |
 | contracts | 3.4 | T-03 | 완료 |
 | contract_signatures | 3.4 | T-03 | 완료 |
@@ -685,8 +687,8 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | GET/POST /api/chat/messages | 소비자 | S4-04 | 완료 (조회·전송·읽음·회수·첨부 서명 URL 을 한 POST 에 동작으로) |
 | GET/POST /api/qna | 소비자 | S4-05 | 완료 (유사 질문 조회 포함, 읽기는 비로그인 가능) |
 | GET/POST /api/inquiries | 소비자 | S4-12 | 완료 (생성·마감·견적 수락/보류) |
-| GET/POST /api/consultations | 소비자 | S4-07 | 미착수 |
-| POST /api/consultations/[id]/confirm | 소비자 | S4-09 | 미착수 |
+| GET/POST /api/consultations | 소비자 | S4-07 | 완료 (목록·슬롯 조회·신청·취소·보증금 결제) |
+| POST /api/consultations/[id]/confirm | 소비자 | S4-09 | 완료 (**어느 편인지는 세션이 판정한다**) |
 | GET/POST /api/payments/schedules | 소비자 | S5-06 | 미착수 |
 | POST /api/payments/checkout | 소비자 | S5-06 | 미착수 |
 | POST /api/contracts/[id]/sign | 소비자 | S5-05 | 미착수 |
@@ -702,10 +704,10 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | CRUD /api/vendor/products/[id]/options | 업체 | S2-04 | 완료 |
 | POST /api/vendor/inventory/bulk | 업체 | S2-05 | 완료 |
 | CRUD /api/vendor/price-rules · POST .../simulate | 업체 | S2-06 | 완료 |
-| CRUD /api/vendor/availability | 업체 | S4-06 | 미착수 |
+| CRUD /api/vendor/availability | 업체 | S4-06 | 완료 |
 | GET/POST /api/vendor/chat | 업체 | S4-04 | 완료 (인박스·응대·담당자 배정·빠른 답변. staff 도 쓴다) |
 | GET/POST /api/vendor/qna | 업체 | S4-05 | 완료 |
-| GET/PATCH /api/vendor/consultations | 업체 | S4-07, S4-09 | 미착수 |
+| GET/PATCH /api/vendor/consultations | 업체 | S4-07, S4-09 | 완료 (승인·거절·이행 확인=노쇼 신고) |
 | GET/POST /api/vendor/quotes | 업체 | S4-12 | 완료 (인박스·견적 발송·거절·열람·회수. **항목명·상한 입력 필드가 없다**) |
 | PATCH /api/vendor/bookings/[id] | 업체 | **S5-10**(신설) | 미착수 |
 | GET /api/vendor/settlements | 업체 | S5-07 | 미착수 |
@@ -737,8 +739,8 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | settlement-aggregate (Cron, 월 2회) | 배치 | S5-07 | 미착수 |
 | price-anomaly-scan (Cron, 매일) | 배치 | S8-10 | 미착수 |
 | sla-escalation (Cron, 1시간) | 배치 | S4-13 → **S4-12 에서 구현** | 완료(로직) — `lib/notify/sla.ts` + `POST /api/jobs/sla-escalation`. 문의 미응답(`inquiry_targets.sla_deadline`)과 채팅 미응답(`chat_rooms.awaiting_vendor_since`)을 함께 훑고 **만료 처리도 같은 배치**가 한다(만료는 화면을 열어야 반영되면 안 된다). 누적 발송을 막으려 `dedupe_key` 로 한 번만 보낸다. **실행 등록(Cron·`job_runs`·경보)은 S8-13** — `dday-notifications` 와 같은 규칙 |
-| consultation-confirm-request (Cron, 1시간) | 배치 | S4-09 | 미착수 |
-| consultation-resolve (Cron, 1시간) | 배치 | S4-09 | 미착수 |
+| consultation-confirm-request (Cron, 1시간) | 배치 | S4-09 | 완료(로직) — `lib/consultation/batch.ts` + `POST /api/jobs/consultation-confirm-request`. **실행 등록은 S8-13** |
+| consultation-resolve (Cron, 1시간) | 배치 | S4-09 | 완료(로직) — 같은 파일 + `POST /api/jobs/consultation-resolve`. **실행 등록은 S8-13** |
 | planner-payout-due (Cron, 매일) | 배치 | S6-05 | 미착수 |
 | wishlist-price-watch (Cron, 매일) | 배치 | S3-06 | 미착수 — **S4-13 알림 인프라 대기**. 화면은 볼 때 계산해 보여주고 있다 |
 
@@ -772,7 +774,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | /chat | 소비자 | S4-04 | 완료 |
 | /chat/[roomId] | 소비자 | S4-04 | 완료 |
 | /qna/[vendorId] | 소비자 | S4-05 | 완료 |
-| /consultations | 소비자 | S4-07, S4-08, S4-09 | 미착수 |
+| /consultations | 소비자 | S4-07, S4-08, S4-09 | 완료 |
 | /inquiries | 소비자 | S4-12 | 완료 |
 | /bookings/[id] | 소비자 | S5-06 | 미착수 |
 | /checkout/[bookingId] | 소비자 | S5-06 | 미착수 |
@@ -793,8 +795,8 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | /vendor/inquiries | 업체 | S4-12 | 완료 |
 | /vendor/chat | 업체 | S4-04 | 완료 |
 | /vendor/qna | 업체 | S4-05 | 완료 |
-| /vendor/availability | 업체 | S4-06 | 미착수 |
-| /vendor/consultations | 업체 | S4-07, S4-09 | 미착수 |
+| /vendor/availability | 업체 | S4-06 | 완료 |
+| /vendor/consultations | 업체 | S4-07, S4-09 | 완료 |
 | /vendor/bookings | 업체 | **S5-10**(신설) | 미착수 |
 | /vendor/settlements | 업체 | S5-07 | 미착수 |
 | /vendor/compliance | 업체 | S7-13 | 미착수 |
@@ -812,7 +814,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | /admin/flags | 운영자 | S8-12 | 미착수 |
 | /admin/audit | 운영자 | S8-02 | 미착수 |
 | /admin/commission-rates | 운영자 | S5-03 | 미착수 |
-| /admin/consultation-disputes | 운영자 | S4-10 | 미착수 |
+| /admin/consultation-disputes | 운영자 | S4-10 | 미착수 — 큐는 S4-07 부터 쌓인다 |
 | /admin/settlements | 운영자 | S5-07 | 미착수 |
 | /admin/disputes | 운영자 | S8-03, S5-08(위약금) | 미착수 |
 | /admin/reviews | 운영자 | S8-11 | 미착수 |

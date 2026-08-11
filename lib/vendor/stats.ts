@@ -138,6 +138,13 @@ export async function loadVendorStats(
 
   const inquiryCount = (inquiryRows ?? []).length;
 
+  // 상담·탐방 수 (S4-07 이 연결했다). RLS 가 자기 업체 것만 보여준다.
+  const { data: consultationRows } = await table(supabase, "consultations")
+    .select("id")
+    .eq("vendor_id", vendor.id);
+
+  const consultationCount = (consultationRows ?? []).length;
+
   return {
     application: {
       vendorStatus: vendor.status,
@@ -191,7 +198,7 @@ export async function loadVendorStats(
     funnel: {
       impressions: notYet("탐색 화면이 없어 노출을 셀 수 없습니다.", "S3-03"),
       inquiries: measured(inquiryCount ?? 0),
-      consultations: notYet("상담·탐방 예약 기능이 아직 없습니다.", "S4-07"),
+      consultations: measured(consultationCount),
       bookings: notYet("예약·계약 기능이 아직 없습니다.", "S5-06"),
       contracts: notYet("전자계약 기능이 아직 없습니다.", "S5-04"),
     },

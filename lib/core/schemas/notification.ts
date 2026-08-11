@@ -62,7 +62,8 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
  * 담당 태스크를 함께 적어 화면이 그대로 노출한다.
  */
 export const TOPIC_PENDING: Partial<Record<NotificationTopic, string>> = {
-  schedule: "S4-07",
+  // `schedule` 은 S4-07 이 채웠다. 자리를 지우지 않고 목록에서 뺐다 — 남겨 두면
+  // 수신 설정 화면이 "아직 보내지 않는다" 고 거짓을 말한다(S4-04 가 chat 에서 한 것과 같다).
   contract: "S5-04",
   care: "S7-08",
   price_change: "S3-06",
@@ -220,6 +221,48 @@ export const NOTIFICATION_TEMPLATES = {
   "inquiry.declined": {
     topic: "inquiry",
     render: () => "한 업체가 이번 요청을 받지 않기로 했어요.",
+  },
+  /**
+   * 상담·탐방 (S4-07).
+   *
+   * **날짜·시각·장소를 담지 않는다.** 참조(consultationId)만 담고 문장은 고정이다
+   * (§7.3). 예식일이 개인을 특정하는 값이라 `dday.remind` 가 날짜 대신 남은 일수만
+   * 담은 것과 같은 판단이며, 상담 일정도 "언제 어디서 만나는가" 라 마찬가지다.
+   *
+   * D-23 이 요구하는 것은 **"안내를 받았는가"** 이고, 그것은 발송·도달·열람 시각이
+   * 답한다. 무엇을 보냈는지는 화면이 보여준다.
+   */
+  "schedule.requested": {
+    topic: "schedule",
+    render: () => "새 상담·탐방 신청이 들어왔어요. 승인 여부를 알려주세요.",
+  },
+  "schedule.approved": {
+    topic: "schedule",
+    render: () => "업체가 상담 신청을 승인했어요. 보증금 결제를 마치면 확정돼요.",
+  },
+  "schedule.rejected": {
+    topic: "schedule",
+    render: () => "업체가 이번 일정은 어렵다고 답했어요.",
+  },
+  "schedule.confirmed": {
+    topic: "schedule",
+    render: () => "상담·탐방 일정이 확정됐어요.",
+  },
+  "schedule.cancelled": {
+    topic: "schedule",
+    render: () => "상담·탐방 일정이 취소됐어요.",
+  },
+  "schedule.confirm_request": {
+    topic: "schedule",
+    render: () => "예정된 상담이 어떻게 진행됐는지 알려주세요. 기한 내 응답이 없으면 규칙에 따라 처리돼요.",
+  },
+  "schedule.resolved": {
+    topic: "schedule",
+    render: () => "상담 이행 확인이 끝났어요. 보증금 처리 결과를 확인해 주세요.",
+  },
+  "schedule.disputed": {
+    topic: "schedule",
+    render: () => "양측 확인이 달라 운영자가 조율할 예정이에요.",
   },
 } as const satisfies Record<
   string,
