@@ -1387,6 +1387,284 @@ if (!adminUser || !opsUser || !vendorStaff) {
 }
 
 // =============================================================================
+// 표준 문의·견적 (S4-12)
+// -----------------------------------------------------------------------------
+// 확인하는 경계는 다섯이다.
+//   1) 격리 — 타 커플·타 업체·비로그인
+//   2) **자유 양식 금지** — 등록되지 않은 항목은 존재할 수 없고, 이름은 DB 가 덮어쓴다
+//   3) **상한 초과 금지** — 할인만 되고 할증은 안 된다 (CHECK)
+//   4) **쓰기 경로가 서버뿐** — 클라이언트는 견적을 만들 권한 자체가 없다
+//   5) 미응답과 거절의 구분, 견적 없는 응답 처리 차단
+// =============================================================================
+if (!adminUser || !opsUser || !vendorStaff) {
+  console.log("SKIP  문의·견적 항목 — 시드 계정이 없다");
+} else {
+  const IV = "00000000-0000-0000-0000-00000000b001"; // 문의 받는 업체
+  const IOV = "00000000-0000-0000-0000-00000000b002"; // 타 업체
+  const IP = "00000000-0000-0000-0000-00000000b003"; // 상품
+  const IP_OTHER = "00000000-0000-0000-0000-00000000b004"; // 타 업체 상품
+  const IOPT = "00000000-0000-0000-0000-00000000b005"; // 추가금
+  const IOPT_OTHER = "00000000-0000-0000-0000-00000000b006"; // 타 상품의 추가금
+  const INQ = "00000000-0000-0000-0000-00000000b007";
+  const TGT = "00000000-0000-0000-0000-00000000b008";
+  const QUO = "00000000-0000-0000-0000-00000000b009";
+  const OC2 = "00000000-0000-0000-0000-00000000b00a"; // 타 커플
+
+  const inquiryFixture = `
+    insert into public.vendors (id, name, category, status)
+      values ('${IV}', 'RLS문의업체', 'hall', 'active'),
+             ('${IOV}', 'RLS문의타업체', 'hall', 'active');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${IV}', '${outsider}', 'owner'),
+             ('${IV}', '${vendorStaff}', 'staff'),
+             ('${IOV}', '${adminUser}', 'owner');
+    insert into public.products
+      (id, vendor_id, category, name, base_price_total, status, included_items_json, add_ons_declared_at)
+      values ('${IP}', '${IV}', 'hall', 'RLS견적상품', 10000000, 'published',
+              '[{"label":"대관료"}]'::jsonb, now()),
+             ('${IP_OTHER}', '${IOV}', 'hall', 'RLS타업체상품', 20000000, 'published',
+              '[{"label":"대관료"}]'::jsonb, now());
+    insert into public.product_options (id, product_id, name, price, is_mandatory, trigger_condition)
+      values ('${IOPT}', '${IP}', '주말 추가', 500000, false,
+              '{"description":"토·일 예식일 때"}'::jsonb),
+             ('${IOPT_OTHER}', '${IP_OTHER}', '남의 추가금', 700000, false,
+              '{"description":"타 업체 조건"}'::jsonb);
+    insert into public.couples (id, owner_id, stage)
+      values ('${OC2}', '${opsUser}', 'onboarding');
+    insert into public.couple_members (couple_id, user_id, member_role)
+      values ('${OC2}', '${opsUser}', 'owner');
+    insert into public.inquiries (id, couple_id, event_date, guest_count, categories, status)
+      values ('${INQ}', '${coupleId}', '2027-05-15', 150, array['hall'], 'open');
+    insert into public.inquiry_targets (id, inquiry_id, vendor_id, status, sla_deadline)
+      values ('${TGT}', '${INQ}', '${IV}', 'pending', now() + interval '2 days');
+  `;
+
+  /** 위 픽스처에 보낸 견적 하나를 더한다. */
+  const quoteFixture = `${inquiryFixture}
+    insert into public.quotes
+      (id, inquiry_target_id, product_id, total_amount, cap_total, base_price_snapshot,
+       status, sent_at, pricing_context_json, pricing_steps_json)
+      values ('${QUO}', '${TGT}', '${IP}', 9000000, 10000000, 10000000,
+              'sent', now(), '{"asOf":"2026-08-11"}'::jsonb, '[]'::jsonb);
+    insert into public.quote_items
+      (quote_id, item_type, product_id, amount, cap_amount, label, category_code)
+      values ('${QUO}', 'base', '${IP}', 9000000, 10000000, '', '');
+  `;
+
+  // ── 1) 당사자는 본다 ──────────────────────────────────────────────────────
+  check(
+    "고객은 자기 문의를 본다",
+    asUser(owner, `select count(*) from public.inquiries where id = '${INQ}';`,
+      inquiryFixture) === "1",
+  );
+  check(
+    "업체는 자기에게 온 문의를 본다",
+    asUser(outsider, `select count(*) from public.inquiry_targets where id = '${TGT}';`,
+      inquiryFixture) === "1",
+  );
+  check(
+    "업체 staff 도 문의를 본다 (가격·정산이 아니다)",
+    asUser(vendorStaff, `select count(*) from public.inquiry_targets where id = '${TGT}';`,
+      inquiryFixture) === "1",
+  );
+  check(
+    "고객은 받은 견적을 본다",
+    asUser(owner, `select count(*) from public.quotes where id = '${QUO}';`, quoteFixture) === "1",
+  );
+
+  // ── 2) 격리 ──────────────────────────────────────────────────────────────
+  check(
+    "타 커플은 남의 문의를 못 본다",
+    asUser(opsUser, `select count(*) from public.inquiries where id = '${INQ}';`,
+      inquiryFixture) === "0",
+  );
+  check(
+    "타 업체는 남에게 간 문의를 못 본다",
+    asUser(adminUser, `select count(*) from public.inquiry_targets where id = '${TGT}';`,
+      inquiryFixture) === "0",
+  );
+  check(
+    "타 업체는 남의 견적을 못 본다",
+    asUser(adminUser, `select count(*) from public.quotes where id = '${QUO}';`,
+      quoteFixture) === "0",
+  );
+  for (const [label, table] of [
+    ["비로그인은 문의를 못 본다", "inquiries"],
+    ["비로그인은 문의 대상을 못 본다", "inquiry_targets"],
+    ["비로그인은 견적을 못 본다", "quotes"],
+    ["비로그인은 견적 항목을 못 본다", "quote_items"],
+  ]) {
+    check(label, asAnon(`select count(*) from public.${table};`, quoteFixture) === "0");
+  }
+
+  // ── 3) 자유 양식 금지 ────────────────────────────────────────────────────
+  // 견적 쓰기 권한 자체가 없다. 정책의 부재가 아니라 **권한 회수**여야 실패가
+  // 조용한 0행이 아니라 오류로 끊긴다(0019·0021 과 같은 판단).
+  check(
+    "업체도 견적을 직접 만들 수 없다 (권한 회수 — 서버 경유만)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `insert into public.quotes
+         (inquiry_target_id, product_id, total_amount, cap_total, base_price_snapshot, status, sent_at)
+         values ('${TGT}', '${IP}', 1, 1, 1, 'sent', now());`, inquiryFixture)),
+  );
+  check(
+    "업체도 견적 항목을 직접 만들 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `insert into public.quote_items
+         (quote_id, item_type, product_id, amount, cap_amount, label, category_code)
+         values ('${QUO}', 'base', '${IP}', 1, 1, '마음대로 지은 항목', 'hall');`, quoteFixture)),
+  );
+  check(
+    "업체도 보낸 견적 금액을 고칠 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.quotes set total_amount = 1 where id = '${QUO}';`,
+        quoteFixture)),
+  );
+
+  // 서비스롤로도 **등록되지 않은 항목은 못 넣는다.** 출처 CHECK 와 트리거가 막는다.
+  check(
+    "참조 없는 항목은 존재할 수 없다 (BEFORE 트리거가 CHECK 보다 먼저 잡는다)",
+    rejectedWith(/등록되지 않은 상품|quote_items_source_chk/, () =>
+      sql(`begin; ${quoteFixture}
+        insert into public.quote_items
+          (quote_id, item_type, product_id, amount, cap_amount, label, category_code)
+          values ('${QUO}', 'base', null, 1000, 1000, '즉석 항목', 'hall');
+        rollback;`)),
+  );
+  // 트리거를 비켜 가도 CHECK 가 남아 있다 — option 인데 옵션 id 가 없는 경우.
+  check(
+    "옵션 항목인데 옵션을 안 가리키면 출처 CHECK 가 막는다",
+    rejectedWith(/quote_items_source_chk|등록되지 않은 추가금/, () =>
+      sql(`begin; ${quoteFixture}
+        insert into public.quote_items
+          (quote_id, item_type, product_id, product_option_id, amount, cap_amount, label, category_code)
+          values ('${QUO}', 'option', '${IP}', null, 1000, 1000, '', '');
+        rollback;`)),
+  );
+  check(
+    "남의 상품 추가금은 견적에 넣을 수 없다",
+    rejectedWith(/등록되지 않은 추가금/, () =>
+      sql(`begin; ${quoteFixture}
+        insert into public.quote_items
+          (quote_id, item_type, product_id, product_option_id, amount, cap_amount, label, category_code)
+          values ('${QUO}', 'option', '${IP}', '${IOPT_OTHER}', 100, 700000, '', '');
+        rollback;`)),
+  );
+  // 이름을 마음대로 적어도 DB 가 등록된 이름으로 덮어쓴다 — 자유 텍스트가 남지 않는다.
+  check(
+    "항목 이름은 DB 가 등록된 상품 이름으로 덮어쓴다",
+    sql(`begin; ${quoteFixture}
+      insert into public.quote_items
+        (quote_id, item_type, product_id, amount, cap_amount, label, category_code)
+        values ('${QUO}', 'base', '${IP}', 100, 10000000, '특별 관리비(업체가 지은 이름)', '아무거나');
+      select label from public.quote_items where quote_id = '${QUO}' and amount = 100;
+      rollback;`) === "RLS견적상품",
+  );
+  check(
+    "추가금 상한은 DB 가 등록가로 덮어쓴다 (서버가 틀려도 등록가를 넘지 못한다)",
+    sql(`begin; ${quoteFixture}
+      insert into public.quote_items
+        (quote_id, item_type, product_id, product_option_id, amount, cap_amount, label, category_code)
+        values ('${QUO}', 'option', '${IP}', '${IOPT}', 500000, 99999999, '', '');
+      select cap_amount from public.quote_items where quote_id = '${QUO}' and item_type = 'option';
+      rollback;`) === "500000",
+  );
+
+  // ── 4) 상한 초과 금지 ────────────────────────────────────────────────────
+  check(
+    "항목 금액이 상한을 넘으면 거부한다 (CHECK)",
+    rejectedWith(/quote_items_cap_chk/, () =>
+      sql(`begin; ${quoteFixture}
+        insert into public.quote_items
+          (quote_id, item_type, product_id, amount, cap_amount, label, category_code)
+          values ('${QUO}', 'base', '${IP}', 10000001, 10000000, '', '');
+        rollback;`)),
+  );
+  check(
+    "견적 총액이 상한을 넘으면 거부한다 (CHECK)",
+    rejectedWith(/quotes_cap_chk/, () =>
+      sql(`begin; ${inquiryFixture}
+        insert into public.quotes
+          (inquiry_target_id, product_id, total_amount, cap_total, base_price_snapshot, status, sent_at)
+          values ('${TGT}', '${IP}', 10000001, 10000000, 10000000, 'sent', now());
+        rollback;`)),
+  );
+  check(
+    "상한과 같은 금액은 통과한다 (할인 없음은 위반이 아니다)",
+    sql(`begin; ${inquiryFixture}
+      insert into public.quotes
+        (inquiry_target_id, product_id, total_amount, cap_total, base_price_snapshot, status, sent_at)
+        values ('${TGT}', '${IP}', 10000000, 10000000, 10000000, 'sent', now());
+      select count(*) from public.quotes where inquiry_target_id = '${TGT}';
+      rollback;`) === "1",
+  );
+  check(
+    "할인액은 생성 컬럼이라 손으로 적을 수 없다",
+    rejectedWith(/discount_total|generated/i, () =>
+      sql(`begin; ${quoteFixture}
+        update public.quotes set discount_total = 0 where id = '${QUO}';
+        rollback;`)),
+  );
+
+  // ── 5) 미응답 · 거절 · 응답 ──────────────────────────────────────────────
+  check(
+    "업체는 거절할 수 있다 (거절도 응답이다)",
+    asUser(outsider, `with u as (update public.inquiry_targets
+       set status = 'declined', declined_at = now(), decline_reason_code = 'no_availability'
+       where id = '${TGT}' returning id) select count(*) from u;`, inquiryFixture) === "1",
+  );
+  check(
+    "사유 없는 거절은 거부한다 (짝 CHECK)",
+    rejectedWith(/inquiry_targets_decline_pair_chk|inquiry_targets_declined_state_chk/, () =>
+      asUser(outsider, `update public.inquiry_targets set status = 'declined'
+         where id = '${TGT}';`, inquiryFixture)),
+  );
+  // 업체가 견적 없이 responded 로 바꾸면 SLA 시계를 스스로 끄는 셈이다.
+  check(
+    "견적 없이 응답 처리할 수 없다 (트리거)",
+    rejectedWith(/견적을 보내야/, () =>
+      asUser(outsider, `update public.inquiry_targets set status = 'responded'
+         where id = '${TGT}';`, inquiryFixture)),
+  );
+  // 응답 시각은 서버가 정하는 값이라 컬럼 권한 자체가 없다 — 트리거보다 앞선 문이다.
+  check(
+    "업체는 응답 시각을 손댈 수 없다 (권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.inquiry_targets set responded_at = now()
+         where id = '${TGT}';`, inquiryFixture)),
+  );
+  check(
+    "견적을 보내면 트리거가 응답으로 바꾼다",
+    sql(`begin; ${quoteFixture}
+      select status from public.inquiry_targets where id = '${TGT}';
+      rollback;`) === "responded",
+  );
+  check(
+    "업체는 SLA 기한을 손댈 수 없다 (권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.inquiry_targets set sla_deadline = now() + interval '99 days'
+         where id = '${TGT}';`, inquiryFixture)),
+  );
+  check(
+    "타 업체는 남의 문의 상태를 바꿀 수 없다",
+    asUser(adminUser, `with u as (update public.inquiry_targets set status = 'declined',
+       declined_at = now(), decline_reason_code = 'other' where id = '${TGT}' returning id)
+       select count(*) from u;`, inquiryFixture) === "0",
+  );
+
+  // ── 6) 문의게시판 유사 질문 인덱스 (S4-05) ───────────────────────────────
+  check(
+    "유사 질문 검색 인덱스가 있다 (pg_trgm)",
+    sql(`select count(*) from pg_indexes
+       where schemaname = 'public' and indexname = 'idx_qna_posts_similarity';`) === "1",
+  );
+  check(
+    "pg_trgm 확장이 켜져 있다",
+    sql(`select count(*) from pg_extension where extname = 'pg_trgm';`) === "1",
+  );
+}
+
+// =============================================================================
 // 실시간 전송 계층 (S4-04 · O-11)
 // -----------------------------------------------------------------------------
 // **무엇을 구독하느냐가 곧 무엇이 소켓을 타느냐다.** postgres_changes 는 바뀐 행을

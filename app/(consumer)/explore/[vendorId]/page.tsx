@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
 import { BrokerNotice } from "@/components/domain/BrokerNotice";
+import { ContactPathGuide } from "@/components/domain/ContactPathGuide";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -98,6 +99,9 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
 
         {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
         <StartChatButton vendorId={vendor.id} />
+
+        {/* 업체에 말을 거는 길이 셋이라 무엇이 무엇인지 화면이 설명한다(S4-12). */}
+        <ContactPathGuide current="chat" vendorId={vendor.id} />
 
         {/* 거래로 이어지는 화면이므로 중개자 지위를 고지한다(D-24 · §6). */}
         <BrokerNotice variant="inline" />

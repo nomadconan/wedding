@@ -56,16 +56,22 @@ export const EXPLORE_SORT_PENDING: { code: string; label: string; reason: string
     task: "S8-02",
   },
   {
-    code: "response_speed",
-    label: "응답 속도 순",
-    reason: "문의·채팅 응답 기록이 아직 없습니다.",
-    task: "S4-12",
-  },
-  {
     code: "available_date",
     label: "예약 가능일 순",
     reason: "재고 캘린더를 등록한 업체가 일부라, 지금 정렬하면 등록 여부가 순서를 정하게 됩니다.",
     task: "S2-05",
+  },
+  // S4-12 가 **기록할 자리를 만들었다**(`inquiry_targets.created_at → responded_at`).
+  // 그래도 아직 열지 않는다 — 이유가 "스키마가 없다" 에서 "표본이 없다" 로 바뀌었다.
+  // 문의를 받아 본 적 없는 업체가 대부분인 동안 이 정렬을 켜면, 응답이 빠른 순이
+  // 아니라 **문의를 받아 본 적이 있는지**가 순서를 정한다. 그건 업체가 한 일이
+  // 아니라 우리 쪽 사정이고, `available_date` 와 정확히 같은 종류의 노출 비대칭이다.
+  {
+    code: "response_speed",
+    label: "응답 속도 순",
+    reason:
+      "응답 기록이 쌓인 업체가 아직 일부라, 지금 정렬하면 문의를 받아 본 적이 있는지가 순서를 정하게 됩니다.",
+    task: "S4-12",
   },
 ];
 

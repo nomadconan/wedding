@@ -128,6 +128,16 @@ export async function loadVendorStats(
     .eq("id", vendor.id)
     .maybeSingle();
 
+  // 문의 수 (S4-12 가 연결했다). RLS 가 자기 업체에 온 것만 보여주므로 여기서
+  // 다시 좁히는 `eq` 는 화면 필터일 뿐이다.
+  // `count` 대신 행을 세는 이유 — 이 파일의 `QueryBuilder` 는 데이터만 다루는 얇은
+  // 타입이고, 다른 지표도 전부 같은 방식으로 센다. 한 지표를 위해 타입을 넓히지 않는다.
+  const { data: inquiryRows } = await table(supabase, "inquiry_targets")
+    .select("id")
+    .eq("vendor_id", vendor.id);
+
+  const inquiryCount = (inquiryRows ?? []).length;
+
   return {
     application: {
       vendorStatus: vendor.status,
@@ -174,11 +184,13 @@ export async function loadVendorStats(
       pricePosition: await loadPricePosition(vendor, productRows),
     },
 
-    // ── 아직 셀 수단이 없는 것들 ────────────────────────────────────────────
-    // 0으로 적으면 "0건 왔다"로 읽힌다. 실제로는 받을 수단이 아직 없는 것이다.
+    // ── 퍼널 ────────────────────────────────────────────────────────────────
+    // 셀 수 있는 것만 숫자로 적는다. 나머지는 0이 아니라 '아직' 이다 — 0으로 적으면
+    // "0건 왔다"로 읽히는데 실제로는 받을 수단이 없는 것이고, 그 둘은 업체가 내릴
+    // 판단이 다르다.
     funnel: {
       impressions: notYet("탐색 화면이 없어 노출을 셀 수 없습니다.", "S3-03"),
-      inquiries: notYet("문의 기능이 아직 없습니다.", "S4-12"),
+      inquiries: measured(inquiryCount ?? 0),
       consultations: notYet("상담·탐방 예약 기능이 아직 없습니다.", "S4-07"),
       bookings: notYet("예약·계약 기능이 아직 없습니다.", "S5-06"),
       contracts: notYet("전자계약 기능이 아직 없습니다.", "S5-04"),
