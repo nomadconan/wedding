@@ -1953,6 +1953,201 @@ if (!adminUser || !opsUser || !vendorStaff) {
 }
 
 // =============================================================================
+// 업체 알림·연동 설정 · 멤버 초대 (S4-14 · S2-09)
+// -----------------------------------------------------------------------------
+// 확인하는 경계는 넷이다.
+//   1) **조직 설정은 owner, 템플릿은 멤버** — staff 가 수신 대상을 혼자 못 바꾼다
+//   2) 기본 담당자는 그 업체 사람이어야 한다(트리거)
+//   3) **초대받은 본인은 자기 초대만** 본다 — 아직 멤버가 아니라 멤버 정책으로는 못 본다
+//   4) 수락은 서비스롤 경유 — 클라이언트는 vendor_members 에 못 넣는다
+// =============================================================================
+if (!adminUser || !opsUser || !vendorStaff) {
+  console.log("SKIP  업체 설정·초대 항목 — 시드 계정이 없다");
+} else {
+  const SV = "00000000-0000-0000-0000-00000000e001"; // 설정 대상 업체
+  const SOV = "00000000-0000-0000-0000-00000000e002"; // 타 업체
+  const INV = "00000000-0000-0000-0000-00000000e003";
+  const TPL = "00000000-0000-0000-0000-00000000e004";
+
+  const settingsFixture = `
+    insert into public.vendors (id, name, category, status)
+      values ('${SV}', 'RLS설정업체', 'hall', 'active'),
+             ('${SOV}', 'RLS설정타업체', 'hall', 'active');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${SV}', '${outsider}', 'owner'),
+             ('${SV}', '${vendorStaff}', 'staff'),
+             ('${SOV}', '${adminUser}', 'owner');
+    insert into public.vendor_settings (vendor_id, recipient_mode, business_hours)
+      values ('${SV}', 'all', '[{"weekday":1,"start":"10:00","end":"19:00"}]'::jsonb);
+    insert into public.vendor_notification_prefs (vendor_id, topic, channel_flags)
+      values ('${SV}', 'inquiry', '{"email":true}'::jsonb);
+    insert into public.vendor_templates (id, vendor_id, kind, title, payload_json)
+      values ('${TPL}', '${SV}', 'quick_reply', 'RLS인사', '{"body":"안녕하세요"}'::jsonb);
+    insert into public.vendor_invites
+      (id, vendor_id, email, vendor_role, token, expires_at, invited_by)
+      values ('${INV}', '${SV}', 'invitee@local.test', 'staff',
+              'rls-check-token-0123456789abcdef', now() + interval '3 days', '${outsider}');
+  `;
+
+  // ── 1) 읽기는 멤버 전원 ───────────────────────────────────────────────────
+  for (const [label, table, id] of [
+    ["업체 멤버는 조직 설정을 본다", "vendor_settings", null],
+    ["업체 멤버는 조직 채널 설정을 본다", "vendor_notification_prefs", null],
+    ["업체 멤버는 템플릿을 본다", "vendor_templates", TPL],
+    ["업체 멤버는 초대 현황을 본다", "vendor_invites", INV],
+  ]) {
+    const where = id ? ` where id = '${id}'` : ` where vendor_id = '${SV}'`;
+    check(label, asUser(vendorStaff, `select count(*) from public.${table}${where};`,
+      settingsFixture) === "1");
+  }
+
+  // ── 2) 쓰기 권한이 갈린다 ─────────────────────────────────────────────────
+  check(
+    "대표는 수신 대상을 바꾼다",
+    asUser(outsider, `with u as (update public.vendor_settings set recipient_mode = 'specific'
+       where vendor_id = '${SV}' returning vendor_id) select count(*) from u;`,
+      settingsFixture) === "1",
+  );
+  // staff 가 'specific: 나' 로 바꾸면 대표가 문의를 못 받는다.
+  check(
+    "staff 는 수신 대상을 바꿀 수 없다",
+    asUser(vendorStaff, `with u as (update public.vendor_settings set recipient_mode = 'specific'
+       where vendor_id = '${SV}' returning vendor_id) select count(*) from u;`,
+      settingsFixture) === "0",
+  );
+  check(
+    "staff 는 조직 채널 설정을 바꿀 수 없다",
+    asUser(vendorStaff, `with u as (update public.vendor_notification_prefs
+       set channel_flags = '{"email":false}'::jsonb where vendor_id = '${SV}' returning id)
+       select count(*) from u;`, settingsFixture) === "0",
+  );
+  // 문안 저장은 응대의 일부라 staff 도 한다.
+  check(
+    "staff 도 템플릿을 만든다",
+    asUser(vendorStaff, `with i as (insert into public.vendor_templates
+       (vendor_id, kind, title, payload_json)
+       values ('${SV}', 'quick_reply', 'staff 문안', '{"body":"확인해 드릴게요"}'::jsonb)
+       returning id) select count(*) from i;`, settingsFixture) === "1",
+  );
+  check(
+    "설정은 지울 수 없다 (권한 회수)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `delete from public.vendor_settings where vendor_id = '${SV}';`,
+        settingsFixture)),
+  );
+
+  // ── 3) 기본 담당자는 그 업체 사람이어야 한다 (트리거) ────────────────────
+  check(
+    "대표는 자기 업체 구성원을 기본 담당자로 지정한다",
+    asUser(outsider, `with u as (update public.vendor_settings
+       set default_assignee_id = '${vendorStaff}' where vendor_id = '${SV}' returning vendor_id)
+       select count(*) from u;`, settingsFixture) === "1",
+  );
+  check(
+    "업체 밖 사람은 기본 담당자가 될 수 없다",
+    rejectedWith(/구성원이어야/, () =>
+      asUser(outsider, `update public.vendor_settings set default_assignee_id = '${owner}'
+         where vendor_id = '${SV}';`, settingsFixture)),
+  );
+
+  // ── 4) 격리 ──────────────────────────────────────────────────────────────
+  for (const [label, table, where] of [
+    ["타 업체는 남의 설정을 못 본다", "vendor_settings", `vendor_id = '${SV}'`],
+    ["타 업체는 남의 템플릿을 못 본다", "vendor_templates", `id = '${TPL}'`],
+    ["타 업체는 남의 초대를 못 본다", "vendor_invites", `id = '${INV}'`],
+  ]) {
+    check(label, asUser(adminUser, `select count(*) from public.${table} where ${where};`,
+      settingsFixture) === "0");
+  }
+  for (const [label, table] of [
+    ["비로그인은 업체 설정을 못 본다", "vendor_settings"],
+    ["비로그인은 템플릿을 못 본다", "vendor_templates"],
+    ["비로그인은 초대를 못 본다", "vendor_invites"],
+  ]) {
+    check(label, asAnon(`select count(*) from public.${table};`, settingsFixture) === "0");
+  }
+
+  // ── 5) 초대 ──────────────────────────────────────────────────────────────
+  check(
+    "staff 는 초대를 발행할 수 없다 (42501 — vendor_members INSERT 가 owner 전용이라)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(vendorStaff, `insert into public.vendor_invites
+         (vendor_id, email, vendor_role, token, expires_at)
+         values ('${SV}', 'x@local.test', 'staff', 'staff-token-0123456789abcdef',
+                 now() + interval '1 day');`, settingsFixture)),
+  );
+  // 초대받은 사람이 vendor_role 을 owner 로 바꿔 수락하면 권한 상승이 된다.
+  check(
+    "대표도 초대의 권한·이메일은 못 고친다 (컬럼 권한)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.vendor_invites set vendor_role = 'owner' where id = '${INV}';`,
+        settingsFixture)),
+  );
+  check(
+    "대표는 초대를 거둘 수 있다 (revoked_at 만 열려 있다)",
+    asUser(outsider, `with u as (update public.vendor_invites set revoked_at = now()
+       where id = '${INV}' returning id) select count(*) from u;`, settingsFixture) === "1",
+  );
+  // 수락은 서비스롤이 처리한다 — 클라이언트가 스스로 수락 표시를 할 수 없다.
+  check(
+    "아무도 수락 표시를 직접 할 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(outsider, `update public.vendor_invites set accepted_at = now(), accepted_by = '${owner}'
+         where id = '${INV}';`, settingsFixture)),
+  );
+  check(
+    "초대받은 사람도 vendor_members 에 스스로 들어갈 수 없다 (42501)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.vendor_members (vendor_id, user_id, vendor_role)
+         values ('${SV}', '${owner}', 'staff');`, settingsFixture)),
+  );
+  // 살아 있는 초대는 업체·이메일당 하나. 재발송은 그 행에 새 토큰을 끼운다.
+  check(
+    "같은 이메일에 살아 있는 초대는 하나뿐이다",
+    rejectedWith(/uq_vendor_invites_pending/, () =>
+      sql(`begin; ${settingsFixture}
+        insert into public.vendor_invites (vendor_id, email, vendor_role, token, expires_at)
+          values ('${SV}', 'invitee@local.test', 'staff', 'dup-token-0123456789abcdef',
+                  now() + interval '1 day');
+        rollback;`)),
+  );
+  check(
+    "거둔 뒤에는 같은 이메일로 다시 초대할 수 있다",
+    sql(`begin; ${settingsFixture}
+      update public.vendor_invites set revoked_at = now() where id = '${INV}';
+      insert into public.vendor_invites (vendor_id, email, vendor_role, token, expires_at)
+        values ('${SV}', 'invitee@local.test', 'staff', 'again-token-0123456789abcdef',
+                now() + interval '1 day');
+      select count(*) from public.vendor_invites where vendor_id = '${SV}';
+      rollback;`) === "2",
+  );
+  check(
+    "수락된 초대는 거둘 수 없다 (배타 CHECK)",
+    rejectedWith(/vendor_invites_revoke_chk/, () =>
+      sql(`begin; ${settingsFixture}
+        update public.vendor_invites
+          set accepted_at = now(), accepted_by = '${owner}', revoked_at = now()
+          where id = '${INV}';
+        rollback;`)),
+  );
+  check(
+    "대문자 이메일은 저장되지 않는다 (소문자 CHECK)",
+    rejectedWith(/vendor_invites_email_chk/, () =>
+      sql(`begin; ${settingsFixture}
+        insert into public.vendor_invites (vendor_id, email, vendor_role, token, expires_at)
+          values ('${SV}', 'Upper@Local.test', 'staff', 'upper-token-0123456789abcdef',
+                  now() + interval '1 day');
+        rollback;`)),
+  );
+
+  // ── 6) 운영 파라미터 ─────────────────────────────────────────────────────
+  check(
+    "초대 유효 기간이 app_settings 에 있다",
+    sql(`select count(*) from public.app_settings where key = 'vendor_invite.ttl_hours';`) === "1",
+  );
+}
+
+// =============================================================================
 // 실시간 전송 계층 (S4-04 · O-11)
 // -----------------------------------------------------------------------------
 // **무엇을 구독하느냐가 곧 무엇이 소켓을 타느냐다.** postgres_changes 는 바뀐 행을

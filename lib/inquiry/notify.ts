@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/core/schemas/notification";
 import { sendNotification } from "@/lib/notify/send";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { vendorDelivery } from "@/lib/vendor/settings";
 
 /**
  * 문의·견적 알림 (S4-12 → S4-13 발송 경로)
@@ -22,14 +23,12 @@ export async function notifyInquiryReceived(input: {
     const admin = createAdminClient();
 
     for (const target of input.targets) {
-      const { data } = await admin
-        .from("vendor_members")
-        .select("user_id")
-        .eq("vendor_id", target.vendorId);
+      // 업체 조직 설정을 따른다(S4-14). 담당자 배정·전원 여부가 여기서 갈린다.
+      const delivery = await vendorDelivery({ vendorId: target.vendorId, now: new Date() });
 
-      for (const row of (data ?? []) as { user_id: string }[]) {
+      for (const userId of delivery.recipients) {
         await sendNotification({
-          userId: row.user_id,
+          userId,
           topic: "inquiry",
           channel: "in_app",
           templateKey: "inquiry.received",
@@ -37,7 +36,7 @@ export async function notifyInquiryReceived(input: {
           // 대상 하나당 하나. 재시도해도 중복되지 않는다.
           dedupeKey: dedupeKey({
             templateKey: "inquiry.received",
-            subjectId: `${target.targetId}:${row.user_id}`,
+            subjectId: `${target.targetId}:${userId}`,
           }),
         });
       }

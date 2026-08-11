@@ -3595,6 +3595,68 @@ export type Database = {
           },
         ]
       }
+      vendor_invites: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          revoked_at: string | null
+          send_attempts: number
+          send_failure_reason: string | null
+          sent_at: string | null
+          token: string
+          updated_at: string
+          vendor_id: string
+          vendor_role: Database["public"]["Enums"]["vendor_member_role"]
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          created_at?: string
+          email: string
+          expires_at: string
+          id?: string
+          invited_by?: string | null
+          revoked_at?: string | null
+          send_attempts?: number
+          send_failure_reason?: string | null
+          sent_at?: string | null
+          token: string
+          updated_at?: string
+          vendor_id: string
+          vendor_role?: Database["public"]["Enums"]["vendor_member_role"]
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string | null
+          revoked_at?: string | null
+          send_attempts?: number
+          send_failure_reason?: string | null
+          sent_at?: string | null
+          token?: string
+          updated_at?: string
+          vendor_id?: string
+          vendor_role?: Database["public"]["Enums"]["vendor_member_role"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_invites_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendor_media: {
         Row: {
           alt_text: string | null
@@ -3667,6 +3729,120 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "vendor_members_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vendor_notification_prefs: {
+        Row: {
+          channel_flags: Json
+          created_at: string
+          id: string
+          topic: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          channel_flags?: Json
+          created_at?: string
+          id?: string
+          topic: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          channel_flags?: Json
+          created_at?: string
+          id?: string
+          topic?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_notification_prefs_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vendor_settings: {
+        Row: {
+          business_hours: Json
+          created_at: string
+          default_assignee_id: string | null
+          defer_offhours: boolean
+          recipient_mode: Database["public"]["Enums"]["vendor_recipient_mode"]
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          business_hours?: Json
+          created_at?: string
+          default_assignee_id?: string | null
+          defer_offhours?: boolean
+          recipient_mode?: Database["public"]["Enums"]["vendor_recipient_mode"]
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          business_hours?: Json
+          created_at?: string
+          default_assignee_id?: string | null
+          defer_offhours?: boolean
+          recipient_mode?: Database["public"]["Enums"]["vendor_recipient_mode"]
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_settings_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: true
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vendor_templates: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          payload_json: Json
+          sort_order: number
+          title: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          payload_json?: Json
+          sort_order?: number
+          title: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          payload_json?: Json
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_templates_vendor_id_fkey"
             columns: ["vendor_id"]
             isOneToOne: false
             referencedRelation: "vendors"
@@ -3924,6 +4100,7 @@ export type Database = {
         | "approved"
         | "rejected"
       vendor_member_role: "owner" | "staff"
+      vendor_recipient_mode: "all" | "assignee_first" | "specific"
       vendor_status: "pending" | "active" | "suspended"
     }
     CompositeTypes: {
@@ -4103,6 +4280,7 @@ export const Constants = {
         "rejected",
       ],
       vendor_member_role: ["owner", "staff"],
+      vendor_recipient_mode: ["all", "assignee_first", "specific"],
       vendor_status: ["pending", "active", "suspended"],
     },
   },
