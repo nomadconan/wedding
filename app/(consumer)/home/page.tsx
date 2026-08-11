@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { loadCart } from "@/lib/cart/loader";
+import { loadRooms } from "@/lib/chat/loader";
+import { unreadBadge } from "@/lib/core/chat/chat";
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
 import {
   HOME_ALL_DONE_NOTE,
@@ -115,6 +117,20 @@ async function HomeSection() {
         .select("id", { count: "exact", head: true })
         .eq("couple_id", membership.coupleId)
     : { count: 0 };
+
+  // 최근 대화(F-C-27). 커플이 없으면 방도 없다 — 조회 자체를 건너뛴다.
+  // RLS 가 자기 커플의 방만 보여주므로 여기서 couple_id 로 다시 거르지 않는다.
+  // SLA 눈금은 넘기지 않는다(null) — 홈은 업체용 타이머를 그리는 자리가 아니다.
+  const recentRooms = membership
+    ? (
+        await loadRooms(supabase, {
+          viewerId: user.id,
+          side: "couple",
+          threshold: null,
+          now: new Date(),
+        }).catch(() => [])
+      ).slice(0, 3)
+    : [];
 
   // 기준일은 여기서 한 번만 만들고 화면 전체가 같은 값을 쓴다.
   const today = new Date().toISOString().slice(0, 10);
@@ -247,7 +263,55 @@ async function HomeSection() {
         </div>
       </section>
 
-      {/* ── 4) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
+      {/* ── 4) 최근 대화 (S4-04 — F-C-27) ────────────────────────────────── */}
+      <section className="space-y-2" data-testid="home-chat">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-foreground">최근 대화</h2>
+          {recentRooms.length > 0 ? (
+            <Link href="/chat" className="text-caption font-medium text-brand-600">
+              전체 보기
+            </Link>
+          ) : null}
+        </div>
+
+        {recentRooms.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            아직 진행 중인 대화가 없어요.{" "}
+            <Link href="/explore" className="font-medium text-brand-600">
+              업체에 문의하기
+            </Link>
+          </p>
+        ) : (
+          <ul className="space-y-2" data-testid="home-chat-rooms">
+            {recentRooms.map((room) => {
+              const badge = unreadBadge(room.unread);
+
+              return (
+                <li key={room.id}>
+                  <Link
+                    href={`/chat/${room.id}`}
+                    className="flex items-start gap-3 rounded-lg border border-border p-4"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {room.vendorName}
+                      </p>
+                      <p className="truncate text-caption text-muted-foreground">{room.preview}</p>
+                    </div>
+                    {badge ? (
+                      <span className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-brand-500 px-1.5 py-0.5 text-caption font-semibold text-primary-foreground">
+                        {badge}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* ── 5) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
       <section className="space-y-2">
         <h2 className="text-base font-semibold text-foreground">준비 중인 기능</h2>
         <p className="text-caption text-muted-foreground">

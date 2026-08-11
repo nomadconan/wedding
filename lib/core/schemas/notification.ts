@@ -29,6 +29,7 @@ export const NOTIFICATION_TOPICS = [
   "care",
   "price_change",
   "couple_invite",
+  "chat",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -40,6 +41,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   care: "케어 메시지",
   price_change: "찜한 상품 가격 변동",
   couple_invite: "배우자 초대",
+  chat: "업체 채팅 새 메시지",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -49,6 +51,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   care: "준비 단계에 맞춰 도움이 될 만한 안내를 보내드려요.",
   price_change: "찜한 상품의 가격이 바뀌면 알려드려요.",
   couple_invite: "배우자 초대와 연동 상태를 알려드려요.",
+  chat: "업체와의 대화에 새 메시지가 오면 알려드려요.",
 };
 
 /**
@@ -179,6 +182,21 @@ export const NOTIFICATION_TEMPLATES = {
   "couple_invite.accepted": {
     topic: "couple_invite",
     render: () => "배우자가 초대를 수락했어요. 이제 같은 정보를 함께 봅니다.",
+  },
+  /**
+   * 채팅 새 메시지 (S4-04).
+   *
+   * **본문을 넣지 않는다.** 참조(roomId)만 담고 문장은 고정이다 — 메시지 내용을
+   * payload 에 실으면 §7.3 의 "증적에 원문을 담지 않는다" 를 정면으로 어긴다.
+   * 알림은 "왔다" 만 말하고, 무엇이 왔는지는 대화 화면이 보여준다.
+   *
+   * 업체 이름도 넣지 않는다. 공개 상호이긴 하나 `payload_json` 은 참조 ID와 숫자만
+   * 담기로 한 자리이고(§7.3), 이름을 넣기 시작하면 어디까지가 식별정보인지 판단이
+   * 호출부마다 갈린다.
+   */
+  "chat.new_message": {
+    topic: "chat",
+    render: () => "업체와의 대화에 새 메시지가 도착했어요.",
   },
 } as const satisfies Record<
   string,

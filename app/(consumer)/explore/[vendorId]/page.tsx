@@ -13,6 +13,7 @@ import { VENDOR_FACILITY_LABEL, type VendorFacility } from "@/lib/core/schemas/v
 import { createPublicClient } from "@/lib/explore/query";
 
 import { AvailabilityPanel } from "./AvailabilityPanel";
+import { StartChatButton } from "./StartChatButton";
 import { VendorProducts } from "./VendorProducts";
 
 export const metadata: Metadata = {
@@ -94,6 +95,9 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
             <AvailabilityPanel vendorId={vendor.id} />
           </CardContent>
         </Card>
+
+        {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
+        <StartChatButton vendorId={vendor.id} />
 
         {/* 거래로 이어지는 화면이므로 중개자 지위를 고지한다(D-24 · §6). */}
         <BrokerNotice variant="inline" />

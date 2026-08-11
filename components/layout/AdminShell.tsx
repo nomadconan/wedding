@@ -7,6 +7,7 @@ import {
   Flag,
   LayoutDashboard,
   MessageSquare,
+  MessagesSquare,
   Package,
   Receipt,
   Settings,
@@ -44,6 +45,8 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/products", label: "상품·가격", icon: Package },
   { href: "/vendor/pricing", label: "다이내믹 프라이싱", icon: Tag },
   { href: "/vendor/inventory", label: "재고 캘린더", icon: CalendarRange },
+  // 채팅은 문의·견적 위다(S4-04) — 응답 SLA 가 걸린 유일한 화면이라 먼저 눈에 띄어야 한다.
+  { href: "/vendor/chat", label: "채팅 응대", icon: MessagesSquare },
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },

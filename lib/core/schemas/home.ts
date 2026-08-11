@@ -177,12 +177,8 @@ export const HOME_PENDING_SECTIONS = [
     reason: "계약서 검토를 아직 만들지 않았습니다.",
     filledBy: "S7-03",
   },
-  {
-    key: "chat",
-    label: "최근 대화",
-    reason: "업체와의 채팅을 아직 만들지 않았습니다.",
-    filledBy: "S4-04",
-  },
+  // '최근 대화' 는 S4-04 가 채웠다. 자리를 지우지 않고 목록에서 뺐다 — 남겨 두면
+  // 화면이 "아직 못 만들었다" 고 거짓을 말한다.
   {
     key: "planner",
     label: "AI 플래너 '클리어'",
