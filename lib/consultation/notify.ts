@@ -1,6 +1,7 @@
 import { dedupeKey, type TemplateKey } from "@/lib/core/schemas/notification";
 import { sendNotification } from "@/lib/notify/send";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { vendorDelivery } from "@/lib/vendor/settings";
 
 /**
  * 상담·탐방 알림 (S4-07 → S4-13 발송 경로)
@@ -48,13 +49,10 @@ export async function notifyConsultation(input: {
     }
 
     if (input.audience === "vendor" || input.audience === "both") {
-      // 담당자 라우팅은 S4-14 소관이다(채팅·문의와 같은 판단). 여기서는 멤버 전원.
-      const { data: members } = await admin
-        .from("vendor_members")
-        .select("user_id")
-        .eq("vendor_id", row.vendor_id);
+      // 담당자 라우팅은 S4-14 가 채웠다 — 업체 조직 설정을 따른다.
+      const delivery = await vendorDelivery({ vendorId: row.vendor_id, now: new Date() });
 
-      recipients.push(...((members ?? []) as { user_id: string }[]).map((item) => item.user_id));
+      recipients.push(...delivery.recipients);
     }
 
     for (const userId of [...new Set(recipients)]) {

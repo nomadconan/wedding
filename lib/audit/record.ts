@@ -47,6 +47,11 @@ export type EntityType =
   // memo 에는 금액·사유 코드만 넣는다 — 장소·연락처 같은 식별정보는 넣지 않는다.
   | "consultation"
   | "consultation_deposit"
+  // S4-14 · S2-09. 설정 변경과 초대는 **권한이 움직이는 일**이라 기록이 필요하다 —
+  // "누가 우리 업체에 들어왔나" 는 분쟁에서 실제로 묻는 질문이다(D-23).
+  // memo 에 토큰·이메일을 넣지 않는다.
+  | "vendor_settings"
+  | "vendor_invite"
   | "profile"
   | "data_deletion_request";
 

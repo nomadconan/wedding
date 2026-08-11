@@ -31,6 +31,7 @@ export const NOTIFICATION_TOPICS = [
   "couple_invite",
   "chat",
   "inquiry",
+  "vendor_invite",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -44,6 +45,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   couple_invite: "배우자 초대",
   chat: "업체 채팅 새 메시지",
   inquiry: "문의·견적",
+  vendor_invite: "멤버 초대",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -55,6 +57,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   couple_invite: "배우자 초대와 연동 상태를 알려드려요.",
   chat: "업체와의 대화에 새 메시지가 오면 알려드려요.",
   inquiry: "보낸 문의에 견적이 도착하거나 업체가 답하면 알려드려요.",
+  vendor_invite: "업체 멤버로 초대받으면 알려드려요.",
 };
 
 /**
@@ -263,6 +266,20 @@ export const NOTIFICATION_TEMPLATES = {
   "schedule.disputed": {
     topic: "schedule",
     render: () => "양측 확인이 달라 운영자가 조율할 예정이에요.",
+  },
+  /**
+   * 업체 멤버 초대 (S2-09).
+   *
+   * **업체 이름·이메일·토큰을 담지 않는다.** 참조(inviteId)만 담고 문장은 고정이다
+   * (§7.3). 특히 **토큰은 절대 payload 에 넣지 않는다** — `notifications` 는 알림함
+   * 화면이 읽는 표이고, 거기 토큰이 있으면 알림 한 건이 곧 업체 접근 열쇠가 된다.
+   *
+   * **이 행은 가입자에게만 생긴다.** 미가입자는 `auth.users` 에 없어 `user_id` 를
+   * 채울 수 없고, 그 발송 증적은 `vendor_invites.sent_at` 이 갖는다(0026).
+   */
+  "vendor_invite.received": {
+    topic: "vendor_invite",
+    render: () => "업체 멤버로 초대받았어요. 초대 링크에서 수락할 수 있어요.",
   },
 } as const satisfies Record<
   string,

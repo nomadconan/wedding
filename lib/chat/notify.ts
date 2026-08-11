@@ -1,6 +1,7 @@
 import { dedupeKey } from "@/lib/core/schemas/notification";
 import { sendNotification } from "@/lib/notify/send";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { vendorDelivery } from "@/lib/vendor/settings";
 
 import type { ChatSide } from "@/lib/core/chat/chat";
 
@@ -59,16 +60,15 @@ export async function notifyNewMessage(input: {
     let recipients: string[] = [];
 
     if (input.side === "couple") {
-      if (room.assigned_to) {
-        recipients = [room.assigned_to];
-      } else {
-        const { data } = await admin
-          .from("vendor_members")
-          .select("user_id")
-          .eq("vendor_id", room.vendor_id);
+      // **업체 조직 설정을 따른다**(S4-14). 여기서 직접 고르던 것을 한 함수로 옮겼다 —
+      // 채팅·문의·상담이 각자 판단하면 설정이 한 곳에만 반영되는 날이 온다.
+      const delivery = await vendorDelivery({
+        vendorId: room.vendor_id,
+        assignedTo: room.assigned_to,
+        now: new Date(),
+      });
 
-        recipients = ((data ?? []) as { user_id: string }[]).map((row) => row.user_id);
-      }
+      recipients = delivery.recipients;
     } else {
       const { data } = await admin
         .from("couple_members")
