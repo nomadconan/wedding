@@ -2367,5 +2367,471 @@ check(
   asAnon(`select count(*) from public.app_settings;`) === "0",
 );
 
+// =============================================================================
+// 분할 결제 · 정산 · 플래너 지급 (S5-01 잔여분 · 0028)
+// -----------------------------------------------------------------------------
+// 돈이 걸린 표들이다. 확인할 것은 셋이다 —
+//   (가) **불변식이 DB 에 서 있는가**: 비율 합 10000bp · 요율 스냅샷 불변 · 유예 경계
+//   (나) **경계가 RLS 인가**: staff 정산 차단 · 타 업체 격리 · 플래너 자기 것만 · anon
+//   (다) **당사자가 자기 수수료율을 못 쓰는가**: 정책은 행을 가르고 컬럼을 가르지 않으므로
+//        컬럼 수준 권한이 필요하다.
+// =============================================================================
+if (!vendorStaff || !adminUser) {
+  console.log("SKIP  결제·정산 항목 — 시드 계정이 없다");
+} else {
+  const PV = "00000000-0000-0000-0000-00000000f001"; // 정산 대상 업체
+  const POV = "00000000-0000-0000-0000-00000000f002"; // 타 업체
+  const PP = "00000000-0000-0000-0000-00000000f003"; // 상품
+  const PB = "00000000-0000-0000-0000-00000000f004"; // 예약
+  const PC = "00000000-0000-0000-0000-00000000f005"; // 계약
+  const PS1 = "00000000-0000-0000-0000-00000000f006"; // 회차 1
+  const PS2 = "00000000-0000-0000-0000-00000000f007"; // 회차 2
+  const PSET = "00000000-0000-0000-0000-00000000f008"; // 정산서
+  const POSET = "00000000-0000-0000-0000-00000000f009"; // 타 업체 정산서
+  const PPL = "00000000-0000-0000-0000-00000000f00a"; // 플래너
+  const POPL = "00000000-0000-0000-0000-00000000f00b"; // 타 플래너
+  const PPS = "00000000-0000-0000-0000-00000000f00c"; // 플래너 정산
+
+  /**
+   * 예약 → 계약 → 회차 2건(2000/8000) + 정산서 2건(우리·남) + 플래너 정산 1건.
+   * 회차는 **한 트랜잭션 안에서** 두 행을 넣는다 — 비율 합 판정이 커밋 시점이라
+   * 즉시 판정 트리거로는 첫 행에서 걸린다는 사실이 이 픽스처로 확인된다.
+   */
+  const payFixture = `
+    insert into public.vendors (id, name, category, status)
+      values ('${PV}', 'RLS정산업체', 'hall', 'active'),
+             ('${POV}', 'RLS정산타업체', 'hall', 'active');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${PV}', '${outsider}', 'owner'),
+             ('${PV}', '${vendorStaff}', 'staff'),
+             ('${POV}', '${adminUser}', 'owner');
+    insert into public.products (id, vendor_id, category, name, base_price_total)
+      values ('${PP}', '${PV}', 'hall', 'RLS정산상품', 10000000);
+    insert into public.bookings (id, couple_id, vendor_id, product_id, status, total_amount)
+      values ('${PB}', '${coupleId}', '${PV}', '${PP}', 'hold', 10000000);
+    insert into public.contracts (id, booking_id, status)
+      values ('${PC}', '${PB}', 'draft');
+    insert into public.payment_schedules
+      (id, contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+      values ('${PS1}', '${PC}', 1, 2000, 'on_contract', 0, 2000000),
+             ('${PS2}', '${PC}', 2, 8000, 'before_event', 30, 8000000);
+    insert into public.settlements
+      (id, vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount)
+      values ('${PSET}', '${PV}', '2026-09-01', '2026-09-30', 10000000, 500, 500000, 9500000),
+             ('${POSET}', '${POV}', '2026-09-01', '2026-09-30', 20000000, 800, 1600000, 18400000);
+    insert into public.planners (id, user_id, status)
+      values ('${PPL}', '${owner}', 'active'),
+             ('${POPL}', '${partner}', 'active');
+    insert into public.planner_settlements
+      (id, planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
+      values ('${PPS}', '${PPL}', '${PB}', 10000000, 300, 300000,
+              now() - interval '20 days', now() - interval '6 days');
+  `;
+
+  // ── 회차 비율 합 (커밋 시점 판정) ─────────────────────────────────────────
+  check(
+    "회차 두 건을 한 트랜잭션에 넣으면 통과한다 (합 10000bp)",
+    sql(`begin; ${payFixture} select count(*) from public.payment_schedules
+         where contract_id = '${PC}'; rollback;`) === "2",
+  );
+  check(
+    "비율 합이 10000bp 가 아니면 **커밋 시점에** 거절된다",
+    rejectedWith(/payment_schedules_ratio_sum|10000bp/, () =>
+      sql(`begin;
+        insert into public.vendors (id, name, category, status)
+          values ('${PV}', 'RLS정산업체', 'hall', 'active');
+        insert into public.products (id, vendor_id, category, name, base_price_total)
+          values ('${PP}', '${PV}', 'hall', 'RLS정산상품', 10000000);
+        insert into public.bookings (id, couple_id, vendor_id, product_id, status, total_amount)
+          values ('${PB}', '${coupleId}', '${PV}', '${PP}', 'hold', 10000000);
+        insert into public.contracts (id, booking_id, status) values ('${PC}', '${PB}', 'draft');
+        insert into public.payment_schedules
+          (contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+          values ('${PC}', 1, 2000, 'on_contract', 0, 2000000);
+        commit;`)),
+  );
+  check(
+    "회차가 0건인 계약은 통과한다 (스케줄 전 계약이 정상이다)",
+    sql(`begin;
+      insert into public.vendors (id, name, category, status)
+        values ('${PV}', 'RLS정산업체', 'hall', 'active');
+      insert into public.bookings (id, couple_id, vendor_id, status, total_amount)
+        values ('${PB}', '${coupleId}', '${PV}', 'hold', 10000000);
+      insert into public.contracts (id, booking_id, status) values ('${PC}', '${PB}', 'draft');
+      select count(*) from public.contracts where id = '${PC}';
+      rollback;`) === "1",
+  );
+  check(
+    "void 회차는 합에서 빠진다 (취소된 회차가 합을 깨지 않는다)",
+    sql(`begin; ${payFixture}
+      update public.payment_schedules set status = 'void' where id = '${PS2}';
+      insert into public.payment_schedules
+        (contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+        values ('${PC}', 3, 8000, 'before_event', 14, 8000000);
+      select count(*) from public.payment_schedules where contract_id = '${PC}';
+      rollback;`) === "3",
+  );
+  check(
+    "기준 사건과 오프셋의 짝이 어긋나면 거절한다",
+    rejectedWith(/payment_schedules_offset_shape/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payment_schedules
+          (contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+          values ('${PC}', 3, 1, 'on_contract', 5, 0);
+        rollback;`)),
+  );
+  check(
+    "같은 계약에 같은 순번은 하나뿐이다",
+    rejectedWith(/payment_schedules_contract_id_seq_key|duplicate key/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payment_schedules
+          (contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+          values ('${PC}', 1, 1, 'on_contract', 0, 0);
+        rollback;`)),
+  );
+
+  // ── 요율 스냅샷 (D-16 · D-17) ─────────────────────────────────────────────
+  check(
+    "요율 스냅샷 없이 계약을 확정할 수 없다",
+    rejectedWith(/bookings_rate_snapshot_required|스냅샷/, () =>
+      sql(`begin; ${payFixture}
+        update public.bookings set status = 'confirmed' where id = '${PB}';
+        rollback;`)),
+  );
+  check(
+    "요율을 박으면 확정할 수 있다 (플래너 미선택은 0)",
+    sql(`begin; ${payFixture}
+      update public.bookings
+        set applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB}';
+      with u as (update public.bookings set status = 'confirmed' where id = '${PB}' returning id)
+      select count(*) from u;
+      rollback;`) === "1",
+  );
+  check(
+    "한 번 박힌 스냅샷은 바꿀 수 없다 (요율 변경이 과거 거래에 소급되지 않는다)",
+    rejectedWith(/스냅샷은 바꿀 수 없습니다/, () =>
+      sql(`begin; ${payFixture}
+        update public.bookings set applied_fee_rate_bp = 500 where id = '${PB}';
+        update public.bookings set applied_fee_rate_bp = 800 where id = '${PB}';
+        rollback;`)),
+  );
+  check(
+    "요율 범위를 벗어난 값은 거절한다",
+    rejectedWith(/bookings_applied_fee_rate_range/, () =>
+      sql(`begin; ${payFixture}
+        update public.bookings set applied_fee_rate_bp = 10001 where id = '${PB}';
+        rollback;`)),
+  );
+
+  // ── 당사자는 자기 수수료율을 쓸 수 없다 (컬럼 수준 권한) ──────────────────
+  check(
+    "커플 소유자는 예약 상태를 바꿀 수 있다",
+    asUser(owner, `with u as (update public.bookings set status = 'cancelled'
+       where id = '${PB}' returning id) select count(*) from u;`, payFixture) === "1",
+  );
+  check(
+    "커플 소유자는 **요율 컬럼을 쓸 수 없다** (42501 — 정책이 아니라 컬럼 권한이 막는다)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(owner, `update public.bookings set applied_fee_rate_bp = 0 where id = '${PB}';`,
+        payFixture)),
+  );
+  check(
+    "업체 멤버도 요율 컬럼을 쓸 수 없다",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(outsider, `update public.bookings set applied_fee_rate_bp = 0 where id = '${PB}';`,
+        payFixture)),
+  );
+  check(
+    "총액도 당사자가 바꿀 수 없다 (돈은 서비스롤의 일이다)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(owner, `update public.bookings set total_amount = 1 where id = '${PB}';`, payFixture)),
+  );
+
+  // ── 회차 열람 ─────────────────────────────────────────────────────────────
+  check(
+    "커플 소유자는 결제 회차를 본다",
+    asUser(owner, `select count(*) from public.payment_schedules;`, payFixture) === "2",
+  );
+  check(
+    "업체 멤버도 결제 회차를 본다 (응대에 필요한 운영 정보다)",
+    asUser(vendorStaff, `select count(*) from public.payment_schedules;`, payFixture) === "2",
+  );
+  check(
+    "타 업체는 남의 회차를 못 본다",
+    asUser(adminUser, `select count(*) from public.payment_schedules;`, payFixture) === "0",
+  );
+  check(
+    "비로그인은 회차를 못 본다",
+    asAnon(`select count(*) from public.payment_schedules;`, payFixture) === "0",
+  );
+  check(
+    "회차는 아무도 쓸 수 없다 (정책 없음 = 서비스롤 전용)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.payment_schedules
+         (contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
+         values ('${PC}', 9, 1, 'on_contract', 0, 0);`, payFixture)),
+  );
+  check(
+    "회차 상태도 당사자가 바꿀 수 없다",
+    asUser(owner, `with u as (update public.payment_schedules set status = 'paid' returning id)
+       select count(*) from u;`, payFixture) === "0",
+  );
+
+  // ── 정산 (§3.9 — staff 차단) ──────────────────────────────────────────────
+  check(
+    "업체 대표는 자기 정산서를 본다",
+    asUser(outsider, `select count(*) from public.settlements;`, payFixture) === "1",
+  );
+  check(
+    "**staff 는 정산서를 못 본다** (S2-08 이 화면에서만 막던 것을 DB 로 내렸다)",
+    asUser(vendorStaff, `select count(*) from public.settlements;`, payFixture) === "0",
+  );
+  check(
+    "타 업체 대표는 남의 정산서만 본다 (격리)",
+    asUser(adminUser, `select id from public.settlements;`, payFixture) === POSET,
+  );
+  check(
+    "커플은 업체 정산서를 못 본다",
+    asUser(partner, `select count(*) from public.settlements;`, payFixture) === "0",
+  );
+  check(
+    "비로그인은 정산서를 못 본다",
+    asAnon(`select count(*) from public.settlements;`, payFixture) === "0",
+  );
+  check(
+    "staff 는 정산 명세도 못 본다 (상위 스코프를 그대로 따른다)",
+    asUser(vendorStaff, `select count(*) from public.settlement_items;`,
+      `${payFixture}
+       insert into public.settlement_items (settlement_id, booking_id, amount)
+         values ('${PSET}', '${PB}', 10000000);`) === "0",
+  );
+  check(
+    "대표는 정산 명세를 본다",
+    asUser(outsider, `select count(*) from public.settlement_items;`,
+      `${payFixture}
+       insert into public.settlement_items (settlement_id, booking_id, amount)
+         values ('${PSET}', '${PB}', 10000000);`) === "1",
+  );
+  check(
+    "정산액 정합이 깨지면 거절한다 (순액 = 총액 - 수수료)",
+    rejectedWith(/settlements_net_amount_shape/, () =>
+      sql(`begin;
+        insert into public.vendors (id, name, category, status)
+          values ('${PV}', 'RLS정산업체', 'hall', 'active');
+        insert into public.settlements
+          (vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount)
+          values ('${PV}', '2026-10-01', '2026-10-31', 10000000, 500, 500000, 9000000);
+        rollback;`)),
+  );
+  check(
+    "정산 요율은 bp 정수다 (numeric fee_rate 는 사라졌다)",
+    sql(`select count(*) from information_schema.columns
+         where table_name = 'settlements' and column_name = 'fee_rate';`) === "0",
+  );
+
+  // ── 플래너 정산 ───────────────────────────────────────────────────────────
+  check(
+    "플래너는 자기 정산만 본다",
+    asUser(owner, `select count(*) from public.planner_settlements;`, payFixture) === "1",
+  );
+  check(
+    "다른 플래너의 정산은 못 본다",
+    asUser(partner, `select count(*) from public.planner_settlements;`, payFixture) === "0",
+  );
+  check(
+    "업체는 플래너 정산을 못 본다 (남의 수입이다)",
+    asUser(outsider, `select count(*) from public.planner_settlements;`, payFixture) === "0",
+  );
+  check(
+    "비로그인은 플래너 정산을 못 본다",
+    asAnon(`select count(*) from public.planner_settlements;`, payFixture) === "0",
+  );
+  check(
+    "플래너도 자기 정산을 고칠 수 없다 (지급은 서비스롤의 일이다)",
+    asUser(owner, `with u as (update public.planner_settlements set status = 'paid' returning id)
+       select count(*) from u;`, payFixture) === "0",
+  );
+  check(
+    "유예가 지나지 않은 정산은 지급 대상이 될 수 없다",
+    rejectedWith(/planner_settlements_grace_not_elapsed|유예/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.planner_settlements
+          (planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at, status)
+          values ('${POPL}', '${PB}', 10000000, 300, 300000,
+                  now(), now() + interval '14 days', 'payable');
+        rollback;`)),
+  );
+  check(
+    "유예가 지난 정산은 지급 대상이 된다",
+    sql(`begin; ${payFixture}
+      with u as (update public.planner_settlements set status = 'payable'
+        where id = '${PPS}' returning id) select count(*) from u;
+      rollback;`) === "1",
+  );
+  check(
+    "한 계약에 같은 플래너 정산은 하나뿐이다",
+    rejectedWith(/planner_settlements_planner_id_booking_id_key|duplicate key/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.planner_settlements
+          (planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
+          values ('${PPL}', '${PB}', 1, 0, 0, now() - interval '20 days', now() - interval '6 days');
+        rollback;`)),
+  );
+  check(
+    "지급 시점이 발생 시점보다 앞설 수 없다",
+    rejectedWith(/planner_settlements_grace_order/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.planner_settlements
+          (planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
+          values ('${POPL}', '${PB}', 1, 0, 0, now(), now() - interval '1 day');
+        rollback;`)),
+  );
+
+  // ── 결제 · 웹훅 ───────────────────────────────────────────────────────────
+  check(
+    "회차당 성공 결제는 하나뿐이다",
+    rejectedWith(/uq_payments_schedule_paid|duplicate key/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payments
+          (booking_id, payment_schedule_id, purpose, amount, status)
+          values ('${PB}', '${PS1}', 'deposit', 2000000, 'paid'),
+                 ('${PB}', '${PS1}', 'deposit', 2000000, 'paid');
+        rollback;`)),
+  );
+  check(
+    "실패한 결제는 여러 번 있을 수 있다 (재시도가 정상이다)",
+    sql(`begin; ${payFixture}
+      insert into public.payments (booking_id, payment_schedule_id, purpose, amount, status)
+        values ('${PB}', '${PS1}', 'deposit', 2000000, 'failed'),
+               ('${PB}', '${PS1}', 'deposit', 2000000, 'failed');
+      select count(*) from public.payments where payment_schedule_id = '${PS1}';
+      rollback;`) === "2",
+  );
+  check(
+    "알 수 없는 결제 상태는 거절한다",
+    rejectedWith(/payments_status_values/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payments (booking_id, purpose, amount, status)
+          values ('${PB}', 'deposit', 1, 'PAID');
+        rollback;`)),
+  );
+  check(
+    "멤버십 결제에는 회차를 붙일 수 없다",
+    rejectedWith(/payments_schedule_purpose_chk/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payments (booking_id, payment_schedule_id, purpose, amount)
+          values ('${PB}', '${PS1}', 'membership', 1);
+        rollback;`)),
+  );
+  check(
+    "웹훅 원문에 식별정보 키를 담을 수 없다 (§7.3)",
+    rejectedWith(/payments_webhook_no_pii/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.payments (booking_id, purpose, amount, raw_webhook_json)
+          values ('${PB}', 'deposit', 1, '{"customerName": "홍길동"}'::jsonb);
+        rollback;`)),
+  );
+  check(
+    "정규화 스냅샷은 담을 수 있다",
+    sql(`begin; ${payFixture}
+      with i as (insert into public.payments (booking_id, purpose, amount, raw_webhook_json)
+        values ('${PB}', 'deposit', 1,
+          '{"provider":"toss","eventId":"evt_1","status":"DONE","amount":2000000}'::jsonb)
+        returning id) select count(*) from i;
+      rollback;`) === "1",
+  );
+  check(
+    "같은 웹훅 이벤트는 두 번 적재되지 않는다 (멱등의 지점)",
+    rejectedWith(/payment_webhook_events_provider_event_id_key|duplicate key/, () =>
+      sql(`begin;
+        insert into public.payment_webhook_events (provider, event_id, payload_digest)
+          values ('toss', 'evt_dup', repeat('a', 64)),
+                 ('toss', 'evt_dup', repeat('b', 64));
+        rollback;`)),
+  );
+  check(
+    "다른 결제사의 같은 이벤트 id 는 별개다",
+    sql(`begin;
+      insert into public.payment_webhook_events (provider, event_id, payload_digest)
+        values ('toss', 'evt_same', repeat('a', 64)),
+               ('other', 'evt_same', repeat('b', 64));
+      select count(*) from public.payment_webhook_events where event_id = 'evt_same';
+      rollback;`) === "2",
+  );
+  check(
+    "해시 형식이 아니면 거절한다 (원문 대신 해시를 남기므로 형식이 곧 증적이다)",
+    rejectedWith(/payment_webhook_events_digest_shape/, () =>
+      sql(`begin;
+        insert into public.payment_webhook_events (provider, event_id, payload_digest)
+          values ('toss', 'evt_bad', 'not-a-digest');
+        rollback;`)),
+  );
+  for (const [label, who] of [
+    ["업체 대표", outsider],
+    ["커플 소유자", owner],
+  ]) {
+    check(
+      `${who ? "" : ""}웹훅 원장은 ${label}도 못 본다 (정책 없음)`,
+      asUser(who, `select count(*) from public.payment_webhook_events;`,
+        `insert into public.payment_webhook_events (provider, event_id, payload_digest)
+           values ('toss', 'evt_hidden', repeat('c', 64));`) === "0",
+    );
+  }
+  check(
+    "비로그인도 웹훅 원장을 못 본다",
+    asAnon(`select count(*) from public.payment_webhook_events;`,
+      `insert into public.payment_webhook_events (provider, event_id, payload_digest)
+         values ('toss', 'evt_hidden2', repeat('d', 64));`) === "0",
+  );
+
+  // ── 코드 ↔ DB 정합 · 파라미터 ─────────────────────────────────────────────
+  const dbPaymentStatus = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.payments'::regclass and conname = 'payments_status_values';`,
+  );
+  const codePaymentStatus = readFileSync("lib/core/payment/payment.ts", "utf8")
+    .match(/export const PAYMENT_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
+    .match(/"([a-z_]+)"/g)
+    ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+  check(
+    "결제 상태 목록이 코드와 DB CHECK 에서 일치한다",
+    codePaymentStatus.length > 0 && codePaymentStatus.every((v) => dbPaymentStatus.includes(`'${v}'`)),
+    `code=${codePaymentStatus.join(",")}`,
+  );
+
+  const dbAnchors = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.payment_schedules'::regclass
+        and conname = 'payment_schedules_anchor_values';`,
+  );
+  const codeAnchors = readFileSync("lib/core/payment/payment.ts", "utf8")
+    .match(/export const DUE_ANCHORS = \[([\s\S]*?)\] as const;/)?.[1]
+    .match(/"([a-z_]+)"/g)
+    ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+  check(
+    "기한 기준 목록이 코드와 DB CHECK 에서 일치한다",
+    codeAnchors.length > 0 && codeAnchors.every((v) => dbAnchors.includes(`'${v}'`)),
+    `code=${codeAnchors.join(",")}`,
+  );
+
+  check(
+    "분할 비율은 코드가 아니라 app_settings 가 갖는다",
+    sql(`select count(*) from public.app_settings
+         where key = 'payment.split_ratios_bp' and value_json ? 'installments';`) === "1",
+  );
+  check(
+    "플래너 유예 일수도 app_settings 가 갖는다",
+    sql(`select count(*) from public.app_settings
+         where key = 'planner.payout_grace_days' and (value_json ->> 'days') ~ '^[0-9]+$';`) === "1",
+  );
+  check(
+    "수수료 기준(O-15)은 미결 자리로 남아 있다 — 코드가 정하지 않았다",
+    sql(`select value_json ->> 'status' from public.app_settings
+         where key = 'settlement.fee_basis';`) === "undecided",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

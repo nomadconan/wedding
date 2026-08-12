@@ -52,6 +52,13 @@ export type EntityType =
   // memo 에 토큰·이메일을 넣지 않는다.
   | "vendor_settings"
   | "vendor_invite"
+  // S5-01 잔여분. 결제·정산은 **상태 전이가 곧 분쟁의 근거**다(D-23).
+  // memo 에 카드·구매자 정보를 넣지 않는다 — 남길 사실은 "청구했다·받았다·환불했다·
+  // 지급 대상이 됐다" 라는 전이와 셀 수 있는 값(금액·회차)뿐이다(§7.3).
+  | "payment"
+  | "payment_schedule"
+  | "settlement"
+  | "planner_settlement"
   | "profile"
   | "data_deletion_request";
 
