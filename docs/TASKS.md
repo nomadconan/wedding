@@ -287,8 +287,8 @@
 
 | ID | 태스크 | 상태 | 선행 | 근거 |
 |---|---|---|---|---|
-| S5-01 | **마이그레이션 6차 — 요율·결제 스케줄** | [~] | T-03 | §3.8 `commission_rates`·`planner_fee_rates`, §3.4 `payment_schedules`·`planner_settlements`, `bookings` 스냅샷 컬럼 |
-| S5-02 | 요율 해석 엔진 (`lib/core/pricing`) | [x] | S5-01 | §3.8 해석 규칙 — 업체→카테고리→전역, bp 정수 |
+| S5-01 | **마이그레이션 6차 — 요율·결제 스케줄** | [x] | T-03 | §3.8 `commission_rates`·`planner_fee_rates`(0006) + §3.4 `payment_schedules`·`planner_settlements`·**`payment_webhook_events`**(신설)·`bookings` 스냅샷 2컬럼·`settlements.fee_rate_bp`·`payments.payment_schedule_id`(0028). 비율 합은 **커밋 시점 제약 트리거**, 요율 스냅샷은 **불변 트리거**, 요율 컬럼은 **컬럼 수준 권한**으로 당사자에게 닫았다. 도메인 계산은 `lib/core/payment/payment.ts`(48 테스트) |
+| S5-02 | 요율 해석 엔진 (`lib/core/pricing`) | [x] | S5-01 | §3.8 해석 규칙 — 업체→카테고리→전역, bp 정수. S5-01 의 `buildSettlementDraft`·`plannerEarning` 이 이 엔진의 `calculateSettlement` 를 그대로 쓴다 — 같은 계산을 두 벌 만들지 않는다 |
 | S5-03 | 요율 관리 콘솔 | [ ] | S5-02 | F-A-15 |
 | S5-04 | 표준계약 템플릿·발행 | [ ] | S4-12 | F-C-15, §7.7 — **조항은 플레이스홀더**. **완료 시 S2-08 '계약' 지표 연결** |
 | S5-05 | 3자 전자서명 | [ ] | S5-04 | F-C-15 |
@@ -298,13 +298,54 @@
 | S5-09 | **에스크로 예치·릴리즈** | [ ] | S5-06 | F-C-16 — `escrow_holds`·`POST /api/escrow/release`. **집행 로직은 O-03 대기**, 절차·기록만. **T-00c 신설** |
 | S5-10 | **업체 예약·계약 관리** | [ ] | S5-04, S4-07 | F-V-08 — `/vendor/bookings`·`PATCH /api/vendor/bookings/[id]`. **T-00c 신설** |
 
-> **S5-01 진행 상황 — 요율 구조만 끝났다(`[~]`)**
-> 마이그레이션 `20260808000600_commission_rates.sql` 로 **`commission_rates`·`planner_fee_rates`**
-> 두 테이블(열거 2, 겹침 EXCLUDE 2, RLS SELECT 2)과 `app_settings` 가변 파라미터 키 7개를
-> 만들었다. **남은 것은 결제 스케줄 쪽**이다 — `payment_schedules`·`planner_settlements`
-> 신규 2테이블, `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`,
-> `payments.payment_schedule_id`. 범위에서 뺀 것이 아니라 **아직 만들지 않은 것**이며
-> S5-06(분할 결제) 착수 전까지 별도 마이그레이션으로 추가한다.
+> **S5-01 완료 — 요율(0006) + 결제·정산(0028)**
+> 0006 이 요율 두 테이블을, **0028 이 나머지 전부**를 만들었다. 화면·결제 실행은 이 태스크가
+> 아니다(S5-06·S5-07) — 여기까지는 스키마·RLS·불변식·순수 함수다.
+>
+> **0028 이 정한 것과 근거**
+> · **비율 합 10000bp 는 DEFERRABLE 제약 트리거가 강제한다.** 회차는 한 트랜잭션 안에서
+>   행 단위로 들어오므로 즉시 판정 트리거는 첫 행(2000bp)에서 거절한다. CHECK 는 다른 행을
+>   못 보고, 합계 컬럼을 두면 그 컬럼이 두 번째 진실이 된다. 애플리케이션에만 두지 않은 이유 —
+>   회차를 만드는 경로가 앞으로 여럿이라(발행·재발행·운영 보정) 한 곳만 빠뜨리면 합이 99%인
+>   계약이 조용히 생기고, 그 계약은 잔금을 다 받아도 미납으로 남는다. 회차 0건은 통과시킨다.
+> · **기한은 '기준 사건 + 며칠' 로 분해했다**(`due_anchor`·`due_offset_days`). 자유 텍스트면
+>   배치가 기한을 계산할 수 없고, jsonb 면 DB 가 형태를 못 본다. 기준 사건별 오프셋 규칙은
+>   CHECK 가 강제한다(`on_contract`=0 · `before_event`≥1 · 사건 기준은 null).
+> · **회차 상태는 셋뿐이다**(`scheduled`·`paid`·`void`). '도래'·'연체' 는 `due_at` 과 시계로
+>   계산되는 값이라 저장하지 않는다 — 저장하면 배치가 늦은 만큼 화면이 거짓을 말한다.
+> · **요율 스냅샷은 고쳐지지 않는다.** 트리거가 (가) 한 번 채워진 값의 변경을 막고
+>   (나) `confirmed` 전이에 두 요율이 다 있기를 요구한다(§3.8 — 요율 없으면 확정을 막는다).
+>   **플래너 미선택은 `0`** 이고 `null` 은 "아직 스냅샷하지 않았다" 다.
+> · **당사자는 요율·금액 컬럼을 쓸 수 없다.** `bookings_update` 정책(0005)이 커플 소유자·업체
+>   멤버에게 UPDATE 를 열어 둔 상태라, 정책만으로는 **당사자가 자기 수수료율을 적을 수 있었다.**
+>   정책은 행을 가르고 컬럼을 가르지 않으므로 **컬럼 수준 권한**으로 좁혔다(`status` 만 허용).
+> · **`settlements.fee_rate`(numeric) → `fee_rate_bp`(정수).** 명세 §3.4 가 적고 있는 이름이
+>   `fee_rate_bp` 이며, 둘을 함께 두면 어느 쪽으로 계산했는지에 따라 정산액이 갈린다.
+>   정산 생성 경로가 아직 없어 데이터가 없는 지금이 바꿀 수 있는 마지막 시점이었다.
+> · **`settlements` 열람을 대표로 좁혔다.** S2-08 이 이미 "정산 금액은 업체 대표 계정만 볼 수
+>   있습니다" 를 화면에서 판정하고 있었는데 경계가 앱 코드였다. §3.9 문구("staff 는 가격·정산
+>   테이블 **UPDATE** 불가")보다 강한 선택이므로 **명세 보완을 함께 제안**했다(07 v2.3).
+> · **웹훅 원문을 보관하지 않는다.** PG 웹훅에는 카드·구매자 식별정보가 섞여 오고 §7.3 은 그것을
+>   남기지 말라고 한다. **정규화 스냅샷 + 원문 sha256** 으로 나눴다 — 원문 없이도 "우리가 받은
+>   것이 이것이었다" 를 증명할 수 있고 원문은 PG 사에 남아 있다. `payments.raw_webhook_json` 에는
+>   금지 키 CHECK 를 걸었다(최상위 키만 본다 — jsonb `?|` 의 한계이며 최종 책임은 적재 코드다).
+> · **멱등은 두 방향이다.** 나가는 요청은 `payments.idempotency_key`(구성 규칙은
+>   `paymentIdempotencyKey()` — **자동 재시도에서 열쇠를 바꾸지 않는다**), 들어오는 웹훅은
+>   `payment_webhook_events (provider, event_id)` 유니크. 판정을 코드가 먼저 조회해서 하면
+>   동시 수신에서 둘 다 통과하므로 **DB 유니크가 판정한다**(S4-08 과 같은 결론).
+>
+> **S5-01 산출** `20260808002800_payment_settlement.sql`(테이블 3 · 컬럼 4 · CHECK 20 ·
+> UNIQUE 4 · 함수 6 · 트리거 3 · 정책 6 · 컬럼 권한 1 · `app_settings` 3),
+> `lib/core/payment/payment.ts`(분할·기한·회차 상태·정산 초안·플래너 지급·멱등, 테스트 48),
+> `db:rls` +55 케이스.
+>
+> **쿠폰(D-27)은 만들지 않았다.** `coupons`·`coupon_issues`·`coupon_redemptions` 는
+> **명세 §3 에도 커버리지 표에도 행이 없다.** 없는 명세를 근거로 스키마를 지어내면 그 스키마가
+> 명세를 앞지른다(CLAUDE.md §7.5·§7.6). 07 §3.4 에 표를 먼저 넣고 태스크를 신설하는 것이
+> 순서다 — **최종 보고에 D-30 초안으로 제안**했다. 다만 "수수료를 할인 전·후 어느 기준으로
+> 떼는가"(O-15)는 쿠폰과 무관하게 이미 필요한 물음이라(`price_rules` 할인이 S2-04 에 있다)
+> `app_settings.settlement.fee_basis` **미결 자리**를 만들고 `feeBasisOf()` 가 값이 없으면
+> 실패하게 뒀다. 코드가 기본값을 고르면 미결정이 조용히 확정된다.
 >
 > **S5-02 산출** `lib/core/pricing/rates.ts`(`resolveRate`·`calculateSettlement`·
 > `calculatePlannerFee`), `order.ts`(`calculateOrderTotal`), `amount.ts`(미정 sentinel),
@@ -453,7 +494,7 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | ~~S4-01~~ (완료) | ~~`chat_rooms`, `chat_messages`, `qna_posts`, `qna_answers`~~ + **`chat_room_reads`**(참여자별 읽음 — 커플 둘·업체 여럿이라 메시지 한 컬럼에 안 담긴다) | 뷰 `chat_messages_visible`, ENUM `chat_sender_type`, 헬퍼 `is_active_vendor()`·`is_chat_room_member()`·`can_read_qna_post()` 등 7, 트리거 5, `entity_events` 열람 정책 4, Storage 버킷 4, `recordEvent()` 엔티티 타입 +4 |
 | ~~S4-02~~ (완료) | ~~`vendor_availability`~~(0007) · ~~`consultations`·`consultation_deposits`~~(0025, S4-07 과 함께) | ENUM 3, EXCLUDE 1(예약 구간 겹침), 트리거 2, 헬퍼 2 |
 | ~~S4-03~~ (완료) | ~~`entity_events`~~ (S2-01 에서 앞당겨 생성) | `notifications` +4컬럼, `audit_logs.resolution_basis`, `entity_events` 열람 정책 7, `is_operator()` |
-| S5-01 | ~~`commission_rates`~~, ~~`planner_fee_rates`~~ (완료), `payment_schedules`, `planner_settlements` | `bookings` 스냅샷 컬럼 2개, `settlements.fee_rate_bp`, `payments.payment_schedule_id` |
+| ~~S5-01~~ (완료) | ~~`commission_rates`, `planner_fee_rates`~~(0006) · ~~`payment_schedules`, `planner_settlements`~~ + **`payment_webhook_events`**(신설 — 웹훅은 "결제 1건 : 이벤트 여러 건" 이라 `payments` 에 담을 수 없다) | `bookings` 스냅샷 2컬럼 + 불변 트리거, `settlements.fee_rate_bp`(numeric `fee_rate` 대체) + 대표 전용 열람, `payments.payment_schedule_id`·상태 CHECK·웹훅 금지 키 CHECK, `bookings` UPDATE 를 `status` 컬럼으로 축소, `entity_events` 열람 정책 4 |
 | S6-01 | `planner_scopes` | — |
 
 **신규 테이블 17개**(S4-01 이 `chat_room_reads` 를 더해 16 → 17). 각 마이그레이션에는 RLS 정책을 같은 파일에 포함한다(§3.9, CLAUDE.md §5.5). `entity_events`는 **insert-only** — UPDATE·DELETE 정책을 부여하지 않는다. `chat_messages` 도 같은 이유로 **UPDATE·DELETE 권한을 회수**했다(수정·삭제 대신 회수 묘비).
@@ -470,7 +511,9 @@ T-03에서 66개 테이블을 만들었고, v2.0 신규 테이블은 아래와 �
 | `detect_rules` 시드 20종 | 근거 **조항 번호** 확정 후. 룰 구현체는 T-04에서 완료 | S7-01 |
 | 표준계약서 조항 문안 | O-03 법무 검수. **템플릿 구조·서명 플로우는 먼저 구현**(§7.7) | S5-04 |
 | 수수료 요율 **값** | O-02. **구조는 S5-01·S5-02에서 완성**되므로 값은 오픈 전까지만 정하면 된다 | S5-03 |
-| 결제 분할 비율·유예 기간·~~보증금액~~ | 운영 정책 결정. 전부 DB 파라미터라 미확정 상태로 개발 가능(§7.4). **보증금액·무료 취소 기한·확인 응답 기한은 `app_settings` 에 자리를 만들었다**(S4-07, 0025) — 값은 운영이 배포 없이 바꾼다 | S5-06, S6-05, ~~S4-08~~ |
+| **수수료 기준 — 할인 전·후**(O-15) | 할인 전 판매가에서 뗄지 할인 후 실수금에서 뗄지. **`app_settings.settlement.fee_basis` 에 미결 자리를 만들었고**(S5-01, 0028) 값이 없으면 정산 계산이 명시적으로 실패한다(`feeBasisOf()`). 쿠폰과 무관하게 `price_rules` 할인(S2-04)이 이미 있어 답이 필요하다 | S5-07 |
+| **쿠폰(D-27)** | `coupons`·`coupon_issues`·`coupon_redemptions` 가 **명세 §3 에도 이 표에도 없다.** 07 §3.4 에 표를 넣고 태스크를 신설하는 것이 순서다 — 스키마를 먼저 만들면 스키마가 명세를 앞지른다. **D-30 초안으로 제안했다**(리뷰 작성을 발급 조건으로 넣을 수 없게 CHECK · `borne_by(platform\|vendor)` · 수수료 기준은 O-15 파라미터 분리) | 미배정(신설 대상) |
+| ~~결제 분할 비율·유예 기간·보증금액~~ | **전부 `app_settings` 에 초기 운영값이 들어갔다** — 보증금·취소 기한·확인 기한(S4-07, 0025), **분할 회차 2000/8000bp 와 플래너 유예 14일**(S5-01, 0028). 값은 운영이 배포 없이 바꾸며 코드에는 없다(§7.4) | ~~S5-06, S6-05, S4-08~~ |
 | 에스크로 집행 로직 | O-03 법무 결론. 컬럼·훅만 유지 | S5-06 |
 | ~~Storage 버킷 생성~~ **(완료 · S4-01)** | ~~§3.10. `chat-attachments` 포함~~ — 6종이 모두 섰다. `vendor-media`(공개, 0009) · `vendor-documents`(0008) · `chat-attachments`·`contracts-raw`·`reports`·`contracts-signed`(0021, 전부 비공개). 비공개 5종은 `storage.objects` 에 정책이 없어 **서명 URL 전용**이다 | ~~S4-01~~ |
 | `(dev)` 라우트 그룹 차단 | 배포 전 미들웨어·플래그 처리 | S8-05 |
@@ -643,16 +686,17 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | quote_items | 3.4 | T-03 | 완료 |
 | **consultations** | 3.4 | S4-02 / S4-07(0025) | 완료 |
 | **consultation_deposits** | 3.4 | S4-02 / S4-07(0025) | 완료 |
-| bookings | 3.4 | T-03 / 스냅샷 컬럼 2개는 S5-01 (잔여) | 진행중 |
+| bookings | 3.4 | T-03 / 스냅샷 컬럼 2개 + 불변 트리거 + 컬럼 권한은 **S5-01**(0028) | 완료 |
 | contracts | 3.4 | T-03 | 완료 |
 | contract_signatures | 3.4 | T-03 | 완료 |
-| **payment_schedules** | 3.4 | S5-01 (잔여) | 미착수 |
-| payments | 3.4 | T-03 / `payment_schedule_id` 는 S5-01 (잔여) | 진행중 |
+| **payment_schedules** | 3.4 | **S5-01**(0028) | 완료 (비율 합은 커밋 시점 제약 트리거) |
+| payments | 3.4 | T-03 / `payment_schedule_id`·상태 CHECK·웹훅 금지 키 CHECK 는 **S5-01**(0028) | 완료 |
 | escrow_holds | 3.4 | T-03 | 완료 |
 | refunds | 3.4 | T-03 | 완료 |
-| settlements | 3.4 | T-03 / `fee_rate_bp` 는 S5-01 (잔여) | 진행중 |
-| settlement_items | 3.4 | T-03 | 완료 |
-| **planner_settlements** | 3.4 | S5-01 (잔여) | 미착수 |
+| settlements | 3.4 | T-03 / `fee_rate_bp`(numeric `fee_rate` 대체)·순액 정합 CHECK·**대표 전용 열람**은 **S5-01**(0028) | 완료 |
+| settlement_items | 3.4 | T-03 / 열람은 상위 `settlements` 스코프를 따른다(S5-01 에서 대표 전용이 됐다) | 완료 |
+| **payment_webhook_events** | **3.4 신설** | **S5-01**(0028) | 완료 — 명세에 없던 표다. 웹훅은 "결제 1건 : 이벤트 여러 건" 이라 `payments` 에 담을 수 없다. **07 v2.3 에 §3.4 행을 더했다** |
+| **planner_settlements** | 3.4 | **S5-01**(0028) | 완료 (유예 경계는 트리거가 막는다) |
 | disputes | 3.4 | T-03 | 완료 |
 | documents | 3.5 | T-03 | 완료 |
 | document_analyses | 3.5 | T-03 | 완료 |
@@ -781,7 +825,7 @@ postgres_changes 는 바뀐 행을 통째로 보내며 **뷰를 거치지 않는
 | sla-escalation (Cron, 1시간) | 배치 | S4-13 → **S4-12 에서 구현** | 완료(로직) — `lib/notify/sla.ts` + `POST /api/jobs/sla-escalation`. 문의 미응답(`inquiry_targets.sla_deadline`)과 채팅 미응답(`chat_rooms.awaiting_vendor_since`)을 함께 훑고 **만료 처리도 같은 배치**가 한다(만료는 화면을 열어야 반영되면 안 된다). 누적 발송을 막으려 `dedupe_key` 로 한 번만 보낸다. **실행 등록(Cron·`job_runs`·경보)은 S8-13** — `dday-notifications` 와 같은 규칙 |
 | consultation-confirm-request (Cron, 1시간) | 배치 | S4-09 | 완료(로직) — `lib/consultation/batch.ts` + `POST /api/jobs/consultation-confirm-request`. **실행 등록은 S8-13** |
 | consultation-resolve (Cron, 1시간) | 배치 | S4-09 | 완료(로직) — 같은 파일 + `POST /api/jobs/consultation-resolve`. **실행 등록은 S8-13** |
-| planner-payout-due (Cron, 매일) | 배치 | S6-05 | 미착수 |
+| planner-payout-due (Cron, 매일) | 배치 | S6-05 | 미착수 (표·유예 경계 트리거·판정 함수는 **S5-01** 이 세웠다 — 배치는 `earned` → `payable` 전환만 하면 되고, 일찍 전환하는 것은 DB 가 막는다) |
 | wishlist-price-watch (Cron, 매일) | 배치 | S3-06 | 미착수 — **S4-13 알림 인프라 대기**. 화면은 볼 때 계산해 보여주고 있다 |
 
 > **배치 실행 인프라**(Cron 등록·`job_runs` 기록·실패 경보)는 **S8-13**(모니터링·장애 대응)이 소유한다.

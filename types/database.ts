@@ -273,6 +273,8 @@ export type Database = {
       }
       bookings: {
         Row: {
+          applied_fee_rate_bp: number | null
+          applied_planner_fee_rate_bp: number | null
           couple_id: string
           created_at: string
           deposit_amount: number
@@ -285,6 +287,8 @@ export type Database = {
           vendor_id: string
         }
         Insert: {
+          applied_fee_rate_bp?: number | null
+          applied_planner_fee_rate_bp?: number | null
           couple_id: string
           created_at?: string
           deposit_amount?: number
@@ -297,6 +301,8 @@ export type Database = {
           vendor_id: string
         }
         Update: {
+          applied_fee_rate_bp?: number | null
+          applied_planner_fee_rate_bp?: number | null
           couple_id?: string
           created_at?: string
           deposit_amount?: number
@@ -2151,6 +2157,121 @@ export type Database = {
           },
         ]
       }
+      payment_schedules: {
+        Row: {
+          amount: number
+          contract_id: string
+          created_at: string
+          due_anchor: string
+          due_at: string | null
+          due_offset_days: number | null
+          id: string
+          paid_at: string | null
+          ratio_bp: number
+          seq: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          contract_id: string
+          created_at?: string
+          due_anchor: string
+          due_at?: string | null
+          due_offset_days?: number | null
+          id?: string
+          paid_at?: string | null
+          ratio_bp: number
+          seq: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          contract_id?: string
+          created_at?: string
+          due_anchor?: string
+          due_at?: string | null
+          due_offset_days?: number | null
+          id?: string
+          paid_at?: string | null
+          ratio_bp?: number
+          seq?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_schedules_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_webhook_events: {
+        Row: {
+          attempt_count: number
+          created_at: string
+          event_id: string
+          event_type: string | null
+          id: string
+          last_error: string | null
+          payload_digest: string
+          payment_id: string | null
+          payment_key: string | null
+          processed_at: string | null
+          provider: string
+          received_at: string
+          signature_ok: boolean | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          created_at?: string
+          event_id: string
+          event_type?: string | null
+          id?: string
+          last_error?: string | null
+          payload_digest: string
+          payment_id?: string | null
+          payment_key?: string | null
+          processed_at?: string | null
+          provider: string
+          received_at?: string
+          signature_ok?: boolean | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          created_at?: string
+          event_id?: string
+          event_type?: string | null
+          id?: string
+          last_error?: string | null
+          payload_digest?: string
+          payment_id?: string | null
+          payment_key?: string | null
+          processed_at?: string | null
+          provider?: string
+          received_at?: string
+          signature_ok?: boolean | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_webhook_events_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payments: {
         Row: {
           amount: number
@@ -2159,6 +2280,7 @@ export type Database = {
           id: string
           idempotency_key: string | null
           membership_id: string | null
+          payment_schedule_id: string | null
           purpose: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json: Json | null
           status: string
@@ -2172,6 +2294,7 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           membership_id?: string | null
+          payment_schedule_id?: string | null
           purpose: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json?: Json | null
           status?: string
@@ -2185,6 +2308,7 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           membership_id?: string | null
+          payment_schedule_id?: string | null
           purpose?: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json?: Json | null
           status?: string
@@ -2204,6 +2328,13 @@ export type Database = {
             columns: ["membership_id"]
             isOneToOne: false
             referencedRelation: "memberships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_payment_schedule_id_fkey"
+            columns: ["payment_schedule_id"]
+            isOneToOne: false
+            referencedRelation: "payment_schedules"
             referencedColumns: ["id"]
           },
         ]
@@ -2377,6 +2508,66 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
+      }
+      planner_settlements: {
+        Row: {
+          booking_id: string
+          created_at: string
+          earned_at: string
+          fee_amount: number
+          fee_rate_bp: number
+          gross_amount: number
+          id: string
+          paid_at: string | null
+          payable_at: string
+          planner_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          booking_id: string
+          created_at?: string
+          earned_at: string
+          fee_amount: number
+          fee_rate_bp: number
+          gross_amount: number
+          id?: string
+          paid_at?: string | null
+          payable_at: string
+          planner_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          booking_id?: string
+          created_at?: string
+          earned_at?: string
+          fee_amount?: number
+          fee_rate_bp?: number
+          gross_amount?: number
+          id?: string
+          paid_at?: string | null
+          payable_at?: string
+          planner_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "planner_settlements_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "planner_settlements_planner_id_fkey"
+            columns: ["planner_id"]
+            isOneToOne: false
+            referencedRelation: "planners"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       planners: {
         Row: {
@@ -3215,7 +3406,7 @@ export type Database = {
         Row: {
           created_at: string
           fee_amount: number
-          fee_rate: number
+          fee_rate_bp: number
           gross_amount: number
           id: string
           net_amount: number
@@ -3228,7 +3419,7 @@ export type Database = {
         Insert: {
           created_at?: string
           fee_amount?: number
-          fee_rate: number
+          fee_rate_bp?: number
           gross_amount?: number
           id?: string
           net_amount?: number
@@ -3241,7 +3432,7 @@ export type Database = {
         Update: {
           created_at?: string
           fee_amount?: number
-          fee_rate?: number
+          fee_rate_bp?: number
           gross_amount?: number
           id?: string
           net_amount?: number
@@ -4017,6 +4208,8 @@ export type Database = {
     }
     Functions: {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
+      booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
+      booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }
       can_read_qna_post: { Args: { p_post_id: string }; Returns: boolean }
       cart_active_limit: { Args: never; Returns: number }
       cart_couple_id: { Args: { p_cart_id: string }; Returns: string }
@@ -4031,6 +4224,7 @@ export type Database = {
         Args: { p_consultation_id: string }
         Returns: string
       }
+      contract_booking_id: { Args: { p_contract_id: string }; Returns: string }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean
