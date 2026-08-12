@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { CartActions } from "@/components/domain/CartActions";
+import type { CartChoice } from "@/lib/core/cart/multi-cart";
 import { bpToPercentText } from "@/lib/core/pricing/dynamic";
 import { NO_INDEX_BASELINE_NOTE } from "@/lib/core/pricing/price-index";
 import { PriceDisplay, type PriceAddOns } from "@/components/domain/PriceDisplay";
@@ -26,8 +27,10 @@ import type { ExploreRow } from "@/lib/explore/query";
  */
 export type VendorCardProps = {
   row: ExploreRow;
-  /** 이미 장바구니에 담긴 상품인지. 비로그인이면 항상 false 다. */
+  /** 어느 장바구니에나 담겼는지. 비로그인이면 항상 false 다. */
   inCart: boolean;
+  /** 담을 수 있는 장바구니(IDEA-01). 둘 이상이면 카드에서 고른다. */
+  carts?: CartChoice[];
   /** 이미 찜한 상품인지. */
   inWishlist: boolean;
   /** 담기 버튼의 동작. 로그인 전이면 로그인으로 보낸다. */
@@ -59,6 +62,7 @@ const AVAILABILITY_TONE: Record<AvailabilityState["kind"], string> = {
 export function VendorCard({
   row,
   inCart,
+  carts = [],
   inWishlist,
   signedIn,
   showAvailability,
@@ -163,6 +167,7 @@ export function VendorCard({
             productId={row.productId}
             vendorId={row.vendorId}
             inCart={inCart}
+            carts={carts}
             inWishlist={inWishlist}
             signedIn={signedIn}
             next={`/explore/${row.vendorId}`}

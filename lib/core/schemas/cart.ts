@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CART_NAME_MAX_LENGTH, isValidCartName, normalizeCartName } from "../cart/multi-cart";
 import { AMOUNT_UNKNOWN, isUnknownAmount, type Amount } from "../pricing/amount";
 
 /**
@@ -24,12 +25,37 @@ import { AMOUNT_UNKNOWN, isUnknownAmount, type Amount } from "../pricing/amount"
  * `POST /api/cart` 하나에 동작을 실어 보낸다. §4.2 의 API 표면(`GET/POST/DELETE`)을
  * 늘리지 않기 위해서다 — S2-02 가 미디어 변경을 프로필 PUT 에 함께 실은 것과 같은 방식이다.
  */
+/**
+ * 이름 입력.
+ *
+ * **공백만 적은 이름은 null 로 접는다**(`normalizeCartName`) — DB 도 빈 문자열을 받지
+ * 않는다(`carts_name_chk`). 길이 상한은 `lib/core/cart/multi-cart.ts` 가 갖고 그 값이
+ * DB CHECK 와 같은지는 `db:rls` 가 본다.
+ */
+const CartNameSchema = z
+  .union([z.string(), z.null()])
+  .transform((value) => normalizeCartName(value))
+  .refine((value) => value === null || isValidCartName(value), {
+    message: `장바구니 이름은 ${CART_NAME_MAX_LENGTH}자까지 쓸 수 있어요.`,
+  });
+
+/**
+ * **어느 장바구니에 담을지.**
+ *
+ * 없으면 서버가 **가장 최근에 쓴 활성 장바구니**를 고르고, 그것도 없으면 만든다.
+ * 필수로 만들지 않는 이유 — 장바구니가 하나뿐인 사람에게 매번 고르라고 물으면
+ * 담기가 두 번의 동작이 된다. 둘 이상일 때 고르게 하는 것은 **화면의 일**이다.
+ * 어느 쪽이든 남의 장바구니 id 를 적으면 RLS 가 막는다(경계는 DB 다).
+ */
+const CartIdSchema = z.string().uuid("장바구니를 찾을 수 없습니다.");
+
 export const CartMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("add"),
     productId: z.string().uuid("상품을 찾을 수 없습니다."),
     /** 선택한 옵션. 같은 상품이라도 옵션이 다르면 별개 항목이다(S3-04). */
     options: z.record(z.unknown()).default({}),
+    cartId: CartIdSchema.optional(),
   }),
   z.object({
     action: z.literal("set_planner"),
@@ -45,6 +71,45 @@ export const CartMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("move_from_wishlist"),
     wishlistId: z.string().uuid(),
+    cartId: CartIdSchema.optional(),
+  }),
+
+  // ── 장바구니 자체를 다루는 동작 (IDEA-01) ──────────────────────────────────
+  /** 새 장바구니. 상한은 DB 가 강제하고 API 는 같은 값을 읽어 미리 답한다(0027). */
+  z.object({
+    action: z.literal("create_cart"),
+    name: CartNameSchema.optional().default(null),
+  }),
+  z.object({
+    action: z.literal("rename_cart"),
+    cartId: CartIdSchema,
+    /** null 을 보내면 이름을 떼고 순번으로 부른다. */
+    name: CartNameSchema,
+  }),
+  /**
+   * 치우기. **행을 지우지 않고 `abandoned` 로 옮긴다** — 하드 삭제는 증적
+   * (`entity_events`)이 가리킬 행을 없애 커플이 자기 활동 기록을 못 읽게 만든다(0027).
+   */
+  z.object({
+    action: z.literal("discard_cart"),
+    cartId: CartIdSchema,
+  }),
+  /** 복제. "한 항목만 바꿔 비교하기" 동선의 출발점이다. */
+  z.object({
+    action: z.literal("duplicate_cart"),
+    cartId: CartIdSchema,
+  }),
+  /** 항목을 다른 장바구니로 옮긴다(원본에서 사라진다). */
+  z.object({
+    action: z.literal("move_item"),
+    itemId: z.string().uuid(),
+    toCartId: CartIdSchema,
+  }),
+  /** 항목을 다른 장바구니에도 담는다(원본에 남는다). */
+  z.object({
+    action: z.literal("copy_item"),
+    itemId: z.string().uuid(),
+    toCartId: CartIdSchema,
   }),
 ]);
 
