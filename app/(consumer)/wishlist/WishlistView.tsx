@@ -11,6 +11,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { WishlistItemView } from "@/lib/cart/wishlist";
 import {
+  CART_CHOOSE_TARGET_LABEL,
+  type CartChoice,
+} from "@/lib/core/cart/multi-cart";
+import {
   COUPLE_SYNC_NOTICE,
   PRICE_CHANGE_LABEL,
   UNAVAILABLE_ITEM_NOTE,
@@ -34,15 +38,22 @@ import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/v
 export function WishlistView({
   items,
   unavailableCount,
+  carts,
 }: {
   items: WishlistItemView[];
   unavailableCount: number;
+  /**
+   * 담을 수 있는 장바구니(IDEA-01). **둘 이상이면 어디로 보낼지 고르는 단계가 생긴다** —
+   * 서버가 임의로 고르면 방금 만든 비교용 장바구니가 아니라 엉뚱한 곳에 들어간다.
+   * 하나뿐이면 묻지 않는다(고를 것이 없다).
+   */
+  carts: CartChoice[];
 }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function move(item: WishlistItemView) {
+  async function move(item: WishlistItemView, cartId?: string) {
     setPending(item.id);
     setError(null);
 
@@ -50,7 +61,13 @@ export function WishlistView({
       const response = await fetch("/api/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "move_from_wishlist", wishlistId: item.id }),
+        body: JSON.stringify({
+          action: "move_from_wishlist",
+          wishlistId: item.id,
+          // 지정하지 않으면 서버가 가장 최근에 쓴 장바구니로 보낸다. 고를 것이 하나뿐일
+          // 때 묻지 않기 위한 길이다.
+          ...(cartId === undefined ? {} : { cartId }),
+        }),
       });
       const payload = await response.json();
 
@@ -199,7 +216,9 @@ export function WishlistView({
               )}
 
               <div className="flex gap-2">
-                {!item.vendorOnly && !unavailable ? (
+                {/* 장바구니가 둘 이상이면 **어디로 보낼지 고른다**(IDEA-01). 하나뿐이면
+                    묻지 않는다 — 고를 것이 없는데 묻는 것은 단계만 늘리는 일이다. */}
+                {!item.vendorOnly && !unavailable && carts.length <= 1 ? (
                   <Button
                     type="button"
                     size="sm"
@@ -221,6 +240,33 @@ export function WishlistView({
                   빼기
                 </Button>
               </div>
+
+              {/* 여러 장바구니 — 어디로 보낼지 고른다. 접어 두는 이유는 찜 목록이
+                  카드의 연속이라, 항목마다 버튼 다섯을 펼치면 목록이 읽히지 않는다. */}
+              {!item.vendorOnly && !unavailable && carts.length > 1 ? (
+                <details className="rounded-md border border-border px-3 py-2" data-testid="move-to-cart-choose">
+                  <summary className="cursor-pointer text-caption font-medium text-foreground">
+                    {CART_CHOOSE_TARGET_LABEL}
+                  </summary>
+                  <div className="space-y-1.5 pt-2">
+                    {carts.map((cart) => (
+                      <Button
+                        key={cart.cartId}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start"
+                        disabled={pending !== null}
+                        onClick={() => move(item, cart.cartId)}
+                        data-testid="move-to-cart"
+                        data-cart-id={cart.cartId}
+                      >
+                        {cart.seq}. {cart.label}
+                      </Button>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </CardContent>
           </Card>
         );

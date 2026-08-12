@@ -369,10 +369,52 @@ check(
      values ('${CART}', '${V}', '${P1}', '{"a":9}'::jsonb, '${owner}', 10000000) returning id)
      select count(*) from i;`, cartFixture) === "1",
 );
+// =============================================================================
+// 여러 장바구니 (IDEA-01 / S3-12 · 0027)
+// -----------------------------------------------------------------------------
+// 0016 의 "커플당 활성 1건" 부분 유니크가 풀렸다. 그 자리를 **트리거 + 순번 유니크**가
+// 대신하므로, 상한이 실제로 DB 에서 서는지·순번이 빈 자리를 채우는지를 여기서 본다.
+// API 카운트는 배우자의 동시 요청을 막을 수 없어 보조 수단일 뿐이다(0027 근거 1).
+// =============================================================================
+const cartLimit = Number(
+  sql(`select value_json ->> 'max' from public.app_settings where key = 'cart.max_active';`) || "0",
+);
+
+check("활성 장바구니 상한은 코드가 아니라 app_settings 가 갖는다", cartLimit >= 1, `max=${cartLimit}`);
+
+/** 픽스처의 1개에 더해 상한까지 채운다. */
+const fillToLimit = `${cartFixture}
+  insert into public.carts (couple_id, status)
+    select '${coupleId}', 'active' from generate_series(2, ${cartLimit});
+`;
+
 check(
-  "활성 장바구니는 커플당 하나다",
-  rejectedWith(/uq_carts_active_per_couple/, () =>
+  `활성 장바구니는 상한(${cartLimit})까지 만들 수 있다`,
+  asUser(owner, `select count(*) from public.carts where status = 'active';`, fillToLimit) ===
+    String(cartLimit),
+);
+check(
+  "상한을 넘기면 DB 가 거절한다 (API 카운트가 아니라 트리거)",
+  rejectedWith(/최대/, () =>
     asUser(owner, `insert into public.carts (couple_id, status) values ('${coupleId}', 'active');`,
+      fillToLimit)),
+);
+check(
+  "치우면 자리가 생긴다 (abandoned 는 상한에서 빠진다)",
+  asUser(owner, `update public.carts set status = 'abandoned' where seq = 2 and status = 'active';
+     with i as (insert into public.carts (couple_id, status) values ('${coupleId}', 'active') returning seq)
+     select count(*) from i;`, fillToLimit) === "1",
+);
+check(
+  "순번은 빈 자리를 채운다 (단조 증가가 아니다)",
+  asUser(owner, `update public.carts set status = 'abandoned' where seq = 2 and status = 'active';
+     with i as (insert into public.carts (couple_id, status) values ('${coupleId}', 'active') returning seq)
+     select seq from i;`, fillToLimit) === "2",
+);
+check(
+  "활성 장바구니끼리 순번이 겹치지 않는다",
+  rejectedWith(/uq_carts_couple_seq/, () =>
+    asUser(owner, `insert into public.carts (couple_id, status, seq) values ('${coupleId}', 'active', 1);`,
       cartFixture)),
 );
 check(
@@ -380,6 +422,139 @@ check(
   asUser(owner, `with i as (
      insert into public.carts (couple_id, status) values ('${coupleId}', 'abandoned') returning id)
      select count(*) from i;`, cartFixture) === "1",
+);
+
+// ── 이름 ────────────────────────────────────────────────────────────────────
+// 이름 없음의 표현은 null 하나다. 빈 문자열이 통과하면 화면·API 가 두 경우를 따로
+// 다뤄야 하고 언젠가 한쪽을 빠뜨린다(0027 근거 4).
+check(
+  "장바구니 이름을 붙일 수 있다",
+  asUser(owner, `with u as (update public.carts set name = '가성비안' where id = '${CART}' returning id)
+     select count(*) from u;`, cartFixture) === "1",
+);
+check(
+  "같은 이름을 두 장바구니에 붙일 수 있다 (구분자는 순번이다)",
+  asUser(owner, `update public.carts set name = '부모님추천' where id = '${CART}';
+     with i as (insert into public.carts (couple_id, status, name)
+       values ('${coupleId}', 'active', '부모님추천') returning id)
+     select count(*) from i;`, cartFixture) === "1",
+);
+for (const [label, value] of [
+  ["빈 이름", "''"],
+  ["공백만 있는 이름", "'   '"],
+  ["앞뒤 공백이 붙은 이름", "' 가성비안'"],
+  ["상한을 넘는 이름", `'${"가".repeat(21)}'`],
+]) {
+  check(
+    `${label}은 CHECK 가 막는다`,
+    rejectedWith(/carts_name_chk/, () =>
+      asUser(owner, `update public.carts set name = ${value} where id = '${CART}';`, cartFixture)),
+  );
+}
+
+// 이름 길이는 **스키마 제약**이라 DB CHECK 와 코드가 같은 값을 알아야 한다.
+// 0023 이 알림 토픽에서 겪은 일(한쪽만 늘려 조용히 실패)을 되풀이하지 않기 위한 검사다.
+const dbNameCheck = sql(
+  `select pg_get_constraintdef(oid) from pg_constraint
+    where conrelid = 'public.carts'::regclass and conname = 'carts_name_chk';`,
+);
+const codeNameMax = readFileSync("lib/core/cart/multi-cart.ts", "utf8").match(
+  /export const CART_NAME_MAX_LENGTH = (\d+);/,
+)?.[1];
+
+check(
+  "장바구니 이름 길이 상한이 코드와 DB CHECK 에서 일치한다",
+  codeNameMax !== undefined && dbNameCheck.includes(codeNameMax),
+  `code=${codeNameMax ?? "(없음)"}`,
+);
+
+check(
+  "채움 판정 기준도 코드가 아니라 app_settings 가 갖는다",
+  sql(`select count(*) from public.app_settings where key = 'cart.core_categories';`) === "1",
+);
+check(
+  "장바구니 파라미터는 소비자에게 보이지 않는다 (정책 없음 = 기본 거부)",
+  asUser(owner, `select count(*) from public.app_settings where key like 'cart.%';`) === "0",
+);
+
+// ── 항목 이동 ───────────────────────────────────────────────────────────────
+const OTHER_COUPLE = "00000000-0000-0000-0000-00000000c006";
+const OTHER_CART = "00000000-0000-0000-0000-00000000c007";
+const SECOND_CART = "00000000-0000-0000-0000-00000000c008";
+const THIRD_CART = "00000000-0000-0000-0000-00000000c009";
+
+/** 남의 커플·장바구니를 하나 붙인다. 항목을 그쪽으로 밀어 넣을 수 없어야 한다. */
+const foreignCartFixture = `${cartFixture}
+  insert into public.couples (id, owner_id, stage)
+    values ('${OTHER_COUPLE}', '${outsider}', 'onboarding');
+  insert into public.carts (id, couple_id, status)
+    values ('${OTHER_CART}', '${OTHER_COUPLE}', 'active');
+`;
+
+check(
+  "항목을 우리 다른 장바구니로 옮길 수 있다",
+  asUser(owner, `insert into public.carts (id, couple_id, status)
+       values ('${SECOND_CART}', '${coupleId}', 'active');
+     with u as (update public.cart_items set cart_id = '${SECOND_CART}' returning id)
+     select count(*) from u;`, cartFixture) === "1",
+);
+check(
+  "남의 장바구니로는 옮길 수 없다 (WITH CHECK)",
+  rejectedWith(/row-level security/i, () =>
+    asUser(owner, `update public.cart_items set cart_id = '${OTHER_CART}';`, foreignCartFixture)),
+);
+check(
+  "같은 상품·같은 옵션은 옮긴 뒤에도 한 장바구니에 하나뿐이다",
+  rejectedWith(/uq_cart_items_product_options/, () =>
+    asUser(owner, `insert into public.carts (id, couple_id, status)
+         values ('${THIRD_CART}', '${coupleId}', 'active');
+       insert into public.cart_items
+         (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+         values ('${THIRD_CART}', '${V}', '${P1}', '{"a":1,"b":2}'::jsonb, '${owner}', 10000000);
+       update public.cart_items set cart_id = '${THIRD_CART}' where cart_id = '${CART}';`,
+      cartFixture)),
+);
+
+// ── 부모 만지기 ─────────────────────────────────────────────────────────────
+// '지금 쓰는 장바구니' 를 updated_at 최신으로 정하므로, 항목만 바뀌고 부모 시각이
+// 멈춰 있으면 방금 담은 장바구니가 가장 오래된 것으로 밀린다(0027 근거 5).
+check(
+  "항목을 담으면 부모 장바구니의 updated_at 이 올라간다",
+  sql(`begin;
+    ${cartFixture}
+    update public.carts set updated_at = now() - interval '1 hour' where id = '${CART}';
+    insert into public.cart_items (cart_id, vendor_id, product_id, options_json, added_by, price_at_add)
+      values ('${CART}', '${V}', '${P2}', '{}'::jsonb, '${owner}', 20000000);
+    select updated_at > now() - interval '1 minute' from public.carts where id = '${CART}';
+    rollback;`) === "t",
+);
+check(
+  "항목을 빼도 부모 장바구니의 updated_at 이 올라간다",
+  sql(`begin;
+    ${cartFixture}
+    update public.carts set updated_at = now() - interval '1 hour' where id = '${CART}';
+    delete from public.cart_items where cart_id = '${CART}';
+    select updated_at > now() - interval '1 minute' from public.carts where id = '${CART}';
+    rollback;`) === "t",
+);
+
+// ── 플래너 ──────────────────────────────────────────────────────────────────
+// 읽기는 주고 쓰기는 주지 않는다는 원칙(0016)이 새 동작에도 그대로 적용되는지 본다.
+check(
+  "플래너는 장바구니를 만들 수 없다",
+  rejectedWith(/row-level security/i, () =>
+    asUser(plannerUser, `insert into public.carts (couple_id, status) values ('${coupleId}', 'active');`,
+      plannerFixture)),
+);
+check(
+  "플래너는 장바구니 이름을 바꿀 수 없다",
+  asUser(plannerUser, `with u as (update public.carts set name = '플래너안' returning id)
+     select count(*) from u;`, plannerFixture) === "0",
+);
+check(
+  "플래너는 장바구니를 치울 수 없다",
+  asUser(plannerUser, `with u as (update public.carts set status = 'abandoned' returning id)
+     select count(*) from u;`, plannerFixture) === "0",
 );
 check(
   "같은 대상을 두 번 찜할 수 없다",

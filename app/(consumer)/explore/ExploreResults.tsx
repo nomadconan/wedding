@@ -8,6 +8,7 @@ import {
   LIST_PRICE_NOTICE,
   type ExploreFilterKey,
 } from "@/lib/core/schemas/explore";
+import { choicesFor, loadCartTargets } from "@/lib/cart/loader";
 import { findMyCouple } from "@/lib/couple/membership";
 import {
   AVAILABILITY_SCAN_LIMIT,
@@ -16,6 +17,7 @@ import {
   toFilterInput,
 } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 
 import { VendorCard } from "./VendorCard";
@@ -64,7 +66,7 @@ export async function ExploreResults({ params }: { params: string }) {
   const { result } = outcome;
 
   const user = await getSessionUser();
-  const inCart = user ? await cartProductIds(user.id) : new Set<string>();
+  const targets = user ? await cartTargetsOf(user.id) : null;
   const wished = user ? await wishedProductIds(user.id) : new Set<string>();
 
   return (
@@ -117,7 +119,8 @@ export async function ExploreResults({ params }: { params: string }) {
             <li key={row.productId}>
               <VendorCard
                 row={row}
-                inCart={inCart.has(row.productId)}
+                carts={targets ? choicesFor(targets, row.productId) : []}
+                inCart={(targets?.productCarts.get(row.productId) ?? []).length > 0}
                 inWishlist={wished.has(row.productId)}
                 signedIn={Boolean(user)}
                 showAvailability={input.date !== null}
@@ -191,25 +194,20 @@ function PageLink({
   );
 }
 
-/** 우리 커플 장바구니에 담긴 상품 id. 담기 자체는 S3-05 이고 여기서는 표시만 한다. */
-async function cartProductIds(userId: string): Promise<Set<string>> {
+/**
+ * 우리 커플의 **활성 장바구니 전부**와 그 안에 담긴 상품(IDEA-01).
+ *
+ * 장바구니가 여러 개가 됐으므로 "담김" 은 **어느 장바구니에** 담겼는지까지 알아야 한다 —
+ * 같은 상품을 다른 장바구니에 담는 것이 정상 동선이기 때문이다(홀만 바꿔 견주기).
+ *
+ * **세션으로 읽는다.** 예전에는 서비스롤이었는데, 그러면 "내 커플 것만 보인다" 는 경계가
+ * RLS 가 아니라 `eq("couple_id", ...)` 를 잊지 않는 코드가 된다.
+ */
+async function cartTargetsOf(userId: string) {
   const membership = await findMyCouple(userId);
-  if (!membership) return new Set();
+  if (!membership) return null;
 
-  const admin = createAdminClient();
-
-  const { data: cart } = await admin
-    .from("carts")
-    .select("id")
-    .eq("couple_id", membership.coupleId)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (!cart) return new Set();
-
-  const { data: items } = await admin.from("cart_items").select("product_id").eq("cart_id", cart.id);
-
-  return new Set((items ?? []).map((item) => (item as { product_id: string }).product_id));
+  return loadCartTargets(await createClient(), membership.coupleId);
 }
 
 export default ExploreResults;

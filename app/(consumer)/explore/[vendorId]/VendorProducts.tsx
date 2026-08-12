@@ -3,9 +3,11 @@ import { PriceDisplay, formatKrw } from "@/components/domain/PriceDisplay";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ADD_ONS_POLICY_NOTICE, summarizeAddOns } from "@/lib/core/schemas/product-option";
+import { choicesFor, loadCartTargets } from "@/lib/cart/loader";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 
 /**
@@ -71,7 +73,7 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
   }[];
 
   const user = await getSessionUser();
-  const inCart = user ? await cartProducts(user.id) : new Set<string>();
+  const targets = user ? await cartTargetsOf(user.id) : null;
   const wished = user ? await wishedProducts(user.id) : new Set<string>();
 
   return (
@@ -155,7 +157,8 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
                 <CartActions
                   productId={product.id}
                   vendorId={vendorId}
-                  inCart={inCart.has(product.id)}
+                  inCart={(targets?.productCarts.get(product.id) ?? []).length > 0}
+                  carts={targets ? choicesFor(targets, product.id) : []}
                   inWishlist={wished.has(product.id)}
                   signedIn={Boolean(user)}
                   next={`/explore/${vendorId}`}
@@ -169,24 +172,17 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
   );
 }
 
-async function cartProducts(userId: string): Promise<Set<string>> {
+/**
+ * 우리 커플의 활성 장바구니와 담긴 상품(IDEA-01).
+ *
+ * `ExploreResults` 와 같은 함수를 쓴다 — 목록과 상세가 다른 방식으로 세면 "담김" 표시가
+ * 두 화면에서 갈린다. 경계는 RLS 다(세션으로 읽는다).
+ */
+async function cartTargetsOf(userId: string) {
   const membership = await findMyCouple(userId);
-  if (!membership) return new Set();
+  if (!membership) return null;
 
-  const admin = createAdminClient();
-
-  const { data: cart } = await admin
-    .from("carts")
-    .select("id")
-    .eq("couple_id", membership.coupleId)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (!cart) return new Set();
-
-  const { data: items } = await admin.from("cart_items").select("product_id").eq("cart_id", cart.id);
-
-  return new Set((items ?? []).map((item) => (item as { product_id: string }).product_id));
+  return loadCartTargets(await createClient(), membership.coupleId);
 }
 
 export default VendorProducts;

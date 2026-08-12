@@ -3,12 +3,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { MetricTile } from "@/components/domain/MetricTile";
-import { PriceDisplay } from "@/components/domain/PriceDisplay";
+import { formatKrw } from "@/components/domain/PriceDisplay";
+import { isUnknownAmount } from "@/lib/core/pricing/amount";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { loadCart } from "@/lib/cart/loader";
+import { loadCarts } from "@/lib/cart/loader";
 import { loadRooms } from "@/lib/chat/loader";
 import { unreadBadge } from "@/lib/core/chat/chat";
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
@@ -101,15 +102,20 @@ async function HomeSection() {
   const memberIds = (members ?? []).map((row) => (row as { user_id: string }).user_id);
   const partnerLinked = memberIds.length >= 2;
 
-  const cart = membership
-    ? await loadCart(supabase, createPublicClient(), {
+  const cartsView = membership
+    ? await loadCarts(supabase, createPublicClient(), {
         coupleId: membership.coupleId,
         viewerId: user.id,
         memberIds,
       })
     : null;
 
-  const visibleItems = (cart?.items ?? []).filter((item) => item.visibility.kind === "visible");
+  // 홈은 **장바구니 전부**를 요약한다(IDEA-01). 하나만 골라 보이면 "왜 이것만 보이나" 가
+  // 되고, 예산에 맞춰 좁혀 가는 일이 홈에서 보이지 않는다.
+  const carts = cartsView?.carts ?? [];
+  const visibleItems = carts.flatMap((cart) =>
+    cart.items.filter((item) => item.visibility.kind === "visible"),
+  );
 
   const { count: wishCount } = membership
     ? await admin
@@ -219,19 +225,52 @@ async function HomeSection() {
           ) : null}
         </div>
 
-        {cart?.total && visibleItems.length > 0 ? (
+        {visibleItems.length > 0 ? (
           <Card>
             <CardContent className="space-y-3 pt-5">
-              <PriceDisplay
-                amount={cart.total.total}
-                basePrice={cart.total.basePrice}
-                taxIncluded
-                addOns={cart.total.addOns}
-                plannerFee={cart.total.plannerFee}
-                variant="sum"
-                itemCount={cart.total.itemCount}
-                size="md"
-              />
+              {/* 장바구니마다 총액과 예산 대비를 한 줄로 적는다. **하나로 합치지 않는다** —
+                  서로 다른 조합의 총액을 더한 값은 아무 뜻도 없는 숫자다. */}
+              <ul className="space-y-2" data-testid="home-cart-list">
+                {carts.map((cart) => (
+                  <li key={cart.cartId} data-testid="home-cart-row" data-cart-id={cart.cartId}>
+                    <Link href={`/cart?cart=${cart.seq}`} className="block space-y-1">
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                          {cart.seq}. {cart.label}
+                        </span>
+                        <span className="shrink-0 text-unit text-foreground">
+                          {cart.total === null || isUnknownAmount(cart.total.total) ? (
+                            "담은 것 없음"
+                          ) : (
+                            <>
+                              <span data-amount="">{formatKrw(cart.total.total)}</span>원
+                            </>
+                          )}
+                        </span>
+                      </span>
+
+                      {/* 예산이 미정이면 기준선을 그리지 않는다(0으로 견주지 않는다). */}
+                      {cart.budget.kind === "under" || cart.budget.kind === "over" ? (
+                        <span
+                          className={`block text-caption ${cart.budget.kind === "over" ? "text-warning" : "text-success"}`}
+                          data-testid="home-cart-budget"
+                          data-state={cart.budget.kind}
+                        >
+                          {cart.budget.kind === "over"
+                            ? `예산 초과 ${formatKrw(cart.budget.excess)}원`
+                            : `예산 여유 ${formatKrw(cart.budget.remaining)}원`}
+                          {cart.fill && !cart.fill.complete ? " · 미완성 총액" : ""}
+                        </span>
+                      ) : cart.fill && !cart.fill.complete ? (
+                        <span className="block text-caption text-muted-foreground">
+                          미완성 총액
+                        </span>
+                      ) : null}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+
               <div className="flex gap-2">
                 <Link
                   href="/cart"
@@ -240,7 +279,7 @@ async function HomeSection() {
                   장바구니
                 </Link>
                 <Link
-                  href="/explore/compare"
+                  href={carts.length >= 2 ? "/explore/compare?mode=carts" : "/explore/compare"}
                   className="flex-1 rounded-md border border-border px-3 py-2 text-center text-sm font-medium text-foreground"
                 >
                   비교하기

@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { loadCartTargets } from "@/lib/cart/loader";
 import { loadWishlist } from "@/lib/cart/wishlist";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
@@ -66,5 +67,8 @@ async function WishlistSection() {
     memberIds: (members ?? []).map((row) => (row as { user_id: string }).user_id),
   });
 
-  return <WishlistView items={items} unavailableCount={unavailableCount} />;
+  // 찜에서 장바구니로 옮길 때 **어느 장바구니로 보낼지 고르는 단계**가 필요하다(IDEA-01).
+  const { choices } = await loadCartTargets(supabase, membership.coupleId);
+
+  return <WishlistView items={items} unavailableCount={unavailableCount} carts={choices} />;
 }

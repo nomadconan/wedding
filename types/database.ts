@@ -484,6 +484,8 @@ export type Database = {
           couple_id: string
           created_at: string
           id: string
+          name: string | null
+          seq: number
           status: string
           updated_at: string
         }
@@ -491,6 +493,8 @@ export type Database = {
           couple_id: string
           created_at?: string
           id?: string
+          name?: string | null
+          seq: number
           status?: string
           updated_at?: string
         }
@@ -498,6 +502,8 @@ export type Database = {
           couple_id?: string
           created_at?: string
           id?: string
+          name?: string | null
+          seq?: number
           status?: string
           updated_at?: string
         }
@@ -4012,6 +4018,7 @@ export type Database = {
     Functions: {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       can_read_qna_post: { Args: { p_post_id: string }; Returns: boolean }
+      cart_active_limit: { Args: never; Returns: number }
       cart_couple_id: { Args: { p_cart_id: string }; Returns: string }
       chat_room_couple_id: { Args: { p_room_id: string }; Returns: string }
       chat_room_is_open: { Args: { p_room_id: string }; Returns: boolean }
