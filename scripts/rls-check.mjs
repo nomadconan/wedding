@@ -2990,6 +2990,218 @@ if (!vendorStaff || !adminUser) {
          values ('${PB}', '${PS2}', 'balance', 1, 'pending');`, paidSetup)),
   );
 
+  // ===========================================================================
+  // 계약 해지 · 위약금 · 예약 자리 (S5-08 · 0031)
+  // ---------------------------------------------------------------------------
+  // 확인할 것은 넷 —
+  //   (가) 확정된 계약만 해지 대상이고, 귀책 미정으로는 정산할 수 없다
+  //   (나) 종결은 되돌릴 수 없고 조율 결과에는 사유가 붙는다(D-23·D-24)
+  //   (다) 경계가 RLS 인가 — 배우자 차단 · 타 업체 격리 · 운영자 큐 열람
+  //   (라) **예약 자리**가 확정에서 줄고 취소에서 되돌아오는가(S2-05 가 남긴 자리)
+  // ===========================================================================
+  const CX = "00000000-0000-0000-0000-00000000f020"; // 해지 절차
+  const PSLOT = "00000000-0000-0000-0000-00000000f021"; // 재고 자리
+  const PB2 = "00000000-0000-0000-0000-00000000f022"; // 자리 있는 예약
+
+  const cancelInsert = (id, over = "") => `
+    insert into public.contract_cancellations
+      (id, contract_id, booking_id, requested_by, requester_side, reason_code${over ? ", " + over.split("=")[0] : ""})
+      values ('${id}', '${PC}', '${PB}', '${owner}', 'couple', 'personal'${over ? ", " + over.split("=")[1] : ""});
+  `;
+
+  check(
+    "확정된 계약만 해지할 수 있다",
+    rejectedWith(/contract_cancellations_not_active|확정된 계약만 해지/, () =>
+      sql(`begin; ${payFixture} ${cancelInsert(CX)} rollback;`)),
+  );
+  check(
+    "확정된 계약이면 해지 절차를 만들 수 있다",
+    sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+         select count(*) from public.contract_cancellations; rollback;`) === "1",
+  );
+  check(
+    "계약당 살아 있는 해지 절차는 하나뿐이다",
+    rejectedWith(/uq_contract_cancellations_open|23505/, () =>
+      sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        ${cancelInsert("00000000-0000-0000-0000-00000000f023")} rollback;`)),
+  );
+  check(
+    "귀책이 미정인 채로 정산할 수 없다",
+    rejectedWith(/contract_cancellations_fault_undecided|귀책이 확인되지 않은/, () =>
+      sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        update public.contract_cancellations
+          set status = 'settled', settled_at = now(), penalty_applied = 0, refund_amount = 0
+          where id = '${CX}';
+        rollback;`)),
+  );
+  check(
+    "귀책이 정해지면 정산할 수 있다",
+    sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        update public.contract_cancellations
+          set fault = 'couple', status = 'settled', settled_at = now(),
+              penalty_applied = 2000000, refund_amount = 0, balance_due = 2000000
+          where id = '${CX}';
+        select status from public.contract_cancellations where id = '${CX}'; rollback;`) === "settled",
+  );
+  check(
+    "종결된 해지 절차는 되돌릴 수 없다 (D-23)",
+    rejectedWith(/contract_cancellations_transition|종결된 해지 절차/, () =>
+      sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        update public.contract_cancellations
+          set fault = 'mutual', status = 'settled', settled_at = now(),
+              penalty_applied = 0, refund_amount = 0
+          where id = '${CX}';
+        update public.contract_cancellations set status = 'requested' where id = '${CX}';
+        rollback;`)),
+  );
+  check(
+    "환불과 추가 청구가 동시에 생길 수 없다",
+    rejectedWith(/contract_cancellations_settlement_shape/, () =>
+      sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        update public.contract_cancellations
+          set refund_amount = 100, balance_due = 100 where id = '${CX}';
+        rollback;`)),
+  );
+  check(
+    "조율 결과에는 사유가 반드시 붙는다 (D-24)",
+    rejectedWith(/contract_cancellations_resolution_shape/, () =>
+      sql(`begin; ${activeFixture} ${cancelInsert(CX)}
+        update public.contract_cancellations
+          set resolved_by = '${adminUser}', resolution_note = null where id = '${CX}';
+        rollback;`)),
+  );
+
+  // ── 열람 ──────────────────────────────────────────────────────────────────
+  const cancelSetup = `${activeFixture} ${cancelInsert(CX)}`;
+
+  check(
+    "커플 소유자는 자기 해지 절차를 본다",
+    asUser(owner, `select count(*) from public.contract_cancellations;`, cancelSetup) === "1",
+  );
+  check(
+    "업체 멤버도 해지 절차를 본다 (응대해야 한다)",
+    asUser(vendorStaff, `select count(*) from public.contract_cancellations;`, cancelSetup) === "1",
+  );
+  check(
+    "배우자는 해지 절차를 못 본다 (결제·서명과 같은 owner 조건)",
+    asUser(partner, `select count(*) from public.contract_cancellations;`, cancelSetup) === "0",
+  );
+  check(
+    "비로그인은 해지 절차를 못 본다",
+    asAnon(`select count(*) from public.contract_cancellations;`, cancelSetup) === "0",
+  );
+  check(
+    "해지 절차는 당사자가 쓸 수 없다 (자기 귀책을 스스로 적을 수 없다)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.contract_cancellations
+         (contract_id, booking_id, requester_side, reason_code)
+         values ('${PC}', '${PB}', 'couple', 'budget');`, cancelSetup)),
+  );
+  check(
+    "당사자가 귀책을 고쳐 쓸 수 없다",
+    asUser(owner, `with u as (update public.contract_cancellations set fault = 'vendor' returning id)
+       select count(*) from u;`, cancelSetup) === "0",
+  );
+
+  // ── 예약 자리 (S2-05 가 남긴 자리) ────────────────────────────────────────
+  const slotFixture = `
+    ${payFixture}
+    insert into public.inventory_slots (id, vendor_id, product_id, slot_date, capacity, remaining)
+      values ('${PSLOT}', '${PV}', '${PP}', '2027-05-15', 1, 1);
+    insert into public.bookings (id, couple_id, vendor_id, product_id, slot_id, status, total_amount)
+      values ('${PB2}', '${coupleId}', '${PV}', '${PP}', '${PSLOT}', 'hold', 10000000);
+  `;
+
+  check(
+    "예약이 확정되면 자리가 하나 줄어든다",
+    sql(`begin; ${slotFixture}
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB2}';
+        select remaining from public.inventory_slots where id = '${PSLOT}'; rollback;`) === "0",
+  );
+  check(
+    "예약이 취소되면 자리가 되돌아온다",
+    sql(`begin; ${slotFixture}
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB2}';
+        update public.bookings set status = 'cancelled' where id = '${PB2}';
+        select remaining from public.inventory_slots where id = '${PSLOT}'; rollback;`) === "1",
+  );
+  check(
+    "남은 자리가 없으면 확정할 수 없다 (없는 자리를 팔지 않는다)",
+    rejectedWith(/inventory_slots_no_remaining|남은 자리가 없어/, () =>
+      sql(`begin; ${slotFixture}
+        update public.inventory_slots set remaining = 0 where id = '${PSLOT}';
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB2}';
+        rollback;`)),
+  );
+  check(
+    "자리를 쓰지 않는 예약도 확정된다 (슬롯 없는 계약이 가능하다)",
+    sql(`begin; ${payFixture}
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB}';
+        select status from public.bookings where id = '${PB}'; rollback;`) === "confirmed",
+  );
+  check(
+    "확정된 예약의 자리를 바꿀 수 없다",
+    rejectedWith(/bookings_slot_immutable|자리를 바꿀 수 없습니다/, () =>
+      sql(`begin; ${slotFixture}
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB2}';
+        update public.bookings set slot_id = null, status = 'confirmed' where id = '${PB2}';
+        rollback;`)),
+  );
+  check(
+    "이행 완료는 자리를 계속 차지한다 (지난 날짜를 다시 팔지 않는다)",
+    sql(`begin; ${slotFixture}
+        update public.bookings set status = 'confirmed',
+          applied_fee_rate_bp = 500, applied_planner_fee_rate_bp = 0 where id = '${PB2}';
+        update public.bookings set status = 'fulfilled' where id = '${PB2}';
+        select remaining from public.inventory_slots where id = '${PSLOT}'; rollback;`) === "0",
+  );
+
+  // ── 환불 원장 ─────────────────────────────────────────────────────────────
+  check(
+    "알 수 없는 환불 상태는 거절한다",
+    rejectedWith(/refunds_status_values/, () =>
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        insert into public.refunds (payment_id, amount, status)
+          values ('${PAY1}', 1, 'DONE');
+        rollback;`)),
+  );
+  check(
+    "완료된 환불에는 완료 시각이 붙는다",
+    rejectedWith(/refunds_completed_pair/, () =>
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        insert into public.refunds (payment_id, amount, status)
+          values ('${PAY1}', 1, 'completed');
+        rollback;`)),
+  );
+
+  // ── 위약금 기준은 시드로 굳히지 않았다 (0031 근거 6) ──────────────────────
+  check(
+    "penalty_rules 에 가정치를 시드하지 않았다 — 법무 검수 전이다",
+    sql(`select count(*) from public.penalty_rules;`) === "0",
+  );
+  check(
+    "위약금 요율 컬럼이 bp 정수다 (numeric standard_rate 를 대체했다)",
+    sql(`select count(*) from information_schema.columns
+         where table_schema = 'public' and table_name = 'penalty_rules'
+           and column_name = 'rate_bp' and data_type = 'integer';`) === "1",
+  );
+  check(
+    "numeric standard_rate 는 남아 있지 않다 (요율의 진실은 하나다)",
+    sql(`select count(*) from information_schema.columns
+         where table_schema = 'public' and table_name = 'penalty_rules'
+           and column_name = 'standard_rate';`) === "0",
+  );
+  check(
+    "확인 기한도 코드가 아니라 app_settings 가 갖는다",
+    sql(`select count(*) from public.app_settings
+         where key = 'cancellation.confirm_due_days' and (value_json ->> 'days') ~ '^[0-9]+$';`) === "1",
+  );
+
   // ── 코드 ↔ DB 정합 · 파라미터 ─────────────────────────────────────────────
   const dbPaymentStatus = sql(
     `select pg_get_constraintdef(oid) from pg_constraint
@@ -3078,6 +3290,56 @@ if (!vendorStaff || !adminUser) {
     "결제 시도 상한도 코드가 아니라 app_settings 가 갖는다",
     sql(`select count(*) from public.app_settings
          where key = 'payment.max_attempts' and (value_json ->> 'count') ~ '^[0-9]+$';`) === "1",
+  );
+
+  // ── S5-08 이 더한 정합 ────────────────────────────────────────────────────
+  // 해지의 값 집합도 코드와 DB 두 곳에 있다. 한쪽만 늘리면 **화면이 보낸 사유를 DB 가
+  // 거절**하고, 그 실패는 사용자에게 알 수 없는 오류로 보인다.
+  const cancelSource = readFileSync("lib/core/cancellation/cancellation.ts", "utf8");
+
+  for (const [label, constant, constraint] of [
+    ["취소 사유 코드", "CANCEL_REASON_CODES", "contract_cancellations_reason_values"],
+    ["해지 절차 상태", "CANCELLATION_STATUSES", "contract_cancellations_status_values"],
+    ["귀책 값", "FAULT_PARTIES", "contract_cancellations_fault_values"],
+  ]) {
+    const dbDef = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.contract_cancellations'::regclass and conname = '${constraint}';`,
+    );
+    const codeValues =
+      cancelSource
+        .match(new RegExp(`export const ${constant} = \\[([\\s\\S]*?)\\] as const;`))?.[1]
+        .match(/"([a-z_]+)"/g)
+        ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+    check(
+      `${label} 목록이 코드와 DB CHECK 에서 일치한다`,
+      codeValues.length > 0 && codeValues.every((value) => dbDef.includes(`'${value}'`)),
+      `code=${codeValues.join(",")}`,
+    );
+  }
+
+  // 운영자는 조율 큐를 봐야 한다(F-A-17). 서비스롤로 우회해 읽으면 경계가 앱 코드가 된다.
+  check(
+    "운영자는 조율 큐를 본다 (is_operator 정책)",
+    asUser(
+      adminUser,
+      `select count(*) from public.contract_cancellations;`,
+      `${activeFixture} ${cancelInsert(CX)}`,
+    ) === "1",
+  );
+  // 운영자 정책이 문을 넓히지 않았는지는 **운영자가 아닌 사람**으로 확인한다.
+  // 시드에서 타 업체 대표 자리를 admin 계정이 겸하고 있어(계정 6개로 넷을 세운 탓)
+  // 그 계정으로는 이 검사를 할 수 없다 — 배우자(비운영자)가 그 자리를 대신한다.
+  check(
+    "운영자 정책이 일반 사용자에게 문을 넓히지 않았다",
+    asUser(
+      opsUser,
+      `select count(*) from public.contract_cancellations;`,
+      `${activeFixture} ${cancelInsert(CX)}`,
+    ) === "1" &&
+      asUser(partner, `select count(*) from public.contract_cancellations;`,
+        `${activeFixture} ${cancelInsert(CX)}`) === "0",
   );
 }
 

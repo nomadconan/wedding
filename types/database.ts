@@ -990,6 +990,126 @@ export type Database = {
         }
         Relationships: []
       }
+      contract_cancellations: {
+        Row: {
+          admin_decision: string | null
+          balance_due: number | null
+          band_code: string | null
+          band_label: string | null
+          basis_ref: string | null
+          booking_id: string
+          confirm_due_at: string | null
+          contract_id: string
+          couple_agreed: boolean | null
+          couple_claim: string | null
+          created_at: string
+          disputed_at: string | null
+          fault: string
+          id: string
+          is_draft_rules: boolean
+          paid_amount: number | null
+          penalty_applied: number | null
+          penalty_contract: number | null
+          penalty_standard: number | null
+          reason_code: string
+          reason_note: string | null
+          refund_amount: number | null
+          requested_by: string | null
+          requester_side: string
+          resolution_note: string | null
+          resolved_by: string | null
+          rule_version: string | null
+          settled_at: string | null
+          status: string
+          updated_at: string
+          vendor_agreed: boolean | null
+          vendor_claim: string | null
+        }
+        Insert: {
+          admin_decision?: string | null
+          balance_due?: number | null
+          band_code?: string | null
+          band_label?: string | null
+          basis_ref?: string | null
+          booking_id: string
+          confirm_due_at?: string | null
+          contract_id: string
+          couple_agreed?: boolean | null
+          couple_claim?: string | null
+          created_at?: string
+          disputed_at?: string | null
+          fault?: string
+          id?: string
+          is_draft_rules?: boolean
+          paid_amount?: number | null
+          penalty_applied?: number | null
+          penalty_contract?: number | null
+          penalty_standard?: number | null
+          reason_code: string
+          reason_note?: string | null
+          refund_amount?: number | null
+          requested_by?: string | null
+          requester_side: string
+          resolution_note?: string | null
+          resolved_by?: string | null
+          rule_version?: string | null
+          settled_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_agreed?: boolean | null
+          vendor_claim?: string | null
+        }
+        Update: {
+          admin_decision?: string | null
+          balance_due?: number | null
+          band_code?: string | null
+          band_label?: string | null
+          basis_ref?: string | null
+          booking_id?: string
+          confirm_due_at?: string | null
+          contract_id?: string
+          couple_agreed?: boolean | null
+          couple_claim?: string | null
+          created_at?: string
+          disputed_at?: string | null
+          fault?: string
+          id?: string
+          is_draft_rules?: boolean
+          paid_amount?: number | null
+          penalty_applied?: number | null
+          penalty_contract?: number | null
+          penalty_standard?: number | null
+          reason_code?: string
+          reason_note?: string | null
+          refund_amount?: number | null
+          requested_by?: string | null
+          requester_side?: string
+          resolution_note?: string | null
+          resolved_by?: string | null
+          rule_version?: string | null
+          settled_at?: string | null
+          status?: string
+          updated_at?: string
+          vendor_agreed?: boolean | null
+          vendor_claim?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_cancellations_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contract_cancellations_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contract_signatures: {
         Row: {
           contract_id: string
@@ -2502,32 +2622,50 @@ export type Database = {
       }
       penalty_rules: {
         Row: {
+          band_code: string | null
+          band_label: string | null
           basis_ref: string | null
           cancel_window: string
           category: string
           created_at: string
           id: string
-          standard_rate: number
+          is_draft: boolean
+          max_days_before_event: number | null
+          min_days_before_event: number | null
+          rate_bp: number | null
+          refund_deposit: boolean
           updated_at: string
           version: string
         }
         Insert: {
+          band_code?: string | null
+          band_label?: string | null
           basis_ref?: string | null
           cancel_window: string
           category: string
           created_at?: string
           id?: string
-          standard_rate: number
+          is_draft?: boolean
+          max_days_before_event?: number | null
+          min_days_before_event?: number | null
+          rate_bp?: number | null
+          refund_deposit?: boolean
           updated_at?: string
           version: string
         }
         Update: {
+          band_code?: string | null
+          band_label?: string | null
           basis_ref?: string | null
           cancel_window?: string
           category?: string
           created_at?: string
           id?: string
-          standard_rate?: number
+          is_draft?: boolean
+          max_days_before_event?: number | null
+          min_days_before_event?: number | null
+          rate_bp?: number | null
+          refund_deposit?: boolean
           updated_at?: string
           version?: string
         }
@@ -3337,6 +3475,8 @@ export type Database = {
       refunds: {
         Row: {
           amount: number
+          cancellation_id: string | null
+          completed_at: string | null
           created_at: string
           id: string
           payment_id: string
@@ -3347,6 +3487,8 @@ export type Database = {
         }
         Insert: {
           amount: number
+          cancellation_id?: string | null
+          completed_at?: string | null
           created_at?: string
           id?: string
           payment_id: string
@@ -3357,6 +3499,8 @@ export type Database = {
         }
         Update: {
           amount?: number
+          cancellation_id?: string | null
+          completed_at?: string | null
           created_at?: string
           id?: string
           payment_id?: string
@@ -3366,6 +3510,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "refunds_cancellation_id_fkey"
+            columns: ["cancellation_id"]
+            isOneToOne: false
+            referencedRelation: "contract_cancellations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "refunds_payment_id_fkey"
             columns: ["payment_id"]
