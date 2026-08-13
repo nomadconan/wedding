@@ -997,10 +997,12 @@ export type Database = {
           id: string
           ip_hash: string | null
           signed_at: string | null
+          signed_content_hash: string | null
           signer_id: string | null
           signer_role: string
           updated_at: string
           verification_method: string | null
+          verification_ref: string | null
         }
         Insert: {
           contract_id: string
@@ -1008,10 +1010,12 @@ export type Database = {
           id?: string
           ip_hash?: string | null
           signed_at?: string | null
+          signed_content_hash?: string | null
           signer_id?: string | null
           signer_role: string
           updated_at?: string
           verification_method?: string | null
+          verification_ref?: string | null
         }
         Update: {
           contract_id?: string
@@ -1019,10 +1023,12 @@ export type Database = {
           id?: string
           ip_hash?: string | null
           signed_at?: string | null
+          signed_content_hash?: string | null
           signer_id?: string | null
           signer_role?: string
           updated_at?: string
           verification_method?: string | null
+          verification_ref?: string | null
         }
         Relationships: [
           {
@@ -1034,38 +1040,110 @@ export type Database = {
           },
         ]
       }
+      contract_templates: {
+        Row: {
+          basis_note: string | null
+          clause_body_status: string
+          clauses_json: Json
+          created_at: string
+          effective_from: string | null
+          effective_to: string | null
+          id: string
+          status: string
+          updated_at: string
+          version: string
+        }
+        Insert: {
+          basis_note?: string | null
+          clause_body_status?: string
+          clauses_json?: Json
+          created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
+          id?: string
+          status?: string
+          updated_at?: string
+          version: string
+        }
+        Update: {
+          basis_note?: string | null
+          clause_body_status?: string
+          clauses_json?: Json
+          created_at?: string
+          effective_from?: string | null
+          effective_to?: string | null
+          id?: string
+          status?: string
+          updated_at?: string
+          version?: string
+        }
+        Relationships: []
+      }
       contracts: {
         Row: {
+          activated_at: string | null
+          applied_fee_rate_bp: number | null
+          applied_planner_fee_rate_bp: number | null
           booking_id: string
+          cancel_reason: string | null
+          cancelled_at: string | null
           clauses_json: Json
+          content_hash: string | null
           created_at: string
           id: string
           issued_at: string | null
           pdf_path: string | null
+          planner_id: string | null
+          quote_id: string | null
+          signing_deadline_at: string | null
           status: string
+          template_id: string | null
           template_version: string | null
+          total_amount: number | null
           updated_at: string
         }
         Insert: {
+          activated_at?: string | null
+          applied_fee_rate_bp?: number | null
+          applied_planner_fee_rate_bp?: number | null
           booking_id: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
           clauses_json?: Json
+          content_hash?: string | null
           created_at?: string
           id?: string
           issued_at?: string | null
           pdf_path?: string | null
+          planner_id?: string | null
+          quote_id?: string | null
+          signing_deadline_at?: string | null
           status?: string
+          template_id?: string | null
           template_version?: string | null
+          total_amount?: number | null
           updated_at?: string
         }
         Update: {
+          activated_at?: string | null
+          applied_fee_rate_bp?: number | null
+          applied_planner_fee_rate_bp?: number | null
           booking_id?: string
+          cancel_reason?: string | null
+          cancelled_at?: string | null
           clauses_json?: Json
+          content_hash?: string | null
           created_at?: string
           id?: string
           issued_at?: string | null
           pdf_path?: string | null
+          planner_id?: string | null
+          quote_id?: string | null
+          signing_deadline_at?: string | null
           status?: string
+          template_id?: string | null
           template_version?: string | null
+          total_amount?: number | null
           updated_at?: string
         }
         Relationships: [
@@ -1074,6 +1152,27 @@ export type Database = {
             columns: ["booking_id"]
             isOneToOne: false
             referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contracts_planner_id_fkey"
+            columns: ["planner_id"]
+            isOneToOne: false
+            referencedRelation: "planners"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contracts_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contracts_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "contract_templates"
             referencedColumns: ["id"]
           },
         ]
@@ -2157,6 +2256,47 @@ export type Database = {
           },
         ]
       }
+      payment_consents: {
+        Row: {
+          agreed_at: string
+          consent_version: string
+          created_at: string
+          id: string
+          ip_hash: string | null
+          kind: string
+          payment_schedule_id: string
+          user_id: string
+        }
+        Insert: {
+          agreed_at?: string
+          consent_version: string
+          created_at?: string
+          id?: string
+          ip_hash?: string | null
+          kind: string
+          payment_schedule_id: string
+          user_id: string
+        }
+        Update: {
+          agreed_at?: string
+          consent_version?: string
+          created_at?: string
+          id?: string
+          ip_hash?: string | null
+          kind?: string
+          payment_schedule_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_consents_payment_schedule_id_fkey"
+            columns: ["payment_schedule_id"]
+            isOneToOne: false
+            referencedRelation: "payment_schedules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_schedules: {
         Row: {
           amount: number
@@ -2275,42 +2415,63 @@ export type Database = {
       payments: {
         Row: {
           amount: number
+          attempt_count: number
           booking_id: string | null
+          cancelled_at: string | null
           created_at: string
+          failed_at: string | null
+          failure_reason: string | null
           id: string
           idempotency_key: string | null
           membership_id: string | null
+          paid_at: string | null
           payment_schedule_id: string | null
+          provider: string | null
           purpose: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json: Json | null
+          refunded_amount: number
           status: string
           toss_payment_key: string | null
           updated_at: string
         }
         Insert: {
           amount: number
+          attempt_count?: number
           booking_id?: string | null
+          cancelled_at?: string | null
           created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
           id?: string
           idempotency_key?: string | null
           membership_id?: string | null
+          paid_at?: string | null
           payment_schedule_id?: string | null
+          provider?: string | null
           purpose: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json?: Json | null
+          refunded_amount?: number
           status?: string
           toss_payment_key?: string | null
           updated_at?: string
         }
         Update: {
           amount?: number
+          attempt_count?: number
           booking_id?: string | null
+          cancelled_at?: string | null
           created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
           id?: string
           idempotency_key?: string | null
           membership_id?: string | null
+          paid_at?: string | null
           payment_schedule_id?: string | null
+          provider?: string | null
           purpose?: Database["public"]["Enums"]["payment_purpose"]
           raw_webhook_json?: Json | null
+          refunded_amount?: number
           status?: string
           toss_payment_key?: string | null
           updated_at?: string

@@ -26,6 +26,12 @@ export default defineConfig({
       "lib/core/**/*.spec.ts",
       "lib/core/**/__tests__/**/*.ts",
       "components/**/*.test.tsx",
+      // 3) lib/payments — **결제 어댑터의 계약**(멱등 · 프로덕션에서 스텁 거부).
+      //    `lib/core` 가 아닌 것을 여기 넣는 이유: 어댑터는 DB 도 React 도 모르지만
+      //    서버 전용이라 core 에 둘 수 없고, 동시에 **깨지면 돈이 두 번 빠지는**
+      //    불변식이라 시험 없이 둘 수 없다(S4-08 의 보증금 스텁은 이 시험이 없었다).
+      //    node 환경으로 충분하다 — 어댑터는 프레임워크를 import 하지 않는다.
+      "lib/payments/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {
