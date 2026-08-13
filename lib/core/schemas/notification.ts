@@ -32,6 +32,12 @@ export const NOTIFICATION_TOPICS = [
   "chat",
   "inquiry",
   "vendor_invite",
+  /**
+   * S5-06. **`contract` 와 나눈다** — 결제는 계약 뒤의 이행이라 "계약 알림만 끄고
+   * 결제 알림은 받기" 가 성립해야 한다. 돈이 오가는 사건은 끄더라도 앱 알림함에는
+   * 남는다(`in_app` 은 항상 켜짐 — 증적을 남길 자리가 사라지면 안 된다).
+   */
+  "payment",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -46,6 +52,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   chat: "업체 채팅 새 메시지",
   inquiry: "문의·견적",
   vendor_invite: "멤버 초대",
+  payment: "결제",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -58,6 +65,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   chat: "업체와의 대화에 새 메시지가 오면 알려드려요.",
   inquiry: "보낸 문의에 견적이 도착하거나 업체가 답하면 알려드려요.",
   vendor_invite: "업체 멤버로 초대받으면 알려드려요.",
+  payment: "회차 결제가 완료되거나 실패하면 알려드려요.",
 };
 
 /**
@@ -67,7 +75,9 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
 export const TOPIC_PENDING: Partial<Record<NotificationTopic, string>> = {
   // `schedule` 은 S4-07 이 채웠다. 자리를 지우지 않고 목록에서 뺐다 — 남겨 두면
   // 수신 설정 화면이 "아직 보내지 않는다" 고 거짓을 말한다(S4-04 가 chat 에서 한 것과 같다).
-  contract: "S5-04",
+  // `contract` 는 S5-04·S5-05 가 채웠다(발행·확정 알림). `payment` 은 S5-06 이
+  // 채웠다. 자리를 지우지 않고 목록에서 뺀다 — 남겨 두면 수신 설정 화면이
+  // "아직 보내지 않는다" 고 거짓을 말한다(S4-07 이 schedule 에서 한 것과 같다).
   care: "S7-08",
   price_change: "S3-06",
   couple_invite: "S3-01",
@@ -280,6 +290,43 @@ export const NOTIFICATION_TEMPLATES = {
   "vendor_invite.received": {
     topic: "vendor_invite",
     render: () => "업체 멤버로 초대받았어요. 초대 링크에서 수락할 수 있어요.",
+  },
+  /**
+   * 계약 단계 (S5-04·S5-05).
+   *
+   * **금액·조항을 담지 않는다.** 참조(contractId)만 담고 문장은 고정이다(§7.3).
+   * 계약서가 이미 그 내용을 갖고 있고, 알림 payload 에 금액을 실으면 재발행으로
+   * 총액이 바뀐 뒤에도 옛 숫자가 알림함에 남는다 — 그것이 또 하나의 진실이 된다.
+   */
+  "contract.issued": {
+    topic: "contract",
+    render: () => "계약서가 발행됐어요. 내용을 확인하고 서명해 주세요.",
+  },
+  "contract.activated": {
+    topic: "contract",
+    render: () => "모든 당사자가 서명해 계약이 확정됐어요.",
+  },
+  /**
+   * 결제 (S5-06).
+   *
+   * **금액을 담지 않는다.** 회차 참조만 담는다 — 얼마를 냈는지는 결제 내역이
+   * 보여주고, 알림에 금액을 실으면 부분 환불 뒤에도 옛 숫자가 남는다.
+   * 실패 알림에 실패 사유를 담지 않는 이유도 같다: 사유 문구는 PG 가 주는 것이라
+   * 카드사 메시지가 그대로 흘러들 수 있다(§7.3).
+   */
+  "payment.succeeded": {
+    topic: "payment",
+    render: (params: Record<string, unknown>) =>
+      `${Number(params.seq ?? 0)}회차 결제가 완료됐어요.`,
+  },
+  "payment.failed": {
+    topic: "payment",
+    render: (params: Record<string, unknown>) =>
+      `${Number(params.seq ?? 0)}회차 결제를 처리하지 못했어요. 결제 화면에서 다시 시도해 주세요.`,
+  },
+  "payment.fully_paid": {
+    topic: "payment",
+    render: () => "모든 회차 결제가 끝났어요.",
   },
 } as const satisfies Record<
   string,

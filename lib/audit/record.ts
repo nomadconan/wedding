@@ -59,6 +59,14 @@ export type EntityType =
   | "payment_schedule"
   | "settlement"
   | "planner_settlement"
+  // S5-04·S5-05. 계약·서명은 **무엇에 서명했는가** 가 쟁점이라 전이를 남긴다(D-23).
+  // memo 에 조항 본문·해시 전체·본인확인 참조를 넣지 않는다 — 남길 사실은
+  // "발행됐다·서명됐다·확정됐다" 와 셀 수 있는 값(금액·요율·서명 수)이다.
+  | "contract"
+  | "contract_signature"
+  // S5-06. 결제 전 고지·동의(F-C-14). memo 에는 **종류와 판본만** 넣는다 —
+  // 문구 자체는 코드가 판본과 함께 갖는다(§7.3).
+  | "payment_consent"
   | "profile"
   | "data_deletion_request";
 

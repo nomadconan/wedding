@@ -2428,6 +2428,48 @@ if (!vendorStaff || !adminUser) {
               now() - interval '20 days', now() - interval '6 days');
   `;
 
+  // ── S5-06 이 더한 픽스처 (0030) ───────────────────────────────────────────
+  // 0030 이 결제에 세 가지를 요구하게 됐다: **확정된 계약** · **고지·동의 기록** ·
+  // **상태와 시각의 짝**. 그래서 0028 이 쓰던 "그냥 paid 한 줄" 픽스처로는 더 이상
+  // 결제를 만들 수 없다 — 아래 셋이 그 자리를 대신한다.
+  const PAY1 = "00000000-0000-0000-0000-00000000f010"; // 결제 1
+  const PAY2 = "00000000-0000-0000-0000-00000000f011"; // 결제 2
+
+  /** 계약을 **확정(active)까지** 밀어 올린다. 서명 두 건을 실제로 거쳐서 간다. */
+  const activeFixture = `
+    ${payFixture}
+    update public.contracts set
+      template_id = (select id from public.contract_templates where status = 'active'),
+      template_version = 'v0-placeholder',
+      content_hash = repeat('a', 64),
+      total_amount = 10000000,
+      applied_fee_rate_bp = 500,
+      applied_planner_fee_rate_bp = 0,
+      issued_at = now(),
+      status = 'issued'
+    where id = '${PC}';
+    insert into public.contract_signatures
+      (contract_id, signer_id, signer_role, signed_at, signed_content_hash, verification_method)
+      values ('${PC}', '${owner}', 'couple', now(), repeat('a', 64), 'sms_stub'),
+             ('${PC}', '${outsider}', 'vendor', now(), repeat('a', 64), 'sms_stub');
+    update public.contracts set status = 'active', activated_at = now() where id = '${PC}';
+  `;
+
+  /** 결제 전 고지·동의 두 종. 이것이 없으면 승인 자체가 막힌다(F-C-14). */
+  const consentFixture = `
+    insert into public.payment_consents
+      (payment_schedule_id, user_id, kind, consent_version)
+      values ('${PS1}', '${owner}', 'installment_terms', 'v1'),
+             ('${PS1}', '${owner}', 'refund_policy', 'v1');
+  `;
+
+  const paidInsert = (id, status = "paid") => `
+    insert into public.payments
+      (id, booking_id, payment_schedule_id, purpose, amount, status, paid_at, idempotency_key)
+      values ('${id}', '${PB}', '${PS1}', 'deposit', 2000000, '${status}',
+              ${status === "paid" ? "now()" : "null"}, 'schedule:${PS1}:charge:${id.slice(-3)}');
+  `;
+
   // ── 회차 비율 합 (커밋 시점 판정) ─────────────────────────────────────────
   check(
     "회차 두 건을 한 트랜잭션에 넣으면 통과한다 (합 10000bp)",
@@ -2688,22 +2730,21 @@ if (!vendorStaff || !adminUser) {
   );
 
   // ── 결제 · 웹훅 ───────────────────────────────────────────────────────────
+  // 0030 이 승인 조건을 조였다 — 확정된 계약 + 동의 + 상태·시각의 짝. 그래서 이
+  // 두 검사의 픽스처가 activeFixture 로 바뀌었다(검사의 뜻은 그대로다).
   check(
     "회차당 성공 결제는 하나뿐이다",
     rejectedWith(/uq_payments_schedule_paid|duplicate key/, () =>
-      sql(`begin; ${payFixture}
-        insert into public.payments
-          (booking_id, payment_schedule_id, purpose, amount, status)
-          values ('${PB}', '${PS1}', 'deposit', 2000000, 'paid'),
-                 ('${PB}', '${PS1}', 'deposit', 2000000, 'paid');
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)} ${paidInsert(PAY2)}
         rollback;`)),
   );
   check(
     "실패한 결제는 여러 번 있을 수 있다 (재시도가 정상이다)",
     sql(`begin; ${payFixture}
-      insert into public.payments (booking_id, payment_schedule_id, purpose, amount, status)
-        values ('${PB}', '${PS1}', 'deposit', 2000000, 'failed'),
-               ('${PB}', '${PS1}', 'deposit', 2000000, 'failed');
+      insert into public.payments
+        (booking_id, payment_schedule_id, purpose, amount, status, failed_at)
+        values ('${PB}', '${PS1}', 'deposit', 2000000, 'failed', now()),
+               ('${PB}', '${PS1}', 'deposit', 2000000, 'failed', now());
       select count(*) from public.payments where payment_schedule_id = '${PS1}';
       rollback;`) === "2",
   );
@@ -2784,6 +2825,171 @@ if (!vendorStaff || !adminUser) {
          values ('toss', 'evt_hidden2', repeat('d', 64));`) === "0",
   );
 
+  // ===========================================================================
+  // 결제 실행 (S5-06 · 0030)
+  // ---------------------------------------------------------------------------
+  // 0028 이 **회차를 만드는 쪽**을 시험했다면 여기는 **실제로 내는 쪽**이다.
+  // 확인할 것은 넷 —
+  //   (가) 확정되지 않은 계약의 회차는 승인될 수 없다
+  //   (나) 고지·동의 없이는 승인될 수 없다(F-C-14)
+  //   (다) 회차당 진행 중 1건 · 성공 1건 · 상태를 되돌릴 수 없다(D-23)
+  //   (라) 환불액과 상태가 어긋날 수 없다(부분 환불을 전제한 짝)
+  // ===========================================================================
+  check(
+    "확정되지 않은 계약의 회차는 승인될 수 없다",
+    rejectedWith(/payments_contract_not_active|확정된 계약의 회차만/, () =>
+      sql(`begin; ${payFixture} ${consentFixture} ${paidInsert(PAY1)} rollback;`)),
+  );
+  check(
+    "고지·동의 기록이 없으면 승인될 수 없다 (F-C-14)",
+    rejectedWith(/payments_consent_missing|고지·동의 기록이 없습니다/, () =>
+      sql(`begin; ${activeFixture} ${paidInsert(PAY1)} rollback;`)),
+  );
+  check(
+    "같은 종류로만 두 건을 채워도 통과하지 못한다 (종류를 센다)",
+    rejectedWith(/payments_consent_missing|고지·동의 기록이 없습니다/, () =>
+      sql(`begin; ${activeFixture}
+        insert into public.payment_consents
+          (payment_schedule_id, user_id, kind, consent_version)
+          values ('${PS1}', '${owner}', 'installment_terms', 'v1');
+        ${paidInsert(PAY1)} rollback;`)),
+  );
+  check(
+    "확정된 계약 + 동의가 있으면 승인된다",
+    sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+         select count(*) from public.payments where id = '${PAY1}'; rollback;`) === "1",
+  );
+
+  // ── 회차 완료의 근거 ──────────────────────────────────────────────────────
+  check(
+    "승인된 결제 없이 회차를 완료 처리할 수 없다",
+    rejectedWith(/payment_schedules_paid_without_payment|승인된 결제 없이/, () =>
+      sql(`begin; ${activeFixture}
+        update public.payment_schedules set status = 'paid', paid_at = now() where id = '${PS1}';
+        rollback;`)),
+  );
+  check(
+    "승인된 결제가 있으면 회차가 완료로 넘어간다",
+    sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        update public.payment_schedules set status = 'paid', paid_at = now() where id = '${PS1}';
+        select status from public.payment_schedules where id = '${PS1}'; rollback;`) === "paid",
+  );
+
+  // ── 회차당 하나 ───────────────────────────────────────────────────────────
+  check(
+    "회차당 진행 중인 결제는 하나뿐이다 (0030 부분 유니크)",
+    rejectedWith(/uq_payments_schedule_pending|23505/, () =>
+      sql(`begin; ${activeFixture} ${paidInsert(PAY1, "pending")} ${paidInsert(PAY2, "pending")}
+        rollback;`)),
+  );
+  // ── 되돌릴 수 없다 (D-23) ─────────────────────────────────────────────────
+  check(
+    "실패한 결제를 pending 으로 되돌릴 수 없다",
+    rejectedWith(/payments_transition|허용되지 않은 결제 상태 전이/, () =>
+      sql(`begin; ${activeFixture} ${paidInsert(PAY1, "pending")}
+        update public.payments set status = 'failed', failed_at = now() where id = '${PAY1}';
+        update public.payments set status = 'pending', failed_at = null where id = '${PAY1}';
+        rollback;`)),
+  );
+  check(
+    "승인된 결제를 실패로 바꿀 수 없다",
+    rejectedWith(/payments_transition|허용되지 않은 결제 상태 전이/, () =>
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        update public.payments set status = 'failed', failed_at = now(), paid_at = null
+          where id = '${PAY1}';
+        rollback;`)),
+  );
+
+  // ── 환불 — 부분 환불을 전제한 짝 ──────────────────────────────────────────
+  check(
+    "받은 돈보다 많이 환불할 수 없다",
+    rejectedWith(/payments_refund_shape/, () =>
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        update public.payments set status = 'partially_refunded', refunded_amount = 2000001
+          where id = '${PAY1}';
+        rollback;`)),
+  );
+  check(
+    "전액을 돌려줬는데 partially_refunded 로 적을 수 없다",
+    rejectedWith(/payments_refund_shape/, () =>
+      sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        update public.payments set status = 'partially_refunded', refunded_amount = 2000000
+          where id = '${PAY1}';
+        rollback;`)),
+  );
+  check(
+    "일부만 돌려주면 partially_refunded 로 남는다 (부분 환불이 기본형이다)",
+    sql(`begin; ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+        update public.payments set status = 'partially_refunded', refunded_amount = 500000
+          where id = '${PAY1}';
+        select refunded_amount from public.payments where id = '${PAY1}'; rollback;`) === "500000",
+  );
+
+  // ── 웹훅 멱등 (들어오는 쪽) ───────────────────────────────────────────────
+  check(
+    "같은 웹훅 이벤트는 한 번만 들어간다 ((provider, event_id) 유니크)",
+    rejectedWith(/payment_webhook_events_provider_event_id_key|23505/, () =>
+      sql(`begin;
+        insert into public.payment_webhook_events (provider, event_id, payload_digest)
+          values ('toss', 'evt_dup_s506', repeat('e', 64)),
+                 ('toss', 'evt_dup_s506', repeat('e', 64));
+        rollback;`)),
+  );
+
+  // ── 동의 로그 열람 ────────────────────────────────────────────────────────
+  const consentSetup = `${activeFixture} ${consentFixture}`;
+
+  check(
+    "커플 소유자는 자기 동의 기록을 본다",
+    asUser(owner, `select count(*) from public.payment_consents;`, consentSetup) === "2",
+  );
+  check(
+    "업체도 동의 기록을 본다 (고지했음을 증명해야 하는 쪽이다)",
+    asUser(vendorStaff, `select count(*) from public.payment_consents;`, consentSetup) === "2",
+  );
+  check(
+    "배우자는 동의 기록을 못 본다 (결제는 owner 조건 · §3.9)",
+    asUser(partner, `select count(*) from public.payment_consents;`, consentSetup) === "0",
+  );
+  check(
+    "타 업체는 남의 동의 기록을 못 본다",
+    asUser(adminUser, `select count(*) from public.payment_consents;`, consentSetup) === "0",
+  );
+  check(
+    "비로그인은 동의 기록을 못 본다",
+    asAnon(`select count(*) from public.payment_consents;`, consentSetup) === "0",
+  );
+  check(
+    "동의 기록은 아무도 쓸 수 없다 (정책 없음 = 서비스롤 전용)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.payment_consents
+         (payment_schedule_id, user_id, kind, consent_version)
+         values ('${PS2}', '${owner}', 'refund_policy', 'v1');`, consentSetup)),
+  );
+
+  // ── 결제 열람 ─────────────────────────────────────────────────────────────
+  const paidSetup = `${activeFixture} ${consentFixture} ${paidInsert(PAY1)}`;
+
+  check(
+    "커플 소유자는 자기 결제를 본다",
+    asUser(owner, `select count(*) from public.payments;`, paidSetup) === "1",
+  );
+  check(
+    "배우자는 결제를 못 본다 (결제 열람은 owner · §3.9)",
+    asUser(partner, `select count(*) from public.payments;`, paidSetup) === "0",
+  );
+  check(
+    "타 커플·타 업체는 남의 결제를 못 본다",
+    asUser(adminUser, `select count(*) from public.payments;`, paidSetup) === "0",
+  );
+  check(
+    "결제는 당사자가 쓸 수 없다 (금액을 스스로 적을 수 없다)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.payments
+         (booking_id, payment_schedule_id, purpose, amount, status)
+         values ('${PB}', '${PS2}', 'balance', 1, 'pending');`, paidSetup)),
+  );
+
   // ── 코드 ↔ DB 정합 · 파라미터 ─────────────────────────────────────────────
   const dbPaymentStatus = sql(
     `select pg_get_constraintdef(oid) from pg_constraint
@@ -2830,6 +3036,48 @@ if (!vendorStaff || !adminUser) {
     "수수료 기준(O-15)은 미결 자리로 남아 있다 — 코드가 정하지 않았다",
     sql(`select value_json ->> 'status' from public.app_settings
          where key = 'settlement.fee_basis';`) === "undecided",
+  );
+
+  // ── S5-06 이 더한 정합 ────────────────────────────────────────────────────
+  // 동의 종류도 코드(CONSENT_KINDS)와 DB CHECK 두 곳에 있다. 한쪽만 늘리면
+  // **결제 트리거가 요구하는 종류와 화면이 받는 종류가 갈린다** — 그러면 동의를
+  // 다 눌러도 결제가 막히고, 원인은 화면 어디에도 나오지 않는다.
+  const dbConsentKinds = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.payment_consents'::regclass
+        and conname = 'payment_consents_kind_values';`,
+  );
+  const codeConsentKinds = readFileSync("lib/core/payment/checkout.ts", "utf8")
+    .match(/export const CONSENT_KINDS = \[([\s\S]*?)\] as const;/)?.[1]
+    .match(/"([a-z_]+)"/g)
+    ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+  check(
+    "동의 종류가 코드와 DB CHECK 에서 일치한다",
+    codeConsentKinds.length > 0 && codeConsentKinds.every((v) => dbConsentKinds.includes(`'${v}'`)),
+    `code=${codeConsentKinds.join(",")}`,
+  );
+
+  // **수신 설정 쪽 CHECK 도 함께 본다.** 0023~0026 은 `notifications` 만 넓히고
+  // `notification_prefs` 를 두고 갔다 — 그래서 chat·inquiry·vendor_invite 는 알림은
+  // 나가는데 **끄는 설정을 저장할 수 없는** 상태였다. 0030 이 둘을 맞췄고, 이 검사가
+  // 다음 번 드리프트를 잡는다.
+  const dbPrefTopics = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.notification_prefs'::regclass
+        and conname = 'notification_prefs_topic_chk';`,
+  );
+
+  check(
+    "알림 토픽 목록이 수신 설정 CHECK 에서도 일치한다",
+    codeTopics.length > 0 && codeTopics.every((topic) => dbPrefTopics.includes(`'${topic}'`)),
+    `code=${codeTopics.join(",")}`,
+  );
+
+  check(
+    "결제 시도 상한도 코드가 아니라 app_settings 가 갖는다",
+    sql(`select count(*) from public.app_settings
+         where key = 'payment.max_attempts' and (value_json ->> 'count') ~ '^[0-9]+$';`) === "1",
   );
 }
 
