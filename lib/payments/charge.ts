@@ -566,6 +566,8 @@ export async function applyRefund(input: {
   amount: number;
   reason: string;
   actorId: string;
+  /** 해지 절차에서 나온 환불이면 그 절차. §3.4 가 적은 "위약금 산정 결과 연결" 이다. */
+  cancellationId?: string | null;
 }): Promise<{ status: "refunded"; nextStatus: string } | ChargeFailure> {
   const admin = createAdminClient();
 
@@ -616,9 +618,12 @@ export async function applyRefund(input: {
   // 움직인 사실은 지금 남겨야 한다 — 나중에 적으면 그 사이 기록이 비어 있다.
   await admin.from("refunds").insert({
     payment_id: payment.id,
+    cancellation_id: input.cancellationId ?? null,
     amount: input.amount,
     reason_code: input.reason.slice(0, 60),
     status: "completed",
+    // 상태와 시각의 짝은 DB CHECK 가 요구한다(0031) — 결제에 건 규칙과 같다.
+    completed_at: new Date().toISOString(),
   });
 
   await recordEvent({
