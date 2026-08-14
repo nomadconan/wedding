@@ -248,8 +248,8 @@ const cartFixture = `
 
 /** 위 픽스처에 더해, 플래너 위임까지 붙인다(범위: carts·wishlists). */
 const plannerFixture = `${cartFixture}
-  insert into public.planners (id, user_id, status)
-    values ('${PLANNER}', '${vendorStaff ?? outsider}', 'active');
+  insert into public.planners (id, user_id, status, profile_json, regions)
+    values ('${PLANNER}', '${vendorStaff ?? outsider}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
   insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
     values ('${PLANNER}', '${coupleId}', '{"tables":["carts","wishlists"]}'::jsonb,
             'active', now() - interval '1 day', now() + interval '30 days');
@@ -354,7 +354,7 @@ check(
   "위임 범위를 빼면 플래너도 못 본다",
   asUser(plannerUser, `select count(*) from public.cart_items;`,
     `${cartFixture}
-     insert into public.planners (id, user_id, status) values ('${PLANNER}', '${plannerUser}', 'active');
+     insert into public.planners (id, user_id, status, profile_json, regions) values ('${PLANNER}', '${plannerUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
      insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
        values ('${PLANNER}', '${coupleId}', '{"tables":["tasks"]}'::jsonb, 'active');`) === "0",
 );
@@ -1144,8 +1144,8 @@ if (!adminUser || !opsUser || !vendorStaff) {
   // 를 명시한다. 그 차이가 의도임을 확인한다. 장바구니(S3-04)에서 읽기를 준 것과
   // 갈리는 이유는 0021 헬퍼 블록에 적었다 — 대화에는 상대 당사자가 있다.
   const chatPlannerFixture = `${chatFixture}
-    insert into public.planners (id, user_id, status)
-      values ('${CPLANNER}', '${adminUser}', 'active');
+    insert into public.planners (id, user_id, status, profile_json, regions)
+      values ('${CPLANNER}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       values ('${CPLANNER}', '${coupleId}',
@@ -1925,7 +1925,7 @@ if (!adminUser || !opsUser || !vendorStaff) {
   // ── 3) 플래너 — **채팅과 갈리는 지점** ───────────────────────────────────
   // §3.9 는 상담 행에만 "위임 플래너" 를 명시한다. 채팅(0021)에서는 뺐다.
   const consultPlannerFixture = `${consultFixture}
-    insert into public.planners (id, user_id, status) values ('${PL2}', '${adminUser}', 'active');
+    insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       values ('${PL2}', '${coupleId}', '{"tables":["consultations"]}'::jsonb,
@@ -1961,7 +1961,7 @@ if (!adminUser || !opsUser || !vendorStaff) {
     "위임 범위를 빼면 플래너도 못 본다",
     asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
       `${consultFixture}
-       insert into public.planners (id, user_id, status) values ('${PL2}', '${adminUser}', 'active');
+       insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
        insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
          values ('${PL2}', '${coupleId}', '{"tables":["carts"]}'::jsonb, 'active');`) === "0",
   );
@@ -2429,9 +2429,9 @@ if (!vendorStaff || !adminUser) {
               'draft', 'pre_discount', now()),
              ('${POSET}', '${POV}', '2026-09-01', '2026-09-30', 20000000, 800, 1600000, 18400000,
               'draft', 'pre_discount', now());
-    insert into public.planners (id, user_id, status)
-      values ('${PPL}', '${owner}', 'active'),
-             ('${POPL}', '${partner}', 'active');
+    insert into public.planners (id, user_id, status, profile_json, regions)
+      values ('${PPL}', '${owner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']),
+             ('${POPL}', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
     insert into public.planner_settlements
       (id, planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
       values ('${PPS}', '${PPL}', '${PB}', 10000000, 300, 300000,
@@ -3979,8 +3979,8 @@ if (!vendorStaff || !adminUser) {
       "**위임이 없는 플래너는 카테고리에 지정할 수 없다** (보지도 못하는 플래너에게 수수료가 붙는다)",
       rejectedWith(/planner_scopes_no_engagement|위임이 활성 상태인/, () =>
         sql(`begin;
-          insert into public.planners (id, user_id, status)
-            values ('00000000-0000-0000-0000-00000000c0b9', '${partner}', 'active');
+          insert into public.planners (id, user_id, status, profile_json, regions)
+            values ('00000000-0000-0000-0000-00000000c0b9', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
           insert into public.planner_scopes (couple_id, planner_id, category)
             values ('${coupleId}', '00000000-0000-0000-0000-00000000c0b9', 'dress');
           rollback;`)),
@@ -4069,7 +4069,121 @@ if (!vendorStaff || !adminUser) {
          select count(*) from u;`) === "0",
     );
 
+    // ── 마켓·프로필 (S6-02 · 0037) ──────────────────────────────────────────
+    check(
+      "공개된 플래너는 비로그인도 본다 (마켓은 둘러보는 화면이다)",
+      asAnon(`select count(*) from public.planners where status = 'active';`) === "1",
+    );
+    check(
+      "**공개되지 않은 플래너는 남에게 보이지 않는다**",
+      asUser(
+        owner,
+        `select count(*) from public.planners where id = '00000000-0000-0000-0000-00000000c0c9';`,
+        `insert into public.planners (id, user_id, status, profile_json, regions)
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+      ) === "0",
+    );
+    check(
+      "본인은 자기 프로필을 상태와 무관하게 본다",
+      asUser(
+        partner,
+        `select status from public.planners where user_id = '${partner}';`,
+        `insert into public.planners (id, user_id, status, profile_json, regions)
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+      ) === "pending",
+    );
+    check(
+      "운영자는 검토를 위해 pending 프로필을 본다",
+      asUser(
+        adminUser,
+        `select count(*) from public.planners where status = 'pending';`,
+        `insert into public.planners (id, user_id, status, profile_json, regions)
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+      ) === "1",
+    );
+    check(
+      "**플래너가 스스로 공개 상태로 바꿀 수 없다** (심사가 형해화된다)",
+      rejectedWith(/planners_self_activate|공개 상태로는 직접/, () =>
+        asUser(
+          partner,
+          `update public.planners set status = 'active' where user_id = '${partner}';`,
+          `insert into public.planners (id, user_id, status, profile_json, regions)
+             values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending',
+                     '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+        )),
+    );
+    check(
+      "보류 상태도 본인이 정할 수 없다",
+      rejectedWith(/planners_self_reject|보류 상태는 운영자가/, () =>
+        asUser(
+          partner,
+          `update public.planners set status = 'rejected' where user_id = '${partner}';`,
+          `insert into public.planners (id, user_id, status, profile_json, regions)
+             values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+        )),
+    );
+    check(
+      "본인이 스스로 내리는 것(paused)은 할 수 있다",
+      asUser(
+        plannerAccount,
+        `with u as (update public.planners set status = 'paused'
+           where user_id = '${plannerAccount}' returning id) select count(*) from u;`,
+      ) === "1",
+    );
+    check(
+      "**요금을 프로필에 담을 수 없다** (요율의 진실이 둘이 된다 · D-16)",
+      rejectedWith(/planners_fee_json_empty/, () =>
+        sql(`begin;
+          update public.planners set fee_json = '{"hourly": 50000}'::jsonb
+            where id = '${PLANNER_ID}';
+          rollback;`)),
+    );
+    check(
+      "빈 프로필은 공개 상태가 될 수 없다 (마켓 전체의 신뢰가 걸린다)",
+      rejectedWith(/planners_profile_shape/, () =>
+        sql(`begin;
+          insert into public.planners (user_id, status, profile_json)
+            values ('${partner}', 'active', '{}'::jsonb);
+          rollback;`)),
+    );
+    check(
+      "알 수 없는 플래너 상태는 거절한다",
+      rejectedWith(/planners_status_values/, () =>
+        sql(`begin;
+          insert into public.planners (user_id, status) values ('${partner}', 'LISTED');
+          rollback;`)),
+    );
+    check(
+      "**실적 집계는 개수만 돌려준다** (뷰였다면 남의 정산이 새어 나간다)",
+      sql(`select public.planner_contract_count('${PLANNER_ID}');`) === "0",
+    );
+    check(
+      "실적 집계 함수는 비로그인도 부를 수 있다 (마켓이 쓴다)",
+      asAnon(`select public.planner_contract_count('${PLANNER_ID}');`) === "0",
+    );
+    check(
+      "**정산 표 자체는 여전히 남에게 닫혀 있다**",
+      asAnon(`select count(*) from public.planner_settlements;`) === "0",
+    );
+
     // ── 코드 ↔ DB 정합 ──────────────────────────────────────────────────────
+    const dbPlannerStatus = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.planners'::regclass and conname = 'planners_status_values';`,
+    );
+    const codePlannerStatus =
+      readFileSync("lib/core/planner/profile.ts", "utf8")
+        .match(/export const PLANNER_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
+        .match(/"([a-z_]+)"/g)
+        ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+    check(
+      "플래너 상태 목록이 코드와 DB CHECK 에서 일치한다",
+      codePlannerStatus.length > 0 &&
+        codePlannerStatus.every((v) => dbPlannerStatus.includes(`'${v}'`)),
+      `code=${codePlannerStatus.join(",")}`,
+    );
+
     const dbScopeCats = sql(
       `select pg_get_constraintdef(oid) from pg_constraint
         where conrelid = 'public.planner_scopes'::regclass

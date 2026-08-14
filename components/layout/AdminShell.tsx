@@ -37,7 +37,15 @@ import { cn } from "@/lib/utils";
  * 소비자 셸과 달리 하단 탭이 없다 — 데스크톱에서 하단 고정 내비게이션은
  * 화면 하단까지 시선을 끌고 내려가 표 작업을 방해한다.
  */
-export type AdminRole = "vendor" | "admin";
+/**
+ * S6-02 가 `planner` 를 더했다.
+ *
+ * **새 셸을 만들지 않은 이유.** 플래너는 **공급자 측 업무 콘솔**이고 화면 구조가
+ * 업체 어드민과 같다(좌측 내비 + 표·폼). ConsumerShell(375px 모바일 퍼스트 · 하단 탭
+ * 5개)에는 맞지 않고, 별도 셸을 만들면 같은 레이아웃이 두 벌이 되어 한쪽만 고치는
+ * 날이 온다. 다른 것은 **내비 항목뿐**이라 role 하나로 갈랐다.
+ */
+export type AdminRole = "vendor" | "admin" | "planner";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
 
@@ -75,9 +83,23 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];
 
+/**
+ * 플래너 콘솔 (F-C-18, §6.2 보완 제안)
+ *
+ * **`/planner` 를 쓰지 않는다.** §6.2 가 그 경로를 **AI 플래너 채팅**(F-C-03, 7단계)에
+ * 이미 배정했다 — 같은 접두어를 쓰면 "AI 플래너" 와 "사람 플래너" 가 한 자리에서
+ * 뒤섞인다. `/planners` 도 쓸 수 없다: 그쪽은 **소비자용 마켓**이라 셸도 RLS 전제도
+ * 다르다. 그래서 업체(`/vendor`)·운영자(`/admin`)와 같은 모양의 접두어 **`/pro`** 를
+ * 쓴다. 명세 §6 반영을 제안한다(§7.5).
+ */
+const PLANNER_NAV: NavItem[] = [
+  { href: "/pro", label: "내 프로필", icon: Store },
+];
+
 const ROLE_LABEL: Record<AdminRole, string> = {
   vendor: "업체 어드민",
   admin: "운영자 콘솔",
+  planner: "플래너 콘솔",
 };
 
 export type AdminShellProps = {
@@ -101,11 +123,11 @@ export function AdminShell({
   className,
 }: AdminShellProps) {
   const pathname = usePathname();
-  const nav = role === "vendor" ? VENDOR_NAV : ADMIN_NAV;
+  const nav = role === "vendor" ? VENDOR_NAV : role === "planner" ? PLANNER_NAV : ADMIN_NAV;
 
   function isActive(href: string) {
     // 대시보드(루트)는 정확히 일치할 때만 활성으로 본다.
-    const isRoot = href === "/vendor" || href === "/admin";
+    const isRoot = href === "/vendor" || href === "/admin" || href === "/pro";
     return isRoot ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
   }
 

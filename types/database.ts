@@ -5020,6 +5020,10 @@ export type Database = {
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       owns_coupon_issue: { Args: { p_issue_id: string }; Returns: boolean }
+      planner_contract_count: {
+        Args: { p_planner_id: string }
+        Returns: number
+      }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
