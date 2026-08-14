@@ -367,6 +367,33 @@ export const NOTIFICATION_TEMPLATES = {
     topic: "settlement",
     render: () => "정산금이 지급됐어요.",
   },
+  /**
+   * 안전거래 (S5-09).
+   *
+   * **토픽을 늘리지 않았다.** 고객에게 에스크로는 **결제한 돈의 상태**라 `payment`
+   * 이고, 업체에게 릴리즈는 **정산으로 가는 사건**이라 `settlement` 다. 토픽을 늘리면
+   * 수신 설정 화면이 복잡해지는데 사용자가 구분할 실익이 없다.
+   *
+   * **금액을 담지 않는다.** 참조만 담는다 — 조율 결과로 금액이 달라질 수 있고,
+   * 알림에 실린 숫자는 그 뒤에도 알림함에 남아 또 하나의 진실이 된다(§7.3).
+   * 문구가 "플랫폼이 돈을 받는다" 로 읽히지 않게 **맡는다·전달된다**로 적는다(D-24).
+   */
+  "escrow.held": {
+    topic: "payment",
+    render: () => "잔금이 안전거래로 맡겨졌어요. 이행이 확인되면 업체에 전달됩니다.",
+  },
+  "escrow.released": {
+    topic: "payment",
+    render: () => "이행이 확인되어 맡겨둔 금액이 업체 정산으로 넘어갔어요.",
+  },
+  "escrow.refunded": {
+    topic: "payment",
+    render: () => "맡겨둔 금액이 고객에게 환불됐어요.",
+  },
+  "escrow.released_vendor": {
+    topic: "settlement",
+    render: () => "안전거래 금액이 정산 대상으로 넘어왔어요.",
+  },
 } as const satisfies Record<
   string,
   { topic: NotificationTopic; render: (params: Record<string, unknown>) => string }

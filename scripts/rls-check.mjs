@@ -3356,6 +3356,22 @@ if (!vendorStaff || !adminUser) {
     );
   }
 
+  const dbEscrow = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.escrow_holds'::regclass and conname = 'escrow_holds_status_values';`,
+  );
+  const codeEscrow =
+    readFileSync("lib/core/escrow/escrow.ts", "utf8")
+      .match(/export const ESCROW_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
+      .match(/"([a-z_]+)"/g)
+      ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+  check(
+    "안전거래 상태 목록이 코드와 DB CHECK 에서 일치한다",
+    codeEscrow.length > 0 && codeEscrow.every((value) => dbEscrow.includes(`'${value}'`)),
+    `code=${codeEscrow.join(",")}`,
+  );
+
   // **금지가 살아 있는지 두 방향으로 본다** — 코드 목록에 리뷰 관련 값이 없는 것과,
   // DB CHECK 에도 없는 것. 한쪽만 보면 다른 쪽으로 들어온다(§7.7 · D-03).
   const dbConditions = sql(
@@ -3797,6 +3813,137 @@ if (!vendorStaff || !adminUser) {
     "**요율 값을 마이그레이션이 시드하지 않았다** (O-02 — 값은 화면에서 넣는다)",
     sql(`select count(*) from public.commission_rates
          where memo is null or memo not like 'local demo%';`) === "0",
+  );
+
+  // ===========================================================================
+  // 에스크로 (S5-09 · 0035)
+  // ---------------------------------------------------------------------------
+  //   (가) **승인된 결제 위에만 홀드가 선다** — 받지 않은 돈을 보관할 수 없다
+  //   (나) 종결은 되돌리지 않고 조율에서 보관으로도 돌아가지 않는다(D-23)
+  //   (다) 상태와 시각의 짝 · 조율 결과에 사유
+  //   (라) 경계가 RLS 인가 — 배우자 차단 · 타 업체 격리 · 운영자 열람 · 쓰기 금지
+  // ===========================================================================
+  const ESC = "00000000-0000-0000-0000-00000000f060";
+
+  const escrowFixture = `
+    ${activeFixture} ${consentFixture} ${paidInsert(PAY1)}
+    insert into public.escrow_holds
+      (id, payment_id, booking_id, payment_schedule_id, held_amount, status, held_at)
+      values ('${ESC}', '${PAY1}', '${PB}', '${PS1}', 2000000, 'held', now());
+  `;
+
+  check(
+    "승인되지 않은 결제 위에는 홀드를 세울 수 없다",
+    rejectedWith(/escrow_holds_payment_not_paid|승인된 결제만/, () =>
+      sql(`begin; ${activeFixture} ${paidInsert(PAY1, "pending")}
+        insert into public.escrow_holds (payment_id, booking_id, held_amount)
+          values ('${PAY1}', '${PB}', 2000000);
+        rollback;`)),
+  );
+  check(
+    "승인된 결제 위에는 홀드가 선다",
+    sql(`begin; ${escrowFixture}
+         select status from public.escrow_holds where id = '${ESC}'; rollback;`) === "held",
+  );
+  check(
+    "회차당 홀드는 하나뿐이다",
+    rejectedWith(/uq_escrow_holds_schedule|23505/, () =>
+      sql(`begin; ${escrowFixture}
+        insert into public.escrow_holds
+          (payment_id, booking_id, payment_schedule_id, held_amount)
+          values ('${PAY1}', '${PB}', '${PS1}', 2000000);
+        rollback;`)),
+  );
+  check(
+    "종결된 안전거래는 되돌릴 수 없다 (D-23)",
+    rejectedWith(/escrow_holds_transition|허용되지 않은 안전거래/, () =>
+      sql(`begin; ${escrowFixture}
+        update public.escrow_holds set status = 'released', released_at = now() where id = '${ESC}';
+        update public.escrow_holds set status = 'held', released_at = null where id = '${ESC}';
+        rollback;`)),
+  );
+  check(
+    "조율에서 보관으로 돌아가지 않는다 — 이의가 있었다는 사실이 남아야 한다",
+    rejectedWith(/escrow_holds_transition|허용되지 않은 안전거래/, () =>
+      sql(`begin; ${escrowFixture}
+        update public.escrow_holds set status = 'disputed', disputed_at = now() where id = '${ESC}';
+        update public.escrow_holds set status = 'held', disputed_at = null where id = '${ESC}';
+        rollback;`)),
+  );
+  check(
+    "이행 확인이 되면 릴리즈로 넘어간다",
+    sql(`begin; ${escrowFixture}
+        update public.escrow_holds set
+          couple_confirmed = true, couple_confirmed_at = now(),
+          vendor_confirmed = true, vendor_confirmed_at = now()
+          where id = '${ESC}';
+        update public.escrow_holds set status = 'released', released_at = now() where id = '${ESC}';
+        select status from public.escrow_holds where id = '${ESC}'; rollback;`) === "released",
+  );
+  check(
+    "확인 여부와 시각의 짝이 어긋나면 거절한다 (언제 확인됐는가가 쟁점이다)",
+    rejectedWith(/escrow_holds_confirm_pair/, () =>
+      sql(`begin; ${escrowFixture}
+        update public.escrow_holds set couple_confirmed = true where id = '${ESC}';
+        rollback;`)),
+  );
+  check(
+    "릴리즈 상태와 시각의 짝이 어긋나면 거절한다",
+    rejectedWith(/escrow_holds_released_pair/, () =>
+      sql(`begin; ${escrowFixture}
+        update public.escrow_holds set status = 'released' where id = '${ESC}';
+        rollback;`)),
+  );
+  check(
+    "조율 결과에는 사유가 반드시 붙는다 (D-24)",
+    rejectedWith(/escrow_holds_resolution_shape/, () =>
+      sql(`begin; ${escrowFixture}
+        update public.escrow_holds set resolved_by = '${adminUser}', resolution_note = null
+          where id = '${ESC}';
+        rollback;`)),
+  );
+
+  // ── 열람·쓰기 경계 ────────────────────────────────────────────────────────
+  check(
+    "커플 소유자는 자기 안전거래를 본다",
+    asUser(owner, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+  );
+  check(
+    "업체 멤버도 안전거래를 본다 (이행 확인의 당사자다)",
+    asUser(vendorStaff, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+  );
+  check(
+    "배우자는 안전거래를 못 본다 (결제·서명과 같은 owner 조건)",
+    asUser(partner, `select count(*) from public.escrow_holds;`, escrowFixture) === "0",
+  );
+  check(
+    "운영자는 조율을 위해 안전거래를 본다",
+    asUser(adminUser, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+  );
+  check(
+    "비로그인은 안전거래를 못 본다",
+    asAnon(`select count(*) from public.escrow_holds;`, escrowFixture) === "0",
+  );
+  check(
+    "안전거래는 당사자가 쓸 수 없다 (스스로 이행을 확인하고 릴리즈할 수 있다)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.escrow_holds (payment_id, booking_id, held_amount)
+         values ('${PAY1}', '${PB}', 1);`, escrowFixture)),
+  );
+  check(
+    "당사자가 이행 확인을 고쳐 쓸 수 없다",
+    asUser(owner, `with u as (update public.escrow_holds set status = 'released' returning id)
+       select count(*) from u;`, escrowFixture) === "0",
+  );
+  check(
+    "실예치 활성 여부는 O-03 대기로 남아 있다 — 코드가 켜지 않았다",
+    sql(`select value_json ->> 'status' from public.app_settings where key = 'escrow.enabled';`)
+      === "undecided",
+  );
+  check(
+    "이행 확인 기한도 코드가 아니라 app_settings 가 갖는다",
+    sql(`select count(*) from public.app_settings
+         where key = 'escrow.confirm_due_days' and (value_json ->> 'days') ~ '^[0-9]+$';`) === "1",
   );
 
   // 운영자 정책이 문을 넓히지 않았는지는 **운영자가 아닌 사람**으로 확인한다.

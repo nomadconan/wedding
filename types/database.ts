@@ -1858,41 +1858,106 @@ export type Database = {
       }
       escrow_holds: {
         Row: {
+          booking_id: string | null
+          confirm_due_at: string | null
+          couple_confirmed: boolean | null
+          couple_confirmed_at: string | null
           created_at: string
+          disputed_at: string | null
           held_amount: number
+          held_at: string | null
           hold_reason: string | null
           id: string
+          idempotency_key: string | null
           payment_id: string
+          payment_schedule_id: string | null
+          provider: string | null
+          provider_ref: string | null
+          refunded_at: string | null
           release_condition: Json
+          release_reason: string | null
           released_at: string | null
+          resolution_note: string | null
+          resolved_by: string | null
+          status: string
           updated_at: string
+          vendor_confirmed: boolean | null
+          vendor_confirmed_at: string | null
         }
         Insert: {
+          booking_id?: string | null
+          confirm_due_at?: string | null
+          couple_confirmed?: boolean | null
+          couple_confirmed_at?: string | null
           created_at?: string
+          disputed_at?: string | null
           held_amount: number
+          held_at?: string | null
           hold_reason?: string | null
           id?: string
+          idempotency_key?: string | null
           payment_id: string
+          payment_schedule_id?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          refunded_at?: string | null
           release_condition?: Json
+          release_reason?: string | null
           released_at?: string | null
+          resolution_note?: string | null
+          resolved_by?: string | null
+          status?: string
           updated_at?: string
+          vendor_confirmed?: boolean | null
+          vendor_confirmed_at?: string | null
         }
         Update: {
+          booking_id?: string | null
+          confirm_due_at?: string | null
+          couple_confirmed?: boolean | null
+          couple_confirmed_at?: string | null
           created_at?: string
+          disputed_at?: string | null
           held_amount?: number
+          held_at?: string | null
           hold_reason?: string | null
           id?: string
+          idempotency_key?: string | null
           payment_id?: string
+          payment_schedule_id?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          refunded_at?: string | null
           release_condition?: Json
+          release_reason?: string | null
           released_at?: string | null
+          resolution_note?: string | null
+          resolved_by?: string | null
+          status?: string
           updated_at?: string
+          vendor_confirmed?: boolean | null
+          vendor_confirmed_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "escrow_holds_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "escrow_holds_payment_id_fkey"
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "escrow_holds_payment_schedule_id_fkey"
+            columns: ["payment_schedule_id"]
+            isOneToOne: false
+            referencedRelation: "payment_schedules"
             referencedColumns: ["id"]
           },
         ]

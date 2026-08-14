@@ -1,6 +1,7 @@
 import { readIntSetting, readSetting } from "@/lib/app-settings";
 import { recordEvent } from "@/lib/audit/record";
 import { vendorBorneTotal } from "@/lib/core/coupon/coupon";
+import { settlementEligible, type EscrowStatus } from "@/lib/core/escrow/escrow";
 import { feeBasisOf } from "@/lib/core/payment/payment";
 import {
   applyAdjustments,
@@ -117,6 +118,14 @@ async function collectLines(
     .select("booking_id, discount_amount, borne_by")
     .in("booking_id", ids);
 
+  // **보관 중인 돈을 업체에 지급하지 않는다**(S5-09). 완납과 이행 확인은 다른
+  // 사건이다 — 잔금을 냈다는 것과 서비스가 이행됐다는 것은 별개이며, 열린 홀드가
+  // 있으면 그 예약은 이번 기간에서 뺀다(다음 기간에 다시 후보가 된다).
+  const { data: escrowRows } = await admin
+    .from("escrow_holds")
+    .select("booking_id, status")
+    .in("booking_id", ids);
+
   const lines: SettlementLine[] = [];
   const included: string[] = [];
 
@@ -152,6 +161,13 @@ async function collectLines(
 
     const day = lastPaidAt.slice(0, 10);
     if (day < period.start || day > period.end) continue;
+
+    const holds = ((escrowRows ?? []) as { booking_id: string | null; status: string }[])
+      .filter((row) => row.booking_id === booking.id)
+      .map((row) => ({ status: row.status as EscrowStatus }));
+
+    // 열린 홀드가 하나라도 있으면 이번 정산에서 뺀다 — 돈이 사라지는 것이 아니라 늦어진다.
+    if (!settlementEligible(holds).ok) continue;
 
     const paidAmount = payments.reduce(
       (sum, row) => sum + row.amount - row.refunded_amount,

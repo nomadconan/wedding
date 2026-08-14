@@ -35,6 +35,9 @@ export default defineConfig({
       // S5-07. 지급 어댑터도 같은 이유다 — 깨지면 **보내지 않은 돈이 나갔다고
       // 기록**되고, 업체는 정산서의 '지급 완료' 를 보며 오지 않는 입금을 기다린다.
       "lib/settlements/**/*.test.ts",
+      // S5-09. 에스크로 어댑터 — 깨지면 **맡기지도 않은 돈을 맡았다고 기록**하고
+      // 고객은 "안전거래로 보호받고 있다" 는 화면을 보며 안심한다.
+      "lib/escrow/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {

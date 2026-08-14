@@ -23,6 +23,7 @@
  *  3. **쿠폰 되돌리기.** 테이블이 아직 없다(S5-11). 자리만 두고 신호를 남긴다.
  */
 
+import { twoSidedOutcome } from "../confirmation/two-sided";
 import { AI_DISCLAIMER } from "../legal";
 
 /** 금액·상태 입력이 규약을 벗어날 때 던진다. */
@@ -419,10 +420,15 @@ export type ConfirmationDecision = "waiting" | "agreed" | "disputed";
 /**
  * 양측 확인 결과.
  *
+ * **판정 뼈대는 `lib/core/confirmation/two-sided.ts` 가 갖는다**(S5-09 가 뽑아냈다).
+ * 여기서 하는 일은 그 결과를 **해지 도메인의 뜻으로 옮기는 것**뿐이다.
+ *
  * **무응답을 동의로 읽지 않는다.** S4-07 은 상담 보증금에서 "양측 무응답의 기본값은
  * 환불" 로 정했는데, 그것은 금액이 소액·정형이고 방향이 하나였기 때문이다. 계약 해지는
  * 금액이 크고 **귀책에 따라 결과가 정반대**라 기본값을 만들 수 없다. 기한이 지나면
  * 조율로 보낸다 — 자동 집행보다 사람이 보는 편이 낫다.
+ * (에스크로는 **반대로** 기한 경과를 릴리즈로 읽는다 — S5-09 참조. 같은 뼈대를 쓰되
+ * 해석이 다른 것이 이 분리의 이유다.)
  *
  * 한쪽이 이의를 내면 즉시 조율이다. 기다릴 이유가 없다.
  */
@@ -432,14 +438,16 @@ export function confirmationDecision(input: {
   dueAt: string | null;
   now: Date;
 }): ConfirmationDecision {
-  if (input.coupleAgreed === false || input.vendorAgreed === false) return "disputed";
-  if (input.coupleAgreed === true && input.vendorAgreed === true) return "agreed";
+  const outcome = twoSidedOutcome({
+    partyA: input.coupleAgreed,
+    partyB: input.vendorAgreed,
+    dueAt: input.dueAt,
+    now: input.now,
+  });
 
-  if (input.dueAt !== null) {
-    const due = Date.parse(input.dueAt);
-
-    if (!Number.isNaN(due) && input.now.getTime() >= due) return "disputed";
-  }
+  if (outcome === "agreed") return "agreed";
+  // 이의도 무응답도 **조율**로 간다. 자동 집행하지 않는 것이 이 도메인의 규칙이다.
+  if (outcome === "rejected" || outcome === "timeout") return "disputed";
 
   return "waiting";
 }
