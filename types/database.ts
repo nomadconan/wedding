@@ -3044,6 +3044,60 @@ export type Database = {
         }
         Relationships: []
       }
+      planner_scopes: {
+        Row: {
+          category: string
+          couple_id: string
+          created_at: string
+          id: string
+          planner_id: string
+          released_at: string | null
+          selected_at: string
+          selected_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          couple_id: string
+          created_at?: string
+          id?: string
+          planner_id: string
+          released_at?: string | null
+          selected_at?: string
+          selected_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          couple_id?: string
+          created_at?: string
+          id?: string
+          planner_id?: string
+          released_at?: string | null
+          selected_at?: string
+          selected_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "planner_scopes_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "planner_scopes_planner_id_fkey"
+            columns: ["planner_id"]
+            isOneToOne: false
+            referencedRelation: "planners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       planner_settlements: {
         Row: {
           booking_id: string

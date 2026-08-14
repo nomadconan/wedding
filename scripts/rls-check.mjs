@@ -126,6 +126,11 @@ const vendorStaff = idOf("staff@local.test");
 // 위임받은 플래너 · 운영자. 시드 계정 6개로 그 넷을 다 세우려면 아래처럼 겹쳐 쓴다.
 const adminUser = idOf("admin@local.test");
 const opsUser = idOf("ops@local.test");
+// S6-01. **전용 계정**이어야 한다 — 소비자 계정을 겸하면 "플래너"와 "커플 구성원"이
+// 같은 사람이 되어 격리 검사가 엉뚱한 이유로 통과한다.
+// (S3-04 구역의 `plannerUser` 는 vendorStaff 를 플래너 대역으로 쓰는 **옛 임시 조치**다.
+//  이름이 겹치지 않게 여기서는 `plannerAccount` 로 둔다 — FIX-16 참조.)
+const plannerAccount = idOf("planner@local.test");
 
 if (!owner || !partner || !outsider) {
   console.error("시드 계정이 없다. npm run seed:accounts 를 먼저 실행한다.");
@@ -3945,6 +3950,143 @@ if (!vendorStaff || !adminUser) {
     sql(`select count(*) from public.app_settings
          where key = 'escrow.confirm_due_days' and (value_json ->> 'days') ~ '^[0-9]+$';`) === "1",
   );
+
+  // ===========================================================================
+  // 플래너 범위 (S6-01 · 0036)
+  // ---------------------------------------------------------------------------
+  //   (가) **두 축이 독립인가** — 위임(열람)과 카테고리 선택(과금)
+  //   (나) 위임 없는 플래너를 카테고리에 붙일 수 없는가
+  //   (다) 플래너가 **읽기만** 하는가(스스로 범위를 넓히면 자기 수수료를 늘린다)
+  //   (라) 해제가 삭제가 아닌가(D-23) · 카테고리당 동시 선택 1
+  // ===========================================================================
+  if (!plannerAccount) {
+    console.log("SKIP  플래너 항목 — planner@local.test 가 없다");
+  } else {
+    const PLANNER_ID = "00000000-0000-0000-0000-00000000c0b1";
+
+    // 시드가 만든 위임을 그대로 쓴다(활성 · couples·carts·consultations).
+    const scopeFixture = `
+      insert into public.planner_scopes (couple_id, planner_id, category, selected_by)
+        values ('${coupleId}', '${PLANNER_ID}', 'studio', '${owner}');
+    `;
+
+    check(
+      "위임이 활성인 플래너는 카테고리에 지정할 수 있다",
+      sql(`begin; ${scopeFixture}
+           select count(*) from public.planner_scopes; rollback;`) === "1",
+    );
+    check(
+      "**위임이 없는 플래너는 카테고리에 지정할 수 없다** (보지도 못하는 플래너에게 수수료가 붙는다)",
+      rejectedWith(/planner_scopes_no_engagement|위임이 활성 상태인/, () =>
+        sql(`begin;
+          insert into public.planners (id, user_id, status)
+            values ('00000000-0000-0000-0000-00000000c0b9', '${partner}', 'active');
+          insert into public.planner_scopes (couple_id, planner_id, category)
+            values ('${coupleId}', '00000000-0000-0000-0000-00000000c0b9', 'dress');
+          rollback;`)),
+    );
+    check(
+      "카테고리당 동시에 선택된 플래너는 하나다",
+      rejectedWith(/uq_planner_scopes_selected|23505/, () =>
+        sql(`begin; ${scopeFixture} ${scopeFixture} rollback;`)),
+    );
+    check(
+      "해제한 뒤에는 같은 카테고리를 다시 선택할 수 있다 (재선택은 새 행)",
+      sql(`begin; ${scopeFixture}
+           update public.planner_scopes set status = 'released', released_at = now();
+           ${scopeFixture}
+           select count(*) from public.planner_scopes; rollback;`) === "2",
+    );
+    check(
+      "해제 상태와 시각의 짝이 어긋나면 거절한다 (언제 뺐는가가 쟁점이다)",
+      rejectedWith(/planner_scopes_released_pair/, () =>
+        sql(`begin; ${scopeFixture}
+          update public.planner_scopes set status = 'released';
+          rollback;`)),
+    );
+    check(
+      "판매가가 없는 카테고리는 지정할 수 없다 (수수료가 붙을 자리가 없다)",
+      rejectedWith(/planner_scopes_category_values/, () =>
+        sql(`begin;
+          insert into public.planner_scopes (couple_id, planner_id, category)
+            values ('${coupleId}', '${PLANNER_ID}', 'helper');
+          rollback;`)),
+    );
+
+    // ── 열람·쓰기 경계 ──────────────────────────────────────────────────────
+    check(
+      "커플 구성원은 카테고리 선택을 본다",
+      asUser(owner, `select count(*) from public.planner_scopes;`, scopeFixture) === "1",
+    );
+    check(
+      "**배우자도 카테고리를 고를 수 있다** (결제·서명과 다른 층 — 구성 선택이다)",
+      asUser(partner, `with i as (insert into public.planner_scopes
+         (couple_id, planner_id, category, selected_by)
+         values ('${coupleId}', '${PLANNER_ID}', 'dress', '${partner}') returning id)
+         select count(*) from i;`) === "1",
+    );
+    check(
+      "플래너는 자기가 맡은 카테고리를 본다",
+      asUser(plannerAccount, `select count(*) from public.planner_scopes;`, scopeFixture) === "1",
+    );
+    check(
+      "**플래너는 카테고리를 스스로 넓힐 수 없다** (자기 수수료를 늘리는 행위다)",
+      rejectedWith(/row-level security/i, () =>
+        asUser(plannerAccount, `insert into public.planner_scopes
+           (couple_id, planner_id, category)
+           values ('${coupleId}', '${PLANNER_ID}', 'hall');`, scopeFixture)),
+    );
+    check(
+      "타 커플은 남의 카테고리 선택을 못 본다",
+      asUser(outsider, `select count(*) from public.planner_scopes;`, scopeFixture) === "0",
+    );
+    check(
+      "비로그인은 카테고리 선택을 못 본다",
+      asAnon(`select count(*) from public.planner_scopes;`, scopeFixture) === "0",
+    );
+    check(
+      "**선택 이력은 지울 수 없다** (언제부터 언제까지 썼는가가 남아야 한다 · D-23)",
+      rejectedWith(/permission denied|42501/i, () =>
+        asUser(owner, `delete from public.planner_scopes;`, scopeFixture)),
+    );
+
+    // ── 두 축이 독립인가 ────────────────────────────────────────────────────
+    check(
+      "위임은 **표 단위**다 — 카테고리를 하나도 안 골라도 위임된 표는 보인다",
+      asUser(plannerAccount, `select count(*) from public.couples;`) === "1",
+    );
+    check(
+      "위임 범위 밖(채팅)은 카테고리를 골라도 안 보인다 (S4-01 경계)",
+      asUser(plannerAccount, `select count(*) from public.chat_rooms;`, scopeFixture) === "0",
+    );
+    check(
+      "위임 범위 밖(결제)도 안 보인다 (S5-06 경계)",
+      asUser(plannerAccount, `select count(*) from public.payments;`, scopeFixture) === "0",
+    );
+    check(
+      "장바구니는 읽히되 쓰이지 않는다 (S3-04 경계)",
+      asUser(plannerAccount, `with u as (update public.carts set name = '침입' returning id)
+         select count(*) from u;`) === "0",
+    );
+
+    // ── 코드 ↔ DB 정합 ──────────────────────────────────────────────────────
+    const dbScopeCats = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.planner_scopes'::regclass
+          and conname = 'planner_scopes_category_values';`,
+    );
+    const codeScopeCats =
+      readFileSync("lib/core/planner/scope.ts", "utf8")
+        .match(/export const PLANNER_CATEGORIES = \[([\s\S]*?)\] as const;/)?.[1]
+        .match(/"([a-z_]+)"/g)
+        ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+    check(
+      "플래너 카테고리 목록이 코드와 DB CHECK 에서 일치한다",
+      codeScopeCats.length > 0 && codeScopeCats.every((v) => dbScopeCats.includes(`'${v}'`)),
+      `code=${codeScopeCats.join(",")}`,
+    );
+  }
 
   // 운영자 정책이 문을 넓히지 않았는지는 **운영자가 아닌 사람**으로 확인한다.
   // 시드에서 타 업체 대표 자리를 admin 계정이 겸하고 있어(계정 6개로 넷을 세운 탓)
