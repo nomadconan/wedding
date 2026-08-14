@@ -2415,10 +2415,15 @@ if (!vendorStaff || !adminUser) {
       (id, contract_id, seq, ratio_bp, due_anchor, due_offset_days, amount)
       values ('${PS1}', '${PC}', 1, 2000, 'on_contract', 0, 2000000),
              ('${PS2}', '${PC}', 2, 8000, 'before_event', 30, 8000000);
+    -- 0033 이 "계산이 선 정산서에는 기준 스냅샷이 있어야 한다" 를 CHECK 로 세웠다.
+    -- 그래서 이 픽스처도 fee_basis 를 갖는다(검사의 뜻은 그대로다).
     insert into public.settlements
-      (id, vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount)
-      values ('${PSET}', '${PV}', '2026-09-01', '2026-09-30', 10000000, 500, 500000, 9500000),
-             ('${POSET}', '${POV}', '2026-09-01', '2026-09-30', 20000000, 800, 1600000, 18400000);
+      (id, vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount,
+       status, fee_basis, calculated_at)
+      values ('${PSET}', '${PV}', '2026-09-01', '2026-09-30', 10000000, 500, 500000, 9500000,
+              'draft', 'pre_discount', now()),
+             ('${POSET}', '${POV}', '2026-09-01', '2026-09-30', 20000000, 800, 1600000, 18400000,
+              'draft', 'pre_discount', now());
     insert into public.planners (id, user_id, status)
       values ('${PPL}', '${owner}', 'active'),
              ('${POPL}', '${partner}', 'active');
@@ -2628,9 +2633,16 @@ if (!vendorStaff || !adminUser) {
     "**staff 는 정산서를 못 본다** (S2-08 이 화면에서만 막던 것을 DB 로 내렸다)",
     asUser(vendorStaff, `select count(*) from public.settlements;`, payFixture) === "0",
   );
+  // 0033 이 운영자 열람 정책을 더했다(F-A-11 — 집행하려면 봐야 한다). 시드에서 타 업체
+  // 대표 자리를 admin 계정이 겸하고 있어 그 계정으로는 격리를 볼 수 없다 —
+  // **운영자가 아닌 업체 대표**(outsider)로 격리를, admin 으로 운영자 열람을 각각 본다.
   check(
-    "타 업체 대표는 남의 정산서만 본다 (격리)",
-    asUser(adminUser, `select id from public.settlements;`, payFixture) === POSET,
+    "업체 대표는 자기 정산서만 본다 (격리)",
+    asUser(outsider, `select id from public.settlements;`, payFixture) === PSET,
+  );
+  check(
+    "운영자는 모든 정산서를 본다 (F-A-11 — 집행하려면 봐야 한다)",
+    asUser(adminUser, `select count(*) from public.settlements;`, payFixture) === "2",
   );
   check(
     "커플은 업체 정산서를 못 본다",
@@ -2644,15 +2656,17 @@ if (!vendorStaff || !adminUser) {
     "staff 는 정산 명세도 못 본다 (상위 스코프를 그대로 따른다)",
     asUser(vendorStaff, `select count(*) from public.settlement_items;`,
       `${payFixture}
-       insert into public.settlement_items (settlement_id, booking_id, amount)
-         values ('${PSET}', '${PB}', 10000000);`) === "0",
+       insert into public.settlement_items
+         (settlement_id, booking_id, amount, fee_rate_bp, fee_amount, net_amount)
+         values ('${PSET}', '${PB}', 10000000, 500, 500000, 9500000);`) === "0",
   );
   check(
     "대표는 정산 명세를 본다",
     asUser(outsider, `select count(*) from public.settlement_items;`,
       `${payFixture}
-       insert into public.settlement_items (settlement_id, booking_id, amount)
-         values ('${PSET}', '${PB}', 10000000);`) === "1",
+       insert into public.settlement_items
+         (settlement_id, booking_id, amount, fee_rate_bp, fee_amount, net_amount)
+         values ('${PSET}', '${PB}', 10000000, 500, 500000, 9500000);`) === "1",
   );
   check(
     "정산액 정합이 깨지면 거절한다 (순액 = 총액 - 수수료)",
@@ -2661,8 +2675,10 @@ if (!vendorStaff || !adminUser) {
         insert into public.vendors (id, name, category, status)
           values ('${PV}', 'RLS정산업체', 'hall', 'active');
         insert into public.settlements
-          (vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount)
-          values ('${PV}', '2026-10-01', '2026-10-31', 10000000, 500, 500000, 9000000);
+          (vendor_id, period_start, period_end, gross_amount, fee_rate_bp, fee_amount, net_amount,
+           status, fee_basis, calculated_at)
+          values ('${PV}', '2026-10-01', '2026-10-31', 10000000, 500, 500000, 9000000,
+                  'draft', 'pre_discount', now());
         rollback;`)),
   );
   check(
@@ -3292,6 +3308,81 @@ if (!vendorStaff || !adminUser) {
          where key = 'payment.max_attempts' and (value_json ->> 'count') ~ '^[0-9]+$';`) === "1",
   );
 
+  // ── S5-11·S5-07 이 더한 정합 ──────────────────────────────────────────────
+  for (const [label, file, constant, table, constraint] of [
+    [
+      "쿠폰 발행 조건",
+      "lib/core/coupon/coupon.ts",
+      "ISSUE_CONDITIONS",
+      "coupons",
+      "coupons_issue_condition_values",
+    ],
+    [
+      "정산 상태",
+      "lib/core/settlement/settlement.ts",
+      "SETTLEMENT_STATUSES",
+      "settlements",
+      "settlements_status_values",
+    ],
+    [
+      "상계 근거",
+      "lib/core/settlement/settlement.ts",
+      "ADJUSTMENT_SOURCES",
+      "settlement_adjustments",
+      "settlement_adjustments_source_values",
+    ],
+    [
+      "지급 상태",
+      "lib/core/settlement/settlement.ts",
+      "PAYOUT_STATUSES",
+      "settlement_payouts",
+      "settlement_payouts_status_values",
+    ],
+  ]) {
+    const dbDef = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.${table}'::regclass and conname = '${constraint}';`,
+    );
+    const codeValues =
+      readFileSync(file, "utf8")
+        .match(new RegExp(`export const ${constant} = \\[([\\s\\S]*?)\\] as const;`))?.[1]
+        .match(/"([a-z_]+)"/g)
+        ?.map((value) => value.replaceAll('"', "")) ?? [];
+
+    check(
+      `${label} 목록이 코드와 DB CHECK 에서 일치한다`,
+      codeValues.length > 0 && codeValues.every((value) => dbDef.includes(`'${value}'`)),
+      `code=${codeValues.join(",")}`,
+    );
+  }
+
+  // **금지가 살아 있는지 두 방향으로 본다** — 코드 목록에 리뷰 관련 값이 없는 것과,
+  // DB CHECK 에도 없는 것. 한쪽만 보면 다른 쪽으로 들어온다(§7.7 · D-03).
+  const dbConditions = sql(
+    `select pg_get_constraintdef(oid) from pg_constraint
+      where conrelid = 'public.coupons'::regclass and conname = 'coupons_issue_condition_values';`,
+  );
+
+  check(
+    "**쿠폰 발행 조건에 리뷰·후기·평점이 없다** (§7.7 · D-03)",
+    !/review|후기|평점|rating/i.test(dbConditions),
+    dbConditions.slice(0, 80),
+  );
+
+  for (const [label, key, field] of [
+    ["쿠폰 할인율 상한", "coupon.max_discount_rate_bp", "rateBp"],
+    ["쿠폰 중복 규칙", "coupon.stacking", "mode"],
+    ["쿠폰 기본 유효기간", "coupon.default_valid_days", "days"],
+    ["정산 지급 리드타임", "settlement.payout_lead_days", "days"],
+    ["부가세율", "settlement.tax_rate_bp", "rateBp"],
+  ]) {
+    check(
+      `${label}도 코드가 아니라 app_settings 가 갖는다`,
+      sql(`select count(*) from public.app_settings
+           where key = '${key}' and value_json ? '${field}';`) === "1",
+    );
+  }
+
   // ── S5-08 이 더한 정합 ────────────────────────────────────────────────────
   // 해지의 값 집합도 코드와 DB 두 곳에 있다. 한쪽만 늘리면 **화면이 보낸 사유를 DB 가
   // 거절**하고, 그 실패는 사용자에게 알 수 없는 오류로 보인다.
@@ -3328,6 +3419,298 @@ if (!vendorStaff || !adminUser) {
       `${activeFixture} ${cancelInsert(CX)}`,
     ) === "1",
   );
+  // ===========================================================================
+  // 쿠폰 (S5-11 · 0032)
+  // ---------------------------------------------------------------------------
+  //   (가) **리뷰 대가 쿠폰을 스키마가 막는가**(§7.7 · D-03) — 이 검사가 그 금지의 실효다
+  //   (나) 정률에 상한이 붙는가 · 발행 주체와 id 의 짝
+  //   (다) 발급 1건은 한 번만 · 중복 발급 금지 · 수량 소진
+  //   (라) 사용 이력이 insert-only 인가
+  // ===========================================================================
+  const CP = "00000000-0000-0000-0000-00000000f030"; // 업체 쿠폰
+  const CI = "00000000-0000-0000-0000-00000000f031"; // 발급분
+
+  const couponFixture = `
+    ${payFixture}
+    insert into public.coupons
+      (id, issuer_type, issuer_id, name, discount_type, discount_value,
+       max_discount_amount, min_order_amount, issue_condition)
+      values ('${CP}', 'vendor', '${PV}', 'RLS쿠폰', 'rate', 1000, 500000, 0, 'first_purchase');
+    insert into public.coupon_issues (id, coupon_id, couple_id)
+      values ('${CI}', '${CP}', '${coupleId}');
+  `;
+
+  check(
+    "**리뷰 작성 대가 쿠폰은 스키마가 막는다** (§7.7 · D-03)",
+    rejectedWith(/coupons_issue_condition_values/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.coupons
+          (issuer_type, issuer_id, name, discount_type, discount_value, max_discount_amount, issue_condition)
+          values ('vendor', '${PV}', '후기쿠폰', 'amount', 5000, null, 'review_written');
+        rollback;`)),
+  );
+  check(
+    "정률 쿠폰에 상한이 없으면 거절한다 (업체 정산을 통째로 지운다)",
+    rejectedWith(/coupons_max_discount_shape/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.coupons
+          (issuer_type, issuer_id, name, discount_type, discount_value, max_discount_amount, issue_condition)
+          values ('vendor', '${PV}', '무제한', 'rate', 5000, null, 'first_purchase');
+        rollback;`)),
+  );
+  check(
+    "정액 쿠폰에 상한을 두면 거절한다 (두 값이 서로를 부정한다)",
+    rejectedWith(/coupons_max_discount_shape/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.coupons
+          (issuer_type, issuer_id, name, discount_type, discount_value, max_discount_amount, issue_condition)
+          values ('vendor', '${PV}', '정액', 'amount', 5000, 1000, 'first_purchase');
+        rollback;`)),
+  );
+  check(
+    "플랫폼 쿠폰에 업체 id 가 붙으면 거절한다 (부담 주체가 흐려진다)",
+    rejectedWith(/coupons_issuer_shape/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.coupons
+          (issuer_type, issuer_id, name, discount_type, discount_value, issue_condition)
+          values ('platform', '${PV}', '플랫폼', 'amount', 5000, 'period_event');
+        rollback;`)),
+  );
+  check(
+    "같은 쿠폰을 같은 커플에게 두 번 발급하지 않는다",
+    rejectedWith(/uq_coupon_issues_couple|23505/, () =>
+      sql(`begin; ${couponFixture}
+        insert into public.coupon_issues (coupon_id, couple_id) values ('${CP}', '${coupleId}');
+        rollback;`)),
+  );
+  check(
+    "수량이 소진되면 발급을 거절한다",
+    rejectedWith(/coupons_quantity|소진/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.coupons
+          (id, issuer_type, issuer_id, name, discount_type, discount_value, issue_condition, total_quantity)
+          values ('${CP}', 'vendor', '${PV}', '한정', 'amount', 5000, 'period_event', 1);
+        insert into public.coupon_issues (coupon_id, couple_id) values ('${CP}', '${coupleId}');
+        insert into public.coupon_issues (coupon_id, user_id) values ('${CP}', '${owner}');
+        rollback;`)),
+  );
+  check(
+    "발급 1건은 한 번만 쓴다",
+    rejectedWith(/coupon_redemptions_coupon_issue_id_key|사용할 수 없는 쿠폰|23505/, () =>
+      sql(`begin; ${couponFixture}
+        insert into public.coupon_redemptions (coupon_issue_id, booking_id, discount_amount, borne_by)
+          values ('${CI}', '${PB}', 100000, 'vendor');
+        insert into public.coupon_redemptions (coupon_issue_id, booking_id, discount_amount, borne_by)
+          values ('${CI}', '${PB}', 100000, 'vendor');
+        rollback;`)),
+  );
+  check(
+    "사용하면 발급분이 used 로 넘어간다",
+    sql(`begin; ${couponFixture}
+        insert into public.coupon_redemptions (coupon_issue_id, booking_id, discount_amount, borne_by)
+          values ('${CI}', '${PB}', 100000, 'vendor');
+        select status from public.coupon_issues where id = '${CI}'; rollback;`) === "used",
+  );
+  check(
+    "사용 이력은 고칠 수 없다 (insert-only · 되돌리는 일은 환불이다)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(owner, `update public.coupon_redemptions set discount_amount = 1;`, couponFixture)),
+  );
+  check(
+    "사용 이력은 지울 수 없다",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(owner, `delete from public.coupon_redemptions;`, couponFixture)),
+  );
+  check(
+    "고객은 자기 발급분을 본다",
+    asUser(owner, `select count(*) from public.coupon_issues;`, couponFixture) === "1",
+  );
+  check(
+    "업체는 자사 쿠폰 발급 현황을 본다",
+    asUser(outsider, `select count(*) from public.coupon_issues;`, couponFixture) === "1",
+  );
+  check(
+    "타 업체는 남의 쿠폰을 못 본다",
+    asUser(vendorStaff, `select count(*) from public.coupons where issuer_id is null;`, couponFixture) === "0",
+  );
+  check(
+    "비로그인은 쿠폰을 못 본다",
+    asAnon(`select count(*) from public.coupons;`, couponFixture) === "0",
+  );
+  check(
+    "쿠폰 발급은 당사자가 못 한다 (수량·조건을 우회할 수 있다)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.coupon_issues (coupon_id, user_id)
+         values ('${CP}', '${owner}');`, couponFixture)),
+  );
+
+  // ===========================================================================
+  // 정산 집행 (S5-07 · 0033)
+  // ---------------------------------------------------------------------------
+  //   (가) **미결(fee_basis)은 실패가 아니라 대기** — blocked 에 사유가 붙는가
+  //   (나) 확정된 정산서가 동결되는가(D-23) · 성공한 지급 없이 paid 로 못 가는가
+  //   (다) 정산서당 지급은 하나 · 상계는 근거당 한 번
+  //   (라) 경계가 RLS 인가 — staff 차단 · 타 업체 격리 · 운영자 열람 · 금액 쓰기 금지
+  // ===========================================================================
+  const ST = "00000000-0000-0000-0000-00000000f040"; // 정산서
+  const ADJ = "00000000-0000-0000-0000-00000000f041"; // 상계
+  const PO = "00000000-0000-0000-0000-00000000f042"; // 지급
+
+  // payFixture 의 정산서가 이미 draft + 기준 스냅샷을 갖는다(0033).
+  const draftSettlement = payFixture;
+
+  check(
+    "대기 상태에는 이유가 반드시 붙는다 (이유 없는 blocked 는 고장으로 읽힌다)",
+    rejectedWith(/settlements_blocked_shape/, () =>
+      sql(`begin; ${payFixture}
+        update public.settlements set status = 'blocked', blocked_reason = null
+          where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "대기 사유는 정해진 값만 쓴다",
+    rejectedWith(/settlements_blocked_shape/, () =>
+      sql(`begin; ${payFixture}
+        update public.settlements set status = 'blocked', blocked_reason = 'unknown'
+          where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "수수료 기준 미결은 blocked 로 남는다 — 실패가 아니다",
+    sql(`begin; ${payFixture}
+        update public.settlements set status = 'blocked', blocked_reason = 'fee_basis_missing',
+          fee_basis = null where id = '${PSET}';
+        select blocked_reason from public.settlements where id = '${PSET}'; rollback;`) ===
+      "fee_basis_missing",
+  );
+  check(
+    "계산이 선 정산서에는 기준 스냅샷이 있어야 한다",
+    rejectedWith(/settlements_fee_basis_shape/, () =>
+      sql(`begin; ${payFixture}
+        update public.settlements set status = 'draft', fee_basis = null where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "성공한 지급 기록 없이 지급 완료로 적을 수 없다",
+    rejectedWith(/settlements_paid_without_payout|성공한 지급 기록 없이/, () =>
+      sql(`begin; ${draftSettlement}
+        update public.settlements set status = 'confirmed', confirmed_at = now(),
+          payout_amount = 9500000 where id = '${PSET}';
+        update public.settlements set status = 'paid', paid_at = now() where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "지급 기록이 있으면 지급 완료로 넘어간다",
+    sql(`begin; ${draftSettlement}
+        update public.settlements set status = 'confirmed', confirmed_at = now(),
+          payout_amount = 9500000 where id = '${PSET}';
+        insert into public.settlement_payouts
+          (id, settlement_id, amount, status, paid_at, idempotency_key)
+          values ('${PO}', '${PSET}', 9500000, 'paid', now(), 'settlement:${PSET}:payout:1');
+        update public.settlements set status = 'paid', paid_at = now() where id = '${PSET}';
+        select status from public.settlements where id = '${PSET}'; rollback;`) === "paid",
+  );
+  check(
+    "확정된 정산서의 금액은 바꿀 수 없다 (조정은 상계로 넘긴다 · D-23)",
+    rejectedWith(/settlements_frozen|확정된 정산서의 금액/, () =>
+      sql(`begin; ${draftSettlement}
+        update public.settlements set status = 'confirmed', confirmed_at = now(),
+          payout_amount = 9500000 where id = '${PSET}';
+        update public.settlements set fee_amount = 1 where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "허용되지 않은 정산 상태 전이는 거절한다",
+    rejectedWith(/settlements_transition|허용되지 않은 정산 상태 전이/, () =>
+      sql(`begin; ${draftSettlement}
+        update public.settlements set status = 'paid', paid_at = now() where id = '${PSET}';
+        rollback;`)),
+  );
+  check(
+    "정산서당 진행 중인 지급은 하나뿐이다",
+    rejectedWith(/uq_settlement_payouts_pending|23505/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.settlement_payouts (settlement_id, amount, status, idempotency_key)
+          values ('${PSET}', 100, 'pending', 'k1'), ('${PSET}', 100, 'pending', 'k2');
+        rollback;`)),
+  );
+  check(
+    "같은 멱등 열쇠로 지급을 두 번 만들 수 없다",
+    rejectedWith(/settlement_payouts_idempotency_key_key|23505/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.settlement_payouts (settlement_id, amount, status, failed_at, idempotency_key)
+          values ('${PSET}', 100, 'failed', now(), 'same'), ('${PSET}', 100, 'failed', now(), 'same');
+        rollback;`)),
+  );
+  check(
+    "같은 근거로 두 번 상계하지 않는다 (업체가 두 번 잃는다)",
+    rejectedWith(/uq_settlement_adjustments_source|23505/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.settlement_adjustments (vendor_id, source_type, source_id, amount, reason)
+          values ('${PV}', 'cancellation_refund', '${PB}', 100, '환불'),
+                 ('${PV}', 'cancellation_refund', '${PB}', 100, '환불');
+        rollback;`)),
+  );
+  check(
+    "상계 반영 짝이 어긋나면 거절한다",
+    rejectedWith(/settlement_adjustments_applied_pair/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.settlement_adjustments
+          (vendor_id, source_type, amount, reason, applied_settlement_id, applied_at)
+          values ('${PV}', 'manual', 100, '조정', '${PSET}', null);
+        rollback;`)),
+  );
+  check(
+    "상계 금액은 양수로만 적는다 (부호로 표현하면 합계에서 실수한다)",
+    rejectedWith(/settlement_adjustments_amount_positive/, () =>
+      sql(`begin; ${payFixture}
+        insert into public.settlement_adjustments (id, vendor_id, source_type, amount, reason)
+          values ('${ADJ}', '${PV}', 'manual', -100, '조정');
+        rollback;`)),
+  );
+
+  // ── 정산 열람·쓰기 경계 ───────────────────────────────────────────────────
+  const adjustmentSetup = `
+    ${payFixture}
+    insert into public.settlement_adjustments (id, vendor_id, source_type, amount, reason)
+      values ('${ADJ}', '${PV}', 'cancellation_refund', 500000, '해지 환불 상계');
+  `;
+
+  check(
+    "업체 대표는 상계를 본다",
+    asUser(outsider, `select count(*) from public.settlement_adjustments;`, adjustmentSetup) === "1",
+  );
+  check(
+    "**staff 는 상계를 못 본다** (정산 금액과 같은 경계)",
+    asUser(vendorStaff, `select count(*) from public.settlement_adjustments;`, adjustmentSetup) === "0",
+  );
+  check(
+    "타 업체는 남의 상계를 못 본다",
+    asUser(partner, `select count(*) from public.settlement_adjustments;`, adjustmentSetup) === "0",
+  );
+  check(
+    "운영자는 정산서를 본다 (집행해야 한다)",
+    Number(asUser(adminUser, `select count(*) from public.settlements;`, payFixture)) >= 1,
+  );
+  check(
+    "업체는 정산 금액을 쓸 수 없다 (컬럼 권한)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(outsider, `update public.settlements set net_amount = 1 where id = '${PSET}';`,
+        payFixture)),
+  );
+  check(
+    "업체가 쓸 수 있는 것은 이의 제기 메모뿐이다",
+    asUser(outsider, `with u as (update public.settlements set vendor_note = '확인 요청'
+       where id = '${PSET}' returning id) select count(*) from u;`, payFixture) === "1",
+  );
+  check(
+    "비로그인은 지급 기록을 못 본다",
+    asAnon(`select count(*) from public.settlement_payouts;`,
+      `${payFixture}
+       insert into public.settlement_payouts (settlement_id, amount, status, idempotency_key)
+         values ('${PSET}', 100, 'pending', 'anon-k');`) === "0",
+  );
+
   // 운영자 정책이 문을 넓히지 않았는지는 **운영자가 아닌 사람**으로 확인한다.
   // 시드에서 타 업체 대표 자리를 admin 계정이 겸하고 있어(계정 6개로 넷을 세운 탓)
   // 그 계정으로는 이 검사를 할 수 없다 — 배우자(비운영자)가 그 자리를 대신한다.

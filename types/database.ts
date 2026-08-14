@@ -1415,6 +1415,177 @@ export type Database = {
         }
         Relationships: []
       }
+      coupon_issues: {
+        Row: {
+          couple_id: string | null
+          coupon_id: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          issued_at: string
+          status: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          couple_id?: string | null
+          coupon_id: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          issued_at?: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          couple_id?: string | null
+          coupon_id?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          issued_at?: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupon_issues_couple_id_fkey"
+            columns: ["couple_id"]
+            isOneToOne: false
+            referencedRelation: "couples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_issues_coupon_id_fkey"
+            columns: ["coupon_id"]
+            isOneToOne: false
+            referencedRelation: "coupons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coupon_redemptions: {
+        Row: {
+          booking_id: string | null
+          borne_by: string
+          coupon_issue_id: string
+          created_at: string
+          discount_amount: number
+          id: string
+          payment_id: string | null
+          redeemed_at: string
+        }
+        Insert: {
+          booking_id?: string | null
+          borne_by: string
+          coupon_issue_id: string
+          created_at?: string
+          discount_amount: number
+          id?: string
+          payment_id?: string | null
+          redeemed_at?: string
+        }
+        Update: {
+          booking_id?: string | null
+          borne_by?: string
+          coupon_issue_id?: string
+          created_at?: string
+          discount_amount?: number
+          id?: string
+          payment_id?: string | null
+          redeemed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupon_redemptions_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_redemptions_coupon_issue_id_fkey"
+            columns: ["coupon_issue_id"]
+            isOneToOne: true
+            referencedRelation: "coupon_issues"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_redemptions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coupons: {
+        Row: {
+          created_at: string
+          discount_type: string
+          discount_value: number
+          id: string
+          issue_condition: string
+          issued_count: number
+          issuer_id: string | null
+          issuer_type: string
+          max_discount_amount: number | null
+          min_order_amount: number
+          name: string
+          status: string
+          total_quantity: number | null
+          updated_at: string
+          valid_from: string | null
+          valid_to: string | null
+        }
+        Insert: {
+          created_at?: string
+          discount_type: string
+          discount_value: number
+          id?: string
+          issue_condition: string
+          issued_count?: number
+          issuer_id?: string | null
+          issuer_type: string
+          max_discount_amount?: number | null
+          min_order_amount?: number
+          name: string
+          status?: string
+          total_quantity?: number | null
+          updated_at?: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Update: {
+          created_at?: string
+          discount_type?: string
+          discount_value?: number
+          id?: string
+          issue_condition?: string
+          issued_count?: number
+          issuer_id?: string | null
+          issuer_type?: string
+          max_discount_amount?: number | null
+          min_order_amount?: number
+          name?: string
+          status?: string
+          total_quantity?: number | null
+          updated_at?: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupons_issuer_id_fkey"
+            columns: ["issuer_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       data_deletion_requests: {
         Row: {
           completed_at: string | null
@@ -3666,14 +3837,85 @@ export type Database = {
           },
         ]
       }
+      settlement_adjustments: {
+        Row: {
+          amount: number
+          applied_at: string | null
+          applied_settlement_id: string | null
+          booking_id: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          reason: string
+          source_id: string | null
+          source_type: string
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          amount: number
+          applied_at?: string | null
+          applied_settlement_id?: string | null
+          booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason: string
+          source_id?: string | null
+          source_type: string
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          amount?: number
+          applied_at?: string | null
+          applied_settlement_id?: string | null
+          booking_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason?: string
+          source_id?: string | null
+          source_type?: string
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "settlement_adjustments_applied_settlement_id_fkey"
+            columns: ["applied_settlement_id"]
+            isOneToOne: false
+            referencedRelation: "settlements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "settlement_adjustments_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "settlement_adjustments_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       settlement_items: {
         Row: {
           adjustment: number
           amount: number
           booking_id: string | null
+          coupon_deduction: number
           created_at: string
+          fee_amount: number
+          fee_rate_bp: number | null
           id: string
           memo: string | null
+          net_amount: number
           settlement_id: string
           updated_at: string
         }
@@ -3681,9 +3923,13 @@ export type Database = {
           adjustment?: number
           amount?: number
           booking_id?: string | null
+          coupon_deduction?: number
           created_at?: string
+          fee_amount?: number
+          fee_rate_bp?: number | null
           id?: string
           memo?: string | null
+          net_amount?: number
           settlement_id: string
           updated_at?: string
         }
@@ -3691,9 +3937,13 @@ export type Database = {
           adjustment?: number
           amount?: number
           booking_id?: string | null
+          coupon_deduction?: number
           created_at?: string
+          fee_amount?: number
+          fee_rate_bp?: number | null
           id?: string
           memo?: string | null
+          net_amount?: number
           settlement_id?: string
           updated_at?: string
         }
@@ -3714,45 +3964,131 @@ export type Database = {
           },
         ]
       }
+      settlement_payouts: {
+        Row: {
+          amount: number
+          attempt_count: number
+          created_at: string
+          failed_at: string | null
+          failure_reason: string | null
+          id: string
+          idempotency_key: string
+          paid_at: string | null
+          provider: string | null
+          provider_ref: string | null
+          settlement_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          attempt_count?: number
+          created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          idempotency_key: string
+          paid_at?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          settlement_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          attempt_count?: number
+          created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          idempotency_key?: string
+          paid_at?: string | null
+          provider?: string | null
+          provider_ref?: string | null
+          settlement_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "settlement_payouts_settlement_id_fkey"
+            columns: ["settlement_id"]
+            isOneToOne: false
+            referencedRelation: "settlements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       settlements: {
         Row: {
+          adjustment_amount: number
+          blocked_reason: string | null
+          calculated_at: string | null
+          confirmed_at: string | null
+          coupon_deduction: number
           created_at: string
           fee_amount: number
+          fee_basis: string | null
           fee_rate_bp: number
           gross_amount: number
           id: string
           net_amount: number
+          paid_at: string | null
+          payable_at: string | null
+          payout_amount: number | null
           period_end: string
           period_start: string
           status: string
           updated_at: string
           vendor_id: string
+          vendor_note: string | null
         }
         Insert: {
+          adjustment_amount?: number
+          blocked_reason?: string | null
+          calculated_at?: string | null
+          confirmed_at?: string | null
+          coupon_deduction?: number
           created_at?: string
           fee_amount?: number
+          fee_basis?: string | null
           fee_rate_bp?: number
           gross_amount?: number
           id?: string
           net_amount?: number
+          paid_at?: string | null
+          payable_at?: string | null
+          payout_amount?: number | null
           period_end: string
           period_start: string
           status?: string
           updated_at?: string
           vendor_id: string
+          vendor_note?: string | null
         }
         Update: {
+          adjustment_amount?: number
+          blocked_reason?: string | null
+          calculated_at?: string | null
+          confirmed_at?: string | null
+          coupon_deduction?: number
           created_at?: string
           fee_amount?: number
+          fee_basis?: string | null
           fee_rate_bp?: number
           gross_amount?: number
           id?: string
           net_amount?: number
+          paid_at?: string | null
+          payable_at?: string | null
+          payout_amount?: number | null
           period_end?: string
           period_start?: string
           status?: string
           updated_at?: string
           vendor_id?: string
+          vendor_note?: string | null
         }
         Relationships: [
           {
@@ -4537,6 +4873,11 @@ export type Database = {
         Returns: string
       }
       contract_booking_id: { Args: { p_contract_id: string }; Returns: string }
+      coupon_issuer_vendor_id: {
+        Args: { p_coupon_id: string }
+        Returns: string
+      }
+      has_coupon_issue: { Args: { p_coupon_id: string }; Returns: boolean }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }
         Returns: boolean
@@ -4559,6 +4900,7 @@ export type Database = {
       }
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
+      owns_coupon_issue: { Args: { p_issue_id: string }; Returns: boolean }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }

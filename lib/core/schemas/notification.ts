@@ -38,6 +38,12 @@ export const NOTIFICATION_TOPICS = [
    * 남는다(`in_app` 은 항상 켜짐 — 증적을 남길 자리가 사라지면 안 된다).
    */
   "payment",
+  /**
+   * S5-07. **`payment` 와 나눈다** — 결제는 고객이 내는 돈이고 정산은 업체가 받는
+   * 돈이다. 받는 쪽 알림만 따로 켜고 끄는 것이 성립하며, 수신자도 다르다(정산은
+   * **업체 대표 전용** · §3.9).
+   */
+  "settlement",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -53,6 +59,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   inquiry: "문의·견적",
   vendor_invite: "멤버 초대",
   payment: "결제",
+  settlement: "정산",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -66,6 +73,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   inquiry: "보낸 문의에 견적이 도착하거나 업체가 답하면 알려드려요.",
   vendor_invite: "업체 멤버로 초대받으면 알려드려요.",
   payment: "회차 결제가 완료되거나 실패하면 알려드려요.",
+  settlement: "정산이 확정되거나 지급되면 알려드려요.",
 };
 
 /**
@@ -343,6 +351,21 @@ export const NOTIFICATION_TEMPLATES = {
   "payment.fully_paid": {
     topic: "payment",
     render: () => "모든 회차 결제가 끝났어요.",
+  },
+  /**
+   * 정산 (S5-07).
+   *
+   * **금액을 담지 않는다.** 상계가 붙으면 지급액이 달라지는데, 알림에 실린 숫자는
+   * 그 뒤에도 알림함에 남아 또 하나의 진실이 된다. 참조(settlementId)만 담고
+   * 금액은 정산서가 보여준다. **대표에게만 발송한다**(§3.9 — 정산 금액의 경계).
+   */
+  "settlement.confirmed": {
+    topic: "settlement",
+    render: () => "정산이 확정됐어요. 명세와 지급 예정일을 확인해 주세요.",
+  },
+  "settlement.paid": {
+    topic: "settlement",
+    render: () => "정산금이 지급됐어요.",
   },
 } as const satisfies Record<
   string,
