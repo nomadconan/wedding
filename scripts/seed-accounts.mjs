@@ -455,11 +455,17 @@ async function seedPlanner(plannerUser, coupleId) {
       body: JSON.stringify({
         id: PLANNER_ID,
         user_id: plannerUser.id,
+        // active so the market screen has something to show. In production this
+        // is a review outcome, not a self-declaration (0037 trigger blocks
+        // self-activation) - the seed writes it with the service role.
         status: "active",
-        regions: ["서울 강남"],
+        regions: ["서울 강남", "서울 서초"],
         // Fees live in planner_fee_rates (S5-01) - never in the profile.
+        // A CHECK keeps fee_json empty (0037).
         profile_json: {
-          headline: "10년차 웨딩 플래너",
+          headline: "10년차 스드메 전문 플래너",
+          bio: "스튜디오·드레스·메이크업 위주로 함께 준비합니다.",
+          careerYears: 10,
           categories: ["studio", "dress", "makeup"],
         },
       }),
