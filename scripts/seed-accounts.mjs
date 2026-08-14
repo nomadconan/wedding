@@ -73,6 +73,17 @@ const ACCOUNTS = [
     displayName: "연동 커플 B",
     note: "consumer - partner of couple-linked-a",
   },
+  // ── planner fixture (S6-01) ───────────────────────────────────────────────
+  // WHY a dedicated account: db:rls must prove that a planner sees ONLY what the
+  // engagement grants. Reusing a consumer account would make "planner" and
+  // "couple member" the same person, and every isolation check would pass for
+  // the wrong reason.
+  {
+    email: "planner@local.test",
+    role: "planner",
+    displayName: "웨딩 플래너",
+    note: "planner - delegation scope + category selection (S6-01)",
+  },
 ];
 
 /** Fixed id so re-runs are idempotent and rls-check can find it deterministically. */
@@ -417,6 +428,65 @@ async function seedLinkedCouple(ownerUser, partnerUser) {
   return LINKED_COUPLE_ID;
 }
 
+/** Fixed ids so re-runs are idempotent and rls-check can find them. */
+const PLANNER_ID = "00000000-0000-0000-0000-00000000c0b1";
+const ENGAGEMENT_ID = "00000000-0000-0000-0000-00000000c0b2";
+
+/**
+ * Planner fixture (S6-01).
+ *
+ * WHAT IS SEEDED: the planner record + an ACTIVE engagement over the linked
+ * couple, scoped to the tables S3-04/S4-07 already opened (couples, carts,
+ * consultations). Chat and payments are deliberately absent - S4-01/S5-06 closed
+ * those and the fixture must not quietly widen them.
+ *
+ * WHAT IS NOT SEEDED: planner_scopes rows. Category selection is the customer's
+ * act (F-C-31) and rls-check builds those inside a rolled-back transaction, the
+ * same way it handles carts and chat rooms.
+ */
+async function seedPlanner(plannerUser, coupleId) {
+  if (!plannerUser) return "skipped";
+
+  const existing = await rest(`planners?id=eq.${PLANNER_ID}&select=id`);
+
+  if (existing.length === 0) {
+    await rest("planners", {
+      method: "POST",
+      body: JSON.stringify({
+        id: PLANNER_ID,
+        user_id: plannerUser.id,
+        status: "active",
+        regions: ["서울 강남"],
+        // Fees live in planner_fee_rates (S5-01) - never in the profile.
+        profile_json: {
+          headline: "10년차 웨딩 플래너",
+          categories: ["studio", "dress", "makeup"],
+        },
+      }),
+    });
+  }
+
+  const engagement = await rest(`planner_engagements?id=eq.${ENGAGEMENT_ID}&select=id`);
+
+  if (engagement.length === 0) {
+    await rest("planner_engagements", {
+      method: "POST",
+      body: JSON.stringify({
+        id: ENGAGEMENT_ID,
+        planner_id: PLANNER_ID,
+        couple_id: coupleId,
+        // Only the tables S3-04/S4-07 opened. Chat/payments stay closed.
+        scope_json: { tables: ["couples", "carts", "consultations"] },
+        status: "active",
+        valid_from: "2026-01-01T00:00:00Z",
+        valid_to: null,
+      }),
+    });
+  }
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -442,6 +512,11 @@ async function main() {
     results.find((row) => row.email === "couple-linked-b@local.test"),
   );
 
+  const plannerSeed = await seedPlanner(
+    results.find((row) => row.email === "planner@local.test"),
+    linkedCouple,
+  );
+
   console.log("  accounts");
   for (const row of results) {
     console.log(
@@ -464,6 +539,12 @@ async function main() {
   console.log("    couple-a@local.test -> /onboarding 6 steps, then issue an invite code");
   console.log("    couple-b@local.test -> accept that code to share one couple");
   console.log("    (both start with no couple - onboarding creates it)");
+  console.log("");
+  console.log("  planner fixture (S6-01)");
+  console.log(`    planner     : planner@local.test (${plannerSeed})`);
+  console.log("    engagement  : active over the linked couple");
+  console.log("    scope       : couples, carts, consultations (chat/payments stay closed)");
+  console.log("    -> category selection (planner_scopes) is the customer's act - not seeded");
   console.log("");
   console.log("  linked couple fixture (S4-04)");
   console.log(`    couple id   : ${linkedCouple}`);
