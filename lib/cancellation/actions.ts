@@ -16,6 +16,7 @@ import { calculatePenalty } from "@/lib/core/pricing/penalty";
 import type { PenaltyCategory } from "@/lib/core/schemas/penalty";
 import { sendNotification } from "@/lib/notify/send";
 import { applyRefund } from "@/lib/payments/charge";
+import { addAdjustment } from "@/lib/settlements/actions";
 import { loadPenaltyRuleSet } from "@/lib/pricing/penalty-rule-set";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -583,6 +584,22 @@ async function settleCancellationRecord(input: {
     cancellationId: input.cancellationId,
     actorId: input.actorId,
   });
+
+  // **환불한 만큼을 다음 정산에서 뺀다**(S5-07). 이 예약이 이미 정산된 기간에 들어
+  // 있었다면 업체는 그 돈을 받았거나 받을 예정이다 — 확정 정산서를 소급 수정하지
+  // 않고 상계로 넘긴다(D-23 · 0033 `settlement_adjustments`).
+  if (settlement.refundAmount > 0) {
+    await addAdjustment({
+      vendorId: context.vendorId,
+      sourceType: "cancellation_refund",
+      // 같은 해지로 두 번 상계하지 않는다 — 부분 유니크가 경계다.
+      sourceId: input.cancellationId,
+      bookingId: context.bookingId,
+      amount: settlement.refundAmount,
+      reason: `계약 해지 환불 상계(${settlement.appliedRule})`,
+      actorId: input.actorId,
+    });
+  }
 
   await admin
     .from("contract_cancellations")

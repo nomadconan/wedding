@@ -32,6 +32,9 @@ export default defineConfig({
       //    불변식이라 시험 없이 둘 수 없다(S4-08 의 보증금 스텁은 이 시험이 없었다).
       //    node 환경으로 충분하다 — 어댑터는 프레임워크를 import 하지 않는다.
       "lib/payments/**/*.test.ts",
+      // S5-07. 지급 어댑터도 같은 이유다 — 깨지면 **보내지 않은 돈이 나갔다고
+      // 기록**되고, 업체는 정산서의 '지급 완료' 를 보며 오지 않는 입금을 기다린다.
+      "lib/settlements/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {
