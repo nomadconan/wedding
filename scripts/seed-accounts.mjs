@@ -300,6 +300,52 @@ async function seedVendor(vendorUser, staffUser) {
 }
 
 /**
+ * Local demo commission rates (S5-03).
+ *
+ * WHY THIS EXISTS: with zero rows in `commission_rates`, contract issuance fails
+ * with CONTRACT_RATE_UNRESOLVED (S5-06) and the whole trade flow - contract,
+ * payment, settlement, cancellation - cannot run end to end even locally.
+ *
+ * WHY NOT IN A MIGRATION: the rate VALUE is still undecided (O-02). Putting a
+ * number in a migration would make it look like an operating decision
+ * (0031 refused to seed penalty bands for the same reason). A seed script is
+ * explicitly local demo data - `seed.sql` says so in its header.
+ *
+ * The real values go in through /admin/commission-rates (F-A-15).
+ */
+async function seedDemoRates() {
+  const existing = await rest("commission_rates?select=id&limit=1");
+  if (existing.length > 0) return "existing";
+
+  await rest("commission_rates", {
+    method: "POST",
+    body: JSON.stringify({
+      scope_type: "global",
+      scope_key: null,
+      // 500bp = 5%. LOCAL DEMO ONLY - not an operating decision (O-02).
+      fee_rate_bp: 500,
+      effective_from: "2026-01-01T00:00:00Z",
+      effective_to: null,
+      memo: "local demo (O-02 undecided) - replace via /admin/commission-rates",
+    }),
+  });
+
+  await rest("planner_fee_rates", {
+    method: "POST",
+    body: JSON.stringify({
+      scope_type: "global",
+      scope_key: null,
+      fee_rate_bp: 300,
+      effective_from: "2026-01-01T00:00:00Z",
+      effective_to: null,
+      memo: "local demo (O-02 undecided) - replace via /admin/commission-rates",
+    }),
+  });
+
+  return "created";
+}
+
+/**
  * Linked couple fixture (S4-04).
  *
  * WHY this exists: `npm run db:rls` needs a couple to test against, but
@@ -389,6 +435,8 @@ async function main() {
   const staffUser = results.find((row) => row.email === "staff@local.test");
   const vendor = await seedVendor(vendorUser, staffUser);
 
+  const rateSeed = await seedDemoRates();
+
   const linkedCouple = await seedLinkedCouple(
     results.find((row) => row.email === "couple-linked-a@local.test"),
     results.find((row) => row.email === "couple-linked-b@local.test"),
@@ -409,6 +457,8 @@ async function main() {
   console.log(`    vendor      : ${vendor.name} (${vendor.status})`);
   console.log(`    application : ${vendor.applicationStatus}`);
   console.log("    members     : vendor@local.test (owner) + staff@local.test (staff)");
+  console.log(`    rates       : commission/planner global rate ${rateSeed} (LOCAL DEMO - O-02 undecided)`);
+  console.log("                  without a rate, contract issuance fails (CONTRACT_RATE_UNRESOLVED)");
   console.log("");
   console.log("  consumer accounts (S3-01)");
   console.log("    couple-a@local.test -> /onboarding 6 steps, then issue an invite code");

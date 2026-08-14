@@ -72,6 +72,10 @@ export type EntityType =
   | "settlement_payout"
   // S5-11. 쿠폰 발급·사용. memo 에 코드·개인 식별정보를 넣지 않는다.
   | "coupon_issue"
+  // S5-03. 요율 변경은 **누가 언제 무엇을 바꿨는지가 곧 정산 분쟁의 근거**다(D-23).
+  // memo 에 업체명을 넣지 않는다 — 범위·요율·기간이면 재현에 충분하다(§7.3).
+  | "commission_rate"
+  | "planner_fee_rate"
   // S5-06. 결제 전 고지·동의(F-C-14). memo 에는 **종류와 판본만** 넣는다 —
   // 문구 자체는 코드가 판본과 함께 갖는다(§7.3).
   | "payment_consent"
