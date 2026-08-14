@@ -3711,6 +3711,94 @@ if (!vendorStaff || !adminUser) {
          values ('${PSET}', 100, 'pending', 'anon-k');`) === "0",
   );
 
+  // ===========================================================================
+  // 요율 관리 (S5-03 · 0034)
+  // ---------------------------------------------------------------------------
+  //   (가) **운영자가 요율을 볼 수 있는가** — 0006 의 정책은 업체·플래너용이라
+  //        운영자에게는 자기 관리 화면의 목록조차 보이지 않았다
+  //   (나) 쓰기가 막혀 있는가 — 요율 한 줄이 모든 업체의 수입을 바꾼다
+  //   (다) **이력을 지울 수 없는가**(D-23) — 지우면 "그때 어떤 요율표였나" 를 못 답한다
+  //   (라) 겹침을 DB 가 막는가(0006 EXCLUDE)
+  // ===========================================================================
+  const RATE1 = "00000000-0000-0000-0000-00000000f050";
+
+  const rateFixture = `
+    ${payFixture}
+    insert into public.commission_rates
+      (id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+      values ('${RATE1}', 'vendor', '${PV}', 500, '2026-01-01T00:00:00Z', null);
+  `;
+
+  check(
+    "운영자는 요율을 본다 (F-A-15 — 관리하려면 봐야 한다)",
+    Number(asUser(adminUser, `select count(*) from public.commission_rates;`, rateFixture)) >= 1,
+  );
+  // 시드가 **전역** 요율을 넣어 두므로(0034 근거 5) 업체 멤버는 전역 + 자사를 본다.
+  // 격리를 보려면 **자사 스코프 행**만 세야 한다.
+  check(
+    "업체 멤버는 자사 요율을 본다",
+    asUser(outsider, `select count(*) from public.commission_rates where scope_key = '${PV}';`,
+      rateFixture) === "1",
+  );
+  check(
+    "타 업체는 남의 요율을 못 본다",
+    asUser(partner, `select count(*) from public.commission_rates where scope_key = '${PV}';`,
+      rateFixture) === "0",
+  );
+  check(
+    "비로그인은 요율을 못 본다",
+    asAnon(`select count(*) from public.commission_rates;`, rateFixture) === "0",
+  );
+  check(
+    "요율은 아무도 쓸 수 없다 (서비스롤 경유 · 정책 없음 + 권한 회수)",
+    rejectedWith(/permission denied|42501|row-level security/i, () =>
+      asUser(adminUser, `insert into public.commission_rates
+         (scope_type, scope_key, fee_rate_bp, effective_from)
+         values ('global', null, 700, now());`, rateFixture)),
+  );
+  check(
+    "**요율 이력은 지울 수 없다** (D-23 — 지우면 정산 근거가 사라진다)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(adminUser, `delete from public.commission_rates where id = '${RATE1}';`, rateFixture)),
+  );
+  check(
+    "요율은 고칠 수도 없다 — 변경은 새 행, 종료는 effective_to 다",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(adminUser, `update public.commission_rates set fee_rate_bp = 1 where id = '${RATE1}';`,
+        rateFixture)),
+  );
+  check(
+    "같은 범위에 기간이 겹치는 요율은 DB 가 거부한다 (0006 EXCLUDE)",
+    rejectedWith(/commission_rates_no_overlap|23P01|conflicting key/i, () =>
+      sql(`begin; ${rateFixture}
+        insert into public.commission_rates
+          (scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+          values ('vendor', '${PV}', 700, '2026-06-01T00:00:00Z', null);
+        rollback;`)),
+  );
+  check(
+    "끝과 시작이 같으면 겹치지 않는다 (반개구간)",
+    sql(`begin; ${payFixture}
+        insert into public.commission_rates
+          (scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+          values ('vendor', '${PV}', 500, '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z'),
+                 ('vendor', '${PV}', 700, '2026-06-01T00:00:00Z', null);
+        select count(*) from public.commission_rates where scope_key = '${PV}'; rollback;`) === "2",
+  );
+  check(
+    "플래너 요율도 같은 규칙이다 (운영자 열람 · 쓰기 금지)",
+    asUser(adminUser, `select count(*) from public.planner_fee_rates;`, payFixture) !== "" &&
+      rejectedWith(/permission denied|42501|row-level security/i, () =>
+        asUser(adminUser, `insert into public.planner_fee_rates
+           (scope_type, scope_key, fee_rate_bp, effective_from)
+           values ('global', null, 300, now());`, payFixture)),
+  );
+  check(
+    "**요율 값을 마이그레이션이 시드하지 않았다** (O-02 — 값은 화면에서 넣는다)",
+    sql(`select count(*) from public.commission_rates
+         where memo is null or memo not like 'local demo%';`) === "0",
+  );
+
   // 운영자 정책이 문을 넓히지 않았는지는 **운영자가 아닌 사람**으로 확인한다.
   // 시드에서 타 업체 대표 자리를 admin 계정이 겸하고 있어(계정 6개로 넷을 세운 탓)
   // 그 계정으로는 이 검사를 할 수 없다 — 배우자(비운영자)가 그 자리를 대신한다.
