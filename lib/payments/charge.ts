@@ -12,6 +12,7 @@ import {
   type ScheduleRow,
 } from "@/lib/core/payment/checkout";
 import { feeBasisOf, paymentIdempotencyKey } from "@/lib/core/payment/payment";
+import { holdEscrow } from "@/lib/escrow/actions";
 import { sendNotification } from "@/lib/notify/send";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -400,6 +401,12 @@ export async function chargeInstallment(input: {
   });
 
   await linkSettlement({ paymentId, actorId: input.actorId, amount: context.amount });
+
+  // **잔금은 안전거래로 맡는다**(S5-09 · F-C-16). 계약금(1회차)은 계약 성립의 증표라
+  // 바로 업체에 전달되고 잔금만 예치된다 — 판정은 `isEscrowTarget` 이 한다.
+  // **예치가 실패해도 결제를 되돌리지 않는다.** 고객은 이미 냈고, 되돌리면 그 돈이
+  // 어디에도 없는 상태가 된다. 실패는 증적으로 남기고 운영이 본다.
+  await holdEscrow({ scheduleId: context.scheduleId, paymentId, actorId: input.actorId });
 
   // ── 4) 완납 판정 — 세면 나오는 값이라 저장하지 않는다 ─────────────────────
   const progress = paymentProgress(
