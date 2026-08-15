@@ -98,6 +98,12 @@ export type EntityType =
   // (F-A-08 · S8-04)가 읽는 자리이기도 하다.
   | "document"
   | "document_analysis"
+  // S7-14. 커뮤니티. **본문을 memo 에 넣지 않는다** — 남길 사실은 "썼다·가렸다·
+  // 지웠다·신고가 처리됐다" 라는 전이와 **사유 코드**다(D-23 · §7.3). 특히 모더레이션은
+  // 되돌릴 수 없는 권한이라 처리 이력이 곧 설명의 근거가 된다(F-A-18).
+  | "community_post"
+  | "community_comment"
+  | "community_report"
   | "profile"
   | "data_deletion_request";
 
