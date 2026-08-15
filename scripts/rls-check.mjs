@@ -4217,5 +4217,101 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 검출 룰 시드 (S7-01 · seed.sql · §3.5) ───────────────────────────────────
+// **사본은 어긋나고, 어긋나면 조용하다.** 검출은 `lib/core/rules` 가 하고 DB 는
+// 운영자가 보고 끄는 사본이라(F-A-03), 둘이 벌어져도 화면에는 아무 일도 안 생긴다.
+// 그래서 여기서 대조한다 — 이 검사가 시드의 유일한 파수꾼이다.
+{
+  const rulesSrc = readFileSync("lib/core/rules/detect-rules.ts", "utf8");
+  const codeRuleCodes = [...rulesSrc.matchAll(/code: "(R-\d\d)"/g)].map((m) => m[1]);
+  const codeVersion = rulesSrc.match(/DETECT_RULES_VERSION = "([^"]+)"/)?.[1] ?? "";
+  const codeSeverities = [
+    ...rulesSrc.matchAll(/code: "(R-\d\d)",[\s\S]*?severity_default: "(\w+)"/g),
+  ].map((m) => `${m[1]}=${m[2]}`);
+  const codeCategories = [
+    ...rulesSrc.matchAll(/code: "(R-\d\d)",[\s\S]*?category: "(\w+)"/g),
+  ].map((m) => `${m[1]}=${m[2]}`);
+
+  check(
+    "검출 룰 20종이 시드에 들어 있다",
+    sql(`select count(*) from public.detect_rules;`) === String(codeRuleCodes.length) &&
+      codeRuleCodes.length === 20,
+    `code=${codeRuleCodes.length}`,
+  );
+  check(
+    "**코드와 DB 의 룰 코드 집합이 같다** (사본이 벌어지면 조용히 틀린다)",
+    sql(`select string_agg(code, ',' order by code) from public.detect_rules;`) ===
+      [...codeRuleCodes].sort().join(","),
+  );
+  check(
+    "판본이 코드와 같다 — 판본이 다르면 룰 내용도 달라졌을 수 있다",
+    sql(`select count(*) from public.detect_rules where version <> '${codeVersion}';`) === "0",
+    `code=${codeVersion}`,
+  );
+  check(
+    "등급이 코드와 일치한다",
+    sql(`select string_agg(code || '=' || severity_default::text, ',' order by code)
+           from public.detect_rules;`) === [...codeSeverities].sort().join(","),
+  );
+  check(
+    "카테고리가 코드와 일치한다",
+    sql(`select string_agg(code || '=' || category, ',' order by code)
+           from public.detect_rules;`) === [...codeCategories].sort().join(","),
+  );
+  check(
+    "**검출 조건이 빈 룰이 없다** (빈 칸이면 무엇을 찾는 룰인지 운영자가 알 수 없다)",
+    sql(`select count(*) from public.detect_rules
+           where pattern_json = '{}'::jsonb
+              or not (pattern_json ? 'presence' or pattern_json ? 'absence');`) === "0",
+  );
+  check(
+    "지시문·근거가 빈 룰이 없다",
+    sql(`select count(*) from public.detect_rules
+           where coalesce(btrim(prompt_fragment), '') = ''
+              or coalesce(btrim(basis_ref), '') = '';`) === "0",
+  );
+  check(
+    "**근거에 조항 번호를 적지 않았다** (법무 검수 전 · 부록 D ②)",
+    sql(`select count(*) from public.detect_rules where basis_ref ~ '제 *[0-9]+ *조';`) === "0",
+  );
+
+  // ── 내부 자산은 열지 않는다 ────────────────────────────────────────────────
+  // `prompt_fragment` 는 우리가 쓴 분석 지시문이다. 룰 자체가 서비스의 자산이라
+  // 0005 가 정책을 두지 않았고(서비스롤 전용), 스캔은 서버에서만 돈다.
+  check(
+    "**비로그인은 검출 룰을 못 본다** (지시문은 내부 자산이다)",
+    asAnon(`select count(*) from public.detect_rules;`) === "0",
+  );
+  check(
+    "로그인해도 검출 룰을 못 본다",
+    asUser(owner, `select count(*) from public.detect_rules;`) === "0",
+  );
+  check(
+    "운영자도 클라이언트 경로로는 검출 룰을 못 본다 (관리 화면은 서버를 지난다)",
+    asUser(adminUser, `select count(*) from public.detect_rules;`) === "0",
+  );
+  check(
+    "쓰기도 막힌다 — 룰을 고치는 일은 배포로 한다",
+    asUser(
+      owner,
+      `with u as (update public.detect_rules set is_active = false returning code)
+         select count(*) from u;`,
+    ) === "0",
+  );
+
+  // ── 위약금 기준은 **일부러 비어 있다** ────────────────────────────────────
+  // 0031(S5-08)의 판단이다: 법무 검수 전 가정치를 DB 에 넣으면 그것이 운영 기준처럼
+  // 굳는다. 로더가 DB 우선·코드 폴백이라 **행을 넣는 순간** 전환되므로,
+  // "비어 있음" 은 방치가 아니라 결정이다. 검사로 그 결정을 붙잡아 둔다.
+  check(
+    "**위약금 기준은 시드하지 않는다** (가정치가 운영 기준처럼 굳는다 · 0031)",
+    sql(`select count(*) from public.penalty_rules;`) === "0",
+  );
+  check(
+    "비로그인은 위약금 기준 표도 못 본다",
+    asAnon(`select count(*) from public.penalty_rules;`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
