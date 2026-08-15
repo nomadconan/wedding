@@ -92,6 +92,12 @@ export type EntityType =
   // 갖고, 여기 남길 사실은 "대화가 열렸다"·"상한에 막혔다" 라는 전이와 사유 코드다.
   // `entity_events` 에 이 타입의 열람 정책은 두지 않는다(서버·운영 전용 · ai_call_logs 와 같다).
   | "ai_conversation"
+  // S7-03. 계약서 원문과 분석. **본문·경로·잔존 값을 memo 에 넣지 않는다**(§5.3) —
+  // 남길 사실은 "올렸다·마스킹이 막았다·분석이 끝났다·원문을 지웠다" 라는 전이와
+  // 셀 수 있는 값(finding 수·폐기 수)·사유 코드다. 파기 증적은 개인정보 감사
+  // (F-A-08 · S8-04)가 읽는 자리이기도 하다.
+  | "document"
+  | "document_analysis"
   | "profile"
   | "data_deletion_request";
 
