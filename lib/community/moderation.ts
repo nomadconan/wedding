@@ -98,15 +98,31 @@ export async function loadQueue(
   if (reports.length === 0) return [];
 
   const postIds = reports.filter((row) => row.target_type === "post").map((row) => row.target_id);
+  const commentIds = reports.filter((row) => row.target_type === "comment").map((row) => row.target_id);
 
-  const { data: postRows } = postIds.length
-    ? await client.from("community_posts").select("id, title, body, status, author_id").in("id", postIds)
-    : { data: [] };
+  const [{ data: postRows }, { data: commentRows }] = await Promise.all([
+    postIds.length
+      ? client.from("community_posts").select("id, title, body, status, author_id").in("id", postIds)
+      : Promise.resolve({ data: [] as never[] }),
+    // **댓글도 신고 대상이다**(0038 `target_type`). 업체 공식 답변(F-V-18)도 댓글이므로
+    // 여기서 다루지 않으면 **신고할 수 없는 글이 하나 생긴다** — 그 예외는 곧
+    // "업체는 무엇이든 쓸 수 있다" 가 된다(S7-16).
+    commentIds.length
+      ? client.from("community_comments").select("id, body, status, author_id").in("id", commentIds)
+      : Promise.resolve({ data: [] as never[] }),
+  ]);
 
   const posts = new Map(
     ((postRows ?? []) as { id: string; title: string; body: string; status: string; author_id: string }[]).map(
       (row) => [row.id, row],
     ),
+  );
+
+  const comments = new Map(
+    ((commentRows ?? []) as { id: string; body: string; status: string; author_id: string }[]).map((row) => [
+      row.id,
+      row,
+    ]),
   );
 
   // **SLA 기준은 O-14 대기다.** 값이 없으면 판정하지 않는다 — 지어낸 기한으로
@@ -117,6 +133,9 @@ export async function loadQueue(
 
   const items: QueueItem[] = reports.map((report) => {
     const post = posts.get(report.target_id) ?? null;
+    const comment = comments.get(report.target_id) ?? null;
+    // 글이든 댓글이든 운영자가 볼 것은 같다 — 무엇이 문제인지 읽을 본문과 상태다.
+    const target = post ?? comment ?? null;
 
     return {
       reportId: report.id,
@@ -130,11 +149,11 @@ export async function loadQueue(
       sla: reportSla({ createdAt: report.created_at, now: options.now, slaHours }),
       target: {
         // **대상이 사라져도 신고는 남는다**(S7-14). 없으면 없다고 말한다.
-        exists: post !== null,
-        status: (post?.status ?? null) as PostStatus | null,
-        title: post?.title ?? null,
-        excerpt: post === null ? null : post.body.slice(0, EXCERPT_LENGTH),
-        authorId: post?.author_id ?? null,
+        exists: target !== null,
+        status: (target?.status ?? null) as PostStatus | null,
+        title: post?.title ?? (comment === null ? null : "댓글"),
+        excerpt: target === null ? null : target.body.slice(0, EXCERPT_LENGTH),
+        authorId: target?.author_id ?? null,
       },
       signals: signals.get(report.id) ?? {
         reportsOnTarget: 0,
@@ -246,8 +265,12 @@ export async function applyModeration(input: {
     };
   }
 
+  // 글이든 댓글이든 같은 조치를 받는다 — 업체 답변만 예외로 두면 신고할 수 없는
+  // 글이 하나 생긴다(S7-16).
+  const targetTable = report.target_type === "comment" ? "community_comments" : "community_posts";
+
   const { data: postRow } = await admin
-    .from("community_posts")
+    .from(targetTable)
     .select("id, status")
     .eq("id", report.target_id)
     .maybeSingle();
@@ -270,12 +293,12 @@ export async function applyModeration(input: {
   const outcome = moderationOutcome(input.action);
 
   if (outcome.postStatus !== null && post !== null) {
-    await admin.from("community_posts").update({ status: outcome.postStatus }).eq("id", post.id);
+    await admin.from(targetTable).update({ status: outcome.postStatus }).eq("id", post.id);
 
     await recordEvent({
-      entityType: "community_post",
+      entityType: report.target_type === "comment" ? "community_comment" : "community_post",
       entityId: post.id,
-      eventType: `community_post_${input.action}`,
+      eventType: `community_${report.target_type}_${input.action}`,
       actor: { id: input.operatorId, role: "operator" },
       beforeState: post.status,
       afterState: outcome.postStatus,

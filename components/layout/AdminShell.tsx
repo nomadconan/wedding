@@ -61,6 +61,9 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/inquiries", label: "문의·견적", icon: MessageSquare },
   // 문의게시판은 견적 문의와 다른 일이다 — 공개 Q&A 라 다음 고객도 읽는다(S4-05).
   { href: "/vendor/qna", label: "문의게시판", icon: HelpCircle },
+  // S7-16. 문의게시판과 다르다 — 그쪽은 **우리에게 온 질문**이고 이쪽은 **우리를 말한
+  // 남의 글**이다. 할 수 있는 일도 다르다: 답변까지이고 내리는 것은 운영자다(F-V-18).
+  { href: "/vendor/community", label: "커뮤니티 태그", icon: MessagesSquare },
   // 상담은 문의·견적 다음이다 — 견적을 주고받은 뒤에 만나는 순서가 실제 흐름이다.
   { href: "/vendor/consultations", label: "상담 일정", icon: CalendarClock },
   { href: "/vendor/availability", label: "상담 가능 시간", icon: Clock },
