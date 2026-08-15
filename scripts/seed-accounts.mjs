@@ -357,6 +357,48 @@ async function seedDemoRates() {
 }
 
 /**
+ * Local demo AI conversation limits (S7-20).
+ *
+ * WHY THIS EXISTS: `conversationGate` refuses to open the planner when
+ * `ai.free_daily_turns` / `ai.session_token_cap` are unset - an unset cap read
+ * as "unlimited" would silently remove the cost ceiling, so the code blocks
+ * instead. `seed.sql` therefore declares both keys with a null value, which
+ * leaves the planner closed on a clean local database.
+ *
+ * WHY NOT IN seed.sql: the VALUES are an operating decision that has not been
+ * made. Same split as seedDemoRates above - `seed.sql` owns the key, this
+ * script owns the local demo number.
+ *
+ * The real values go in through the operator console (F-A-15 / S8-12).
+ */
+async function seedDemoAiLimits() {
+  const rows = [
+    // LOCAL DEMO ONLY - not an operating decision.
+    ["ai.free_daily_turns", 20, "turns"],
+    ["ai.session_token_cap", 120000, "tokens"],
+  ];
+
+  let touched = 0;
+
+  for (const [key, value, unit] of rows) {
+    const [existing] = await rest(`app_settings?key=eq.${key}&select=key,value_json`);
+    if (!existing) continue;
+    if (existing.value_json?.value !== null && existing.value_json?.value !== undefined) continue;
+
+    await rest(`app_settings?key=eq.${key}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        value_json: { value, unit, status: "local_demo" },
+      }),
+    });
+
+    touched += 1;
+  }
+
+  return touched === 0 ? "existing" : "created";
+}
+
+/**
  * Linked couple fixture (S4-04).
  *
  * WHY this exists: `npm run db:rls` needs a couple to test against, but
@@ -512,6 +554,7 @@ async function main() {
   const vendor = await seedVendor(vendorUser, staffUser);
 
   const rateSeed = await seedDemoRates();
+  const aiLimitSeed = await seedDemoAiLimits();
 
   const linkedCouple = await seedLinkedCouple(
     results.find((row) => row.email === "couple-linked-a@local.test"),
@@ -540,6 +583,8 @@ async function main() {
   console.log("    members     : vendor@local.test (owner) + staff@local.test (staff)");
   console.log(`    rates       : commission/planner global rate ${rateSeed} (LOCAL DEMO - O-02 undecided)`);
   console.log("                  without a rate, contract issuance fails (CONTRACT_RATE_UNRESOLVED)");
+  console.log(`    ai limits   : ai.free_daily_turns / ai.session_token_cap ${aiLimitSeed} (LOCAL DEMO)`);
+  console.log("                  without them the planner refuses to open (unconfigured cap)");
   console.log("");
   console.log("  consumer accounts (S3-01)");
   console.log("    couple-a@local.test -> /onboarding 6 steps, then issue an invite code");

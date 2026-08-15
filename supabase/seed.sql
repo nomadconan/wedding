@@ -62,6 +62,20 @@ insert into public.app_settings (key, value_json, description) values
     'consultation.confirm_deadline_hours',
     '{"value": null, "unit": "hours", "status": "undecided"}'::jsonb,
     'TODO: 운영 정책 확정 후 입력 — 이행 확인 응답 기한(시간). 무응답 기본값은 환불이다(§3.11).'
+  ),
+  -- S7-20. AI 플래너 상한(§5.6 · §7.4). **값이 없으면 대화를 열지 않는다** —
+  -- 없는 상한을 '무제한' 으로 읽으면 그 순간 비용 상한이 사라진다. 조용히 열리는
+  -- 쪽보다 명시적으로 막히는 쪽이 낫다(O-15 가 정산에서 세운 것과 같은 규칙).
+  -- 로컬 데모 값은 `scripts/seed-accounts.mjs` 가 넣는다(S5-03 요율과 같은 방식).
+  (
+    'ai.free_daily_turns',
+    '{"value": null, "unit": "turns", "status": "undecided"}'::jsonb,
+    'TODO: 운영 정책 확정 후 입력 — 무료 사용자 일일 대화 턴 수. 멤버십은 무제한(§5.6).'
+  ),
+  (
+    'ai.session_token_cap',
+    '{"value": null, "unit": "tokens", "status": "undecided"}'::jsonb,
+    'TODO: 운영 정책 확정 후 입력 — 세션당 토큰 상한. **등급과 무관하게 건다** — 비용 사고는 한 세션에서 난다(§5.6).'
   )
 on conflict (key) do nothing;
 
