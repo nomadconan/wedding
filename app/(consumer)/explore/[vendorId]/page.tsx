@@ -15,6 +15,7 @@ import { createPublicClient } from "@/lib/explore/query";
 
 import { AvailabilityPanel } from "./AvailabilityPanel";
 import { BookConsultation } from "./BookConsultation";
+import { CommunityMentions } from "./CommunityMentions";
 import { StartChatButton } from "./StartChatButton";
 import { VendorProducts } from "./VendorProducts";
 
@@ -103,6 +104,12 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
 
         {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
         <StartChatButton vendorId={vendor.id} />
+
+        {/* 커뮤니티 언급(F-C-33 · S7-15). **검증 후기와 시각적으로 분리**하고
+            '미검증 경험담' 라벨을 붙인다. 커뮤니티가 닫혀 있으면 그리지 않는다. */}
+        <Suspense fallback={null}>
+          <CommunityMentions vendorId={vendor.id} />
+        </Suspense>
 
         {/* 업체에 말을 거는 길이 셋이라 무엇이 무엇인지 화면이 설명한다(S4-12). */}
         <ContactPathGuide current="chat" vendorId={vendor.id} />
