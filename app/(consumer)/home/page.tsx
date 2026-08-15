@@ -350,7 +350,27 @@ async function HomeSection() {
         )}
       </section>
 
-      {/* ── 5) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
+      {/* ── 5) 클리어 진입 (S7-06 — F-C-03) ──────────────────────────────── */}
+      {/* **하단 탭을 늘리지 않았다.** 다섯 칸이 이미 찼고 여섯 번째부터는 375px 에서
+          터치 타깃이 44px 아래로 내려간다(§7.5). 그래서 클리어의 1차 진입은 여기다. */}
+      <section className="space-y-2" data-testid="home-planner">
+        <h2 className="text-base font-semibold text-foreground">클리어에게 물어보기</h2>
+
+        <Link
+          href="/planner"
+          className="block rounded-lg border border-border p-4"
+          data-testid="home-planner-link"
+        >
+          <p className="text-sm font-medium text-foreground">
+            준비 중 궁금한 것을 물어보세요
+          </p>
+          <p className="text-caption text-muted-foreground">
+            조회한 값으로만 답해요. 없는 숫자는 말하지 않습니다.
+          </p>
+        </Link>
+      </section>
+
+      {/* ── 6) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
       <section className="space-y-2">
         <h2 className="text-base font-semibold text-foreground">준비 중인 기능</h2>
         <p className="text-caption text-muted-foreground">

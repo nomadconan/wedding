@@ -4405,6 +4405,40 @@ if (!vendorStaff || !adminUser) {
          select count(*) from d;`, aiFixture) === "0",
   );
 
+  // ── 대화 시작 권한 (S7-06) ─────────────────────────────────────────────────
+  // 화면은 대화를 서버(서비스롤)로 만들지만, **정책 자체가 커플 경계를 지키는지**는
+  // 별개다. 남의 커플 id 로 대화를 만들 수 있으면 그 대화의 메시지·툴 호출이 전부
+  // 남의 것으로 기록된다 — 라우트의 소유 확인 한 줄이 유일한 방벽이 되면 안 된다.
+  check(
+    "당사자는 자기 커플로 대화를 만들 수 있다",
+    asUser(
+      owner,
+      `with i as (insert into public.ai_conversations (couple_id, title)
+                 values ('${coupleId}', 'RLS점검 생성') returning id)
+       select count(*) from i;`,
+    ) === "1",
+  );
+  check(
+    "**남의 커플 id 로는 대화를 만들 수 없다** (42501)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(
+        owner,
+        `insert into public.ai_conversations (couple_id, title)
+           values ('${AI_OTHER_COUPLE}', '남의 커플에 밀어넣기');`,
+        `insert into public.couples (id, owner_id, stage)
+           values ('${AI_OTHER_COUPLE}', '${outsider}', 'onboarding');`,
+      )),
+  );
+  // anon 은 정책 이전에 **GRANT 에서** 막힌다(T-03 역할별 권한). 둘 중 어느 층이
+  // 막든 결과는 같지만, 사유를 하나로 좁혀 두면 권한 구조가 바뀔 때 검사가 엉뚱한
+  // 이유로 깨진다 — 여기서 확인하려는 것은 "쓸 수 없다" 이다.
+  check(
+    "비로그인은 대화를 만들 수 없다 (GRANT 또는 정책)",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asAnon(`insert into public.ai_conversations (couple_id, title)
+                values ('${coupleId}', '비로그인 생성');`)),
+  );
+
   // ── 상한 파라미터 (§7.4 · S7-20) ────────────────────────────────────────────
   // **키는 있고 값은 비어 있다.** 값이 없으면 대화를 열지 않는다는 결정이 코드에
   // 있으므로(`conversationGate`), 키가 사라지면 그 결정이 조용히 무효가 된다.

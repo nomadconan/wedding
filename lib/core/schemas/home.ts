@@ -177,14 +177,8 @@ export const HOME_PENDING_SECTIONS = [
     reason: "계약서 검토를 아직 만들지 않았습니다.",
     filledBy: "S7-03",
   },
-  // '최근 대화' 는 S4-04 가 채웠다. 자리를 지우지 않고 목록에서 뺐다 — 남겨 두면
-  // 화면이 "아직 못 만들었다" 고 거짓을 말한다.
-  {
-    key: "planner",
-    label: "AI 플래너 '클리어'",
-    reason: "AI 플래너 대화를 아직 만들지 않았습니다.",
-    filledBy: "S7-06",
-  },
+  // '최근 대화' 는 S4-04 가, **'AI 플래너 클리어' 는 S7-06 이** 채웠다. 자리를 지우지
+  // 않고 목록에서 뺐다 — 남겨 두면 화면이 "아직 못 만들었다" 고 거짓을 말한다.
 ] as const satisfies readonly { key: string; label: string; reason: string; filledBy: string }[];
 
 export type HomePendingKey = (typeof HOME_PENDING_SECTIONS)[number]["key"];

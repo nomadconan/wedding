@@ -88,6 +88,10 @@ export type EntityType =
   // S5-06. 결제 전 고지·동의(F-C-14). memo 에는 **종류와 판본만** 넣는다 —
   // 문구 자체는 코드가 판본과 함께 갖는다(§7.3).
   | "payment_consent"
+  // S7-06. 플래너 대화. **본문을 memo 에 넣지 않는다** — 말한 내용은 `ai_messages` 가
+  // 갖고, 여기 남길 사실은 "대화가 열렸다"·"상한에 막혔다" 라는 전이와 사유 코드다.
+  // `entity_events` 에 이 타입의 열람 정책은 두지 않는다(서버·운영 전용 · ai_call_logs 와 같다).
+  | "ai_conversation"
   | "profile"
   | "data_deletion_request";
 
