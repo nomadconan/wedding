@@ -4652,6 +4652,24 @@ if (!vendorStaff || !adminUser) {
         communityFixture) === "0",
     );
 
+    // ── 공개 플래그 (S7-15 · CLAUDE.md §2.1) ─────────────────────────────────
+    // **만들어 두고 켜지 않는다.** 화면·API 는 완성돼 있고 스위치가 꺼져 있다 —
+    // 모더레이션 큐(S7-17) 없이 커뮤니티를 열지 않는다는 T-00f 판단을 표가 들고 있다.
+    check(
+      "**커뮤니티 공개 플래그가 꺼져 있다** (모더레이션 큐 전까지)",
+      sql(`select enabled from public.feature_flags where key = 'community.enabled';`) === "f",
+    );
+    check(
+      "**비로그인은 플래그를 못 본다** (미공개 기능의 존재를 노출하지 않는다)",
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asAnon(`select count(*) from public.feature_flags;`)),
+    );
+    check(
+      "로그인해도 플래그를 못 본다 — 판정 결과만 서버가 넘긴다",
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asUser(owner, `select count(*) from public.feature_flags;`)),
+    );
+
     check(
       "**커뮤니티 운영 파라미터는 값이 비어 있다** (O-14 대기 — 지어낸 기한으로 재촉하지 않는다)",
       sql(`select count(*) from public.app_settings
