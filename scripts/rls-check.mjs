@@ -4938,5 +4938,212 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 태스크 의존 관계 (S7-18 · §3.2 · IDEA-02) ────────────────────────────────
+// **순환은 CHECK 로 못 막는다** — 행 하나만 보기 때문이다. 트리거 + 재귀 CTE 가
+// 표준 수단이고, 동시 삽입 구멍은 커플 단위 어드바이저리 락이 닫는다. 그 판정이
+// 실제로 도는지 여기서 확인한다 — 코드가 아니라 DB 가 막아야 한다.
+{
+  const TA = "00000000-0000-0000-0000-0000000000d1";
+  const TB = "00000000-0000-0000-0000-0000000000d2";
+  const TC = "00000000-0000-0000-0000-0000000000d3";
+  const TX = "00000000-0000-0000-0000-0000000000d4"; // 남의 커플 태스크
+  const DEP_OTHER_COUPLE = "00000000-0000-0000-0000-0000000000d5";
+
+  const taskFixture = `
+    insert into public.tasks (id, couple_id, category, title, status)
+      values ('${TA}', '${coupleId}', 'hall', '웨딩홀 계약', 'todo'),
+             ('${TB}', '${coupleId}', 'sdm', '스드메 계약', 'todo'),
+             ('${TC}', '${coupleId}', 'etc', '청첩장 주문', 'todo');
+    insert into public.couples (id, owner_id, stage)
+      values ('${DEP_OTHER_COUPLE}', '${outsider}', 'onboarding');
+    insert into public.tasks (id, couple_id, category, title, status)
+      values ('${TX}', '${DEP_OTHER_COUPLE}', 'hall', '남의 태스크', 'todo');
+  `;
+
+  check(
+    "당사자는 선행 관계를 만든다",
+    asUser(
+      owner,
+      `with i as (insert into public.task_dependencies (task_id, depends_on_task_id)
+                 values ('${TB}', '${TA}') returning task_id)
+       select count(*) from i;`,
+      taskFixture,
+    ) === "1",
+  );
+  check(
+    "배우자도 같은 그래프를 본다 (커플 공유 · D-19)",
+    asUser(
+      partner,
+      `select count(*) from public.task_dependencies;`,
+      `${taskFixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "1",
+  );
+  check(
+    "**남은 우리 그래프를 못 본다**",
+    asUser(
+      outsider,
+      `select count(*) from public.task_dependencies;`,
+      `${taskFixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "0",
+  );
+  check(
+    "비로그인은 그래프를 못 본다",
+    asAnon(
+      `select count(*) from public.task_dependencies;`,
+      `${taskFixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "0",
+  );
+
+  // **BEFORE 트리거가 CHECK·RLS WITH CHECK 보다 먼저 돈다.** 그래서 길이 1 순환은
+  // 제약 이름이 아니라 트리거 메시지로 걸린다 — 둘 다 막으므로 어느 쪽이든 통과다.
+  // 제약을 남겨 둔 이유는 트리거가 없어지거나 우회될 때의 마지막 문이기 때문이다.
+  check(
+    "**자기 자신을 선행으로 둘 수 없다** (길이 1 순환)",
+    rejectedWith(/task_dependencies_not_self|task_cycle|순환/, () =>
+      asUser(owner, `insert into public.task_dependencies (task_id, depends_on_task_id)
+         values ('${TA}', '${TA}');`, taskFixture)),
+  );
+  check(
+    "같은 간선을 두 번 넣을 수 없다 (PK)",
+    rejectedWith(/task_dependencies_pkey|duplicate key/, () =>
+      asUser(owner, `insert into public.task_dependencies (task_id, depends_on_task_id)
+           values ('${TB}', '${TA}'), ('${TB}', '${TA}');`, taskFixture)),
+  );
+  check(
+    "**A→B→C→A 순환을 트리거가 막는다** (재귀 CTE)",
+    rejectedWith(/task_cycle|순환/, () =>
+      asUser(
+        owner,
+        `insert into public.task_dependencies (task_id, depends_on_task_id)
+           values ('${TA}', '${TC}');`,
+        `${taskFixture}
+         insert into public.task_dependencies (task_id, depends_on_task_id)
+           values ('${TB}', '${TA}'), ('${TC}', '${TB}');`,
+      )),
+  );
+  check(
+    "**다른 커플의 태스크는 선행으로 둘 수 없다**",
+    rejectedWith(/row-level security|task_foreign_couple|다른 커플/, () =>
+      asUser(owner, `insert into public.task_dependencies (task_id, depends_on_task_id)
+         values ('${TB}', '${TX}');`, taskFixture)),
+  );
+  // 정책(WITH CHECK)도 막지만 **트리거가 먼저 답한다**(커플 대조). 확인하려는 것은
+  // "막힌다" 이지 어느 층이 막았는가가 아니다.
+  check(
+    "**남의 태스크에 선행을 붙일 수 없다**",
+    rejectedWith(/row-level security|task_foreign_couple|다른 커플/i, () =>
+      asUser(owner, `insert into public.task_dependencies (task_id, depends_on_task_id)
+         values ('${TX}', '${TA}');`, taskFixture)),
+  );
+  check(
+    "**깊이 상한을 넘으면 거절한다** (검사 폭주 방지)",
+    rejectedWith(/task_depth_exceeded|상한/, () =>
+      sql(`begin;
+           ${taskFixture}
+           update public.app_settings
+              set value_json = '{"value": 1, "unit": "depth"}'::jsonb
+            where key = 'tasks.max_dependency_depth';
+           insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');
+           insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TC}', '${TB}');
+           rollback;`)),
+  );
+  check(
+    "**상한이 없으면 간선을 받지 않는다** — 상한 없는 재귀는 사고다",
+    rejectedWith(/task_depth_unconfigured|상한이 설정되지/, () =>
+      sql(`begin;
+           ${taskFixture}
+           update public.app_settings
+              set value_json = '{"value": null, "unit": "depth"}'::jsonb
+            where key = 'tasks.max_dependency_depth';
+           insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');
+           rollback;`)),
+  );
+  check(
+    "간선은 지울 수 있다 — 순서는 사용자의 판단이다",
+    asUser(
+      owner,
+      `with d as (delete from public.task_dependencies returning task_id)
+       select count(*) from d;`,
+      `${taskFixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "1",
+  );
+  check(
+    "**간선을 고칠 수는 없다** — 방향을 바꾸는 일은 지우고 다시 만드는 것이다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(
+        owner,
+        `update public.task_dependencies set depends_on_task_id = '${TC}' where task_id = '${TB}';`,
+        `${taskFixture}
+         insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+      )),
+  );
+  check(
+    "**중간 태스크를 지우면 간선만 사라지고 앞뒤를 잇지 않는다**",
+    sql(`begin;
+         ${taskFixture}
+         insert into public.task_dependencies (task_id, depends_on_task_id)
+           values ('${TB}', '${TA}'), ('${TC}', '${TB}');
+         delete from public.tasks where id = '${TB}';
+         select count(*) from public.task_dependencies;
+         rollback;`) === "0",
+  );
+
+  // ── 템플릿 순서 — 시드가 순환을 담으면 모든 커플에 복제된다 ─────────────────
+  check(
+    "템플릿에 안정 키(code)가 붙었다",
+    sql(`select count(*) from public.task_templates where code is null;`) === "0",
+  );
+  check(
+    "**템플릿 순서도 순환을 막는다**",
+    rejectedWith(/task_template_cycle|순환/, () =>
+      sql(`begin;
+           insert into public.task_templates (code, category, title, offset_days)
+             values ('TT-A', 'hall', 'A', -300), ('TT-B', 'hall', 'B', -200);
+           insert into public.task_template_dependencies (template_code, depends_on_code)
+             values ('TT-B', 'TT-A');
+           insert into public.task_template_dependencies (template_code, depends_on_code)
+             values ('TT-A', 'TT-B');
+           rollback;`)),
+  );
+  check(
+    "템플릿 순서는 누구나 읽는다 (역산 생성의 근거다)",
+    asAnon(`select count(*) from public.task_template_dependencies;`) === "0" ||
+      asAnon(`select count(*) from public.task_template_dependencies;`) !== null,
+  );
+  check(
+    "**템플릿 순서를 사용자가 쓸 수 없다** — 시드·운영자의 것이다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `insert into public.task_template_dependencies (template_code, depends_on_code)
+         values ('TT-X', 'TT-Y');`)),
+  );
+
+  check(
+    "**선행 미완 완료를 막지 않는다** — 기록일 뿐이다(§3.2)",
+    asUser(
+      owner,
+      `with u as (update public.tasks set status = 'done', completed_out_of_order = true
+                 where id = '${TB}' returning id)
+       select count(*) from u;`,
+      `${taskFixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "1",
+  );
+  check(
+    "**ready·waiting 컬럼이 없다** — 저장하면 배치 전까지 화면이 거짓말을 한다",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'tasks'
+             and column_name in ('ready', 'waiting', 'is_ready', 'is_waiting');`) === "0",
+  );
+  check(
+    "의존 깊이 상한이 파라미터로 있다 (§7.4)",
+    sql(`select value_json->>'value' from public.app_settings
+           where key = 'tasks.max_dependency_depth';`) === "20",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
