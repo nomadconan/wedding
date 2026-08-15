@@ -20,7 +20,9 @@ import {
   homeTasks,
   pendingMetric,
 } from "@/lib/core/schemas/home";
+import { ANALYSIS_STATUS_LABEL } from "@/lib/core/report/pipeline";
 import { measured } from "@/lib/core/stats/metric";
+import { latestReport } from "@/lib/reports/loader";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -137,6 +139,10 @@ async function HomeSection() {
         }).catch(() => [])
       ).slice(0, 3)
     : [];
+
+  // 최근 검토 리포트(F-C-07 · S7-03). 커플이 없으면 문서도 없다 — 조회를 건너뛴다.
+  // RLS 가 자기 커플의 문서만 보여주므로 여기서 couple_id 로 다시 거르지 않는다.
+  const recentReport = membership ? await latestReport(supabase).catch(() => null) : null;
 
   // 기준일은 여기서 한 번만 만들고 화면 전체가 같은 값을 쓴다.
   const today = new Date().toISOString().slice(0, 10);
@@ -350,7 +356,46 @@ async function HomeSection() {
         )}
       </section>
 
-      {/* ── 5) 클리어 진입 (S7-06 — F-C-03) ──────────────────────────────── */}
+      {/* ── 5) 최근 검토 리포트 (S7-03 — F-C-07) ─────────────────────────── */}
+      <section className="space-y-2" data-testid="home-reports">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-foreground">계약서 검토</h2>
+          {recentReport ? (
+            <Link href="/reports" className="text-caption font-medium text-brand-600">
+              전체 보기
+            </Link>
+          ) : null}
+        </div>
+
+        {recentReport === null ? (
+          <p className="text-sm text-muted-foreground">
+            아직 검토한 계약서가 없어요.{" "}
+            <Link href="/reports/upload" className="font-medium text-brand-600">
+              계약서 올리기
+            </Link>
+          </p>
+        ) : (
+          <Link
+            href={
+              recentReport.analysisId === null ? "/reports" : `/reports/${recentReport.analysisId}`
+            }
+            className="block rounded-lg border border-border p-4"
+            data-testid="home-report-link"
+          >
+            <p className="text-sm font-medium text-foreground">
+              {new Date(recentReport.createdAt).toLocaleDateString("ko-KR")} 올린 계약서
+            </p>
+            <p className="text-caption text-muted-foreground">
+              {recentReport.status === null
+                ? "분석을 시작하지 않았어요"
+                : ANALYSIS_STATUS_LABEL[recentReport.status]}
+              {recentReport.riskScore === null ? "" : ` · 위험 ${recentReport.riskScore}`}
+            </p>
+          </Link>
+        )}
+      </section>
+
+      {/* ── 6) 클리어 진입 (S7-06 — F-C-03) ──────────────────────────────── */}
       {/* **하단 탭을 늘리지 않았다.** 다섯 칸이 이미 찼고 여섯 번째부터는 375px 에서
           터치 타깃이 44px 아래로 내려간다(§7.5). 그래서 클리어의 1차 진입은 여기다. */}
       <section className="space-y-2" data-testid="home-planner">
@@ -370,7 +415,7 @@ async function HomeSection() {
         </Link>
       </section>
 
-      {/* ── 6) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
+      {/* ── 7) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
       <section className="space-y-2">
         <h2 className="text-base font-semibold text-foreground">준비 중인 기능</h2>
         <p className="text-caption text-muted-foreground">

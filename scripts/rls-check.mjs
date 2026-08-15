@@ -4405,6 +4405,102 @@ if (!vendorStaff || !adminUser) {
          select count(*) from d;`, aiFixture) === "0",
   );
 
+  // ── 계약서 검토 (S7-03 · §3.5 · §5.2) ──────────────────────────────────────
+  // **원문은 지워도 리포트는 남는다.** 그 남은 것이 남에게 보이면 안 된다 —
+  // `findings.clause_excerpt_masked` 는 마스킹본이지만 여전히 그 커플의 계약 내용이다.
+  {
+    const DOC = "00000000-0000-0000-0000-0000000000b1";
+    const ANA = "00000000-0000-0000-0000-0000000000b2";
+    const DOC_OTHER_COUPLE = "00000000-0000-0000-0000-0000000000b3";
+
+    const reportFixture = `
+      insert into public.documents (id, couple_id, doc_type, storage_path, mime, purge_scheduled_at)
+        values ('${DOC}', '${coupleId}', 'contract', '${coupleId}/${DOC}', 'text/plain', now() + interval '24 hours');
+      insert into public.document_analyses (id, document_id, status, risk_score)
+        values ('${ANA}', '${DOC}', 'done', 40);
+      insert into public.findings (analysis_id, rule_code, severity, clause_excerpt_masked, basis_ref, citation_verified)
+        values ('${ANA}', 'R-01', 'high'::public.finding_severity, '위약금은 총 금액의 80%로 한다', '소비자분쟁해결기준(예식업)', true);
+    `;
+
+    check(
+      "당사자는 자기 문서를 본다",
+      asUser(owner, `select count(*) from public.documents;`, reportFixture) === "1",
+    );
+    check(
+      "배우자도 같은 문서를 본다 (커플 공유 · D-19)",
+      asUser(partner, `select count(*) from public.documents;`, reportFixture) === "1",
+    );
+    check(
+      "**남의 문서는 안 보인다**",
+      asUser(outsider, `select count(*) from public.documents;`, reportFixture) === "0",
+    );
+    check(
+      "비로그인은 문서를 못 본다",
+      asAnon(`select count(*) from public.documents;`, reportFixture) === "0",
+    );
+    check(
+      "당사자는 분석 결과를 본다",
+      asUser(owner, `select count(*) from public.document_analyses;`, reportFixture) === "1",
+    );
+    check(
+      "**남의 분석은 안 보인다** (상위 문서 스코프가 전이된다)",
+      asUser(outsider, `select count(*) from public.document_analyses;`, reportFixture) === "0",
+    );
+    check(
+      "당사자는 조항 검출 결과를 본다",
+      asUser(owner, `select count(*) from public.findings;`, reportFixture) === "1",
+    );
+    check(
+      "**남의 조항 인용은 안 보인다** — 마스킹본이어도 그 커플의 계약 내용이다",
+      asUser(outsider, `select count(*) from public.findings;`, reportFixture) === "0",
+    );
+    check(
+      "비로그인은 조항 검출 결과를 못 본다",
+      asAnon(`select count(*) from public.findings;`, reportFixture) === "0",
+    );
+    check(
+      "분석·조항은 클라이언트가 쓸 수 없다 — 파이프라인(서비스롤)이 만든다",
+      rejectedWith(/row-level security/i, () =>
+        asUser(owner, `insert into public.document_analyses (document_id, status)
+           values ('${DOC}', 'done');`, reportFixture)) &&
+        rejectedWith(/row-level security/i, () =>
+          asUser(owner, `insert into public.findings (analysis_id, rule_code, severity)
+             values ('${ANA}', 'R-01', 'low'::public.finding_severity);`, reportFixture)),
+    );
+    check(
+      "**위험 점수를 당사자가 고칠 수 없다** (UPDATE 정책 없음)",
+      asUser(owner, `with u as (update public.document_analyses set risk_score = 0 returning id)
+         select count(*) from u;`, reportFixture) === "0",
+    );
+    check(
+      "**남의 커플 id 로 문서를 만들 수 없다** (42501)",
+      rejectedWith(/row-level security/i, () =>
+        asUser(
+          owner,
+          `insert into public.documents (couple_id, doc_type, storage_path, purge_scheduled_at)
+             values ('${DOC_OTHER_COUPLE}', 'contract', 'x', now());`,
+          `insert into public.couples (id, owner_id, stage)
+             values ('${DOC_OTHER_COUPLE}', '${outsider}', 'onboarding');`,
+        )),
+    );
+    check(
+      "**파기 예약 없이 문서를 만들 수 없다** (NOT NULL · CLAUDE.md §5.1)",
+      rejectedWith(/null value|not-null/i, () =>
+        asUser(owner, `insert into public.documents (couple_id, doc_type, storage_path)
+           values ('${coupleId}', 'contract', 'x');`)),
+    );
+    check(
+      "계약서 원문 버킷은 비공개다 (서명 URL 전용)",
+      sql(`select public from storage.buckets where id = 'contracts-raw';`) === "f",
+    );
+    check(
+      "**원문 버킷에 storage 정책이 없다** — 정책이 없다는 것이 곧 '직접 접근 불가' 다",
+      sql(`select count(*) from pg_policies
+             where schemaname = 'storage' and tablename = 'objects'
+               and qual like '%contracts-raw%';`) === "0",
+    );
+  }
+
   // ── 대화 시작 권한 (S7-06) ─────────────────────────────────────────────────
   // 화면은 대화를 서버(서비스롤)로 만들지만, **정책 자체가 커플 경계를 지키는지**는
   // 별개다. 남의 커플 id 로 대화를 만들 수 있으면 그 대화의 메시지·툴 호출이 전부
