@@ -4537,9 +4537,85 @@ export type Database = {
           },
         ]
       }
+      task_dependencies: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          depends_on_task_id: string
+          task_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          depends_on_task_id: string
+          task_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          depends_on_task_id?: string
+          task_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_dependencies_depends_on_task_id_fkey"
+            columns: ["depends_on_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_dependencies_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_template_dependencies: {
+        Row: {
+          created_at: string
+          depends_on_code: string
+          template_code: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          depends_on_code: string
+          template_code: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          depends_on_code?: string
+          template_code?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_template_dependencies_depends_on_code_fkey"
+            columns: ["depends_on_code"]
+            isOneToOne: false
+            referencedRelation: "task_templates"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "task_template_dependencies_template_code_fkey"
+            columns: ["template_code"]
+            isOneToOne: false
+            referencedRelation: "task_templates"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
       task_templates: {
         Row: {
           category: string
+          code: string
           created_at: string
           default_owner: string | null
           description: string | null
@@ -4550,6 +4626,7 @@ export type Database = {
         }
         Insert: {
           category: string
+          code: string
           created_at?: string
           default_owner?: string | null
           description?: string | null
@@ -4560,6 +4637,7 @@ export type Database = {
         }
         Update: {
           category?: string
+          code?: string
           created_at?: string
           default_owner?: string | null
           description?: string | null
@@ -4574,36 +4652,42 @@ export type Database = {
         Row: {
           assignee_id: string | null
           category: string
+          completed_out_of_order: boolean
           couple_id: string
           created_at: string
           due_date: string | null
           id: string
           source: Database["public"]["Enums"]["task_source"]
           status: string
+          template_code: string | null
           title: string
           updated_at: string
         }
         Insert: {
           assignee_id?: string | null
           category: string
+          completed_out_of_order?: boolean
           couple_id: string
           created_at?: string
           due_date?: string | null
           id?: string
           source?: Database["public"]["Enums"]["task_source"]
           status?: string
+          template_code?: string | null
           title: string
           updated_at?: string
         }
         Update: {
           assignee_id?: string | null
           category?: string
+          completed_out_of_order?: boolean
           couple_id?: string
           created_at?: string
           due_date?: string | null
           id?: string
           source?: Database["public"]["Enums"]["task_source"]
           status?: string
+          template_code?: string | null
           title?: string
           updated_at?: string
         }
@@ -4614,6 +4698,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "couples"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_template_code_fkey"
+            columns: ["template_code"]
+            isOneToOne: false
+            referencedRelation: "task_templates"
+            referencedColumns: ["code"]
           },
         ]
       }
@@ -5268,6 +5359,7 @@ export type Database = {
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       owns_coupon_issue: { Args: { p_issue_id: string }; Returns: boolean }
       owns_post: { Args: { p_post_id: string }; Returns: boolean }
+      owns_task: { Args: { p_task_id: string }; Returns: boolean }
       planner_contract_count: {
         Args: { p_planner_id: string }
         Returns: number
