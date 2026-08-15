@@ -53,9 +53,9 @@ export const metadata: Metadata = {
 /**
  * 구조화 데이터.
  *
- * **없는 것을 주장하지 않는다.** `SearchAction` 은 검색 엔드포인트가 있어야 성립하는데
- * 조건 검색(`/search`)은 7단계(S7-02)라 넣지 않았다 — 구조화 데이터의 거짓은
- * 색인에서 걷어내기 어렵다.
+ * **없는 것을 주장하지 않는다.** `SearchAction` 은 검색 엔드포인트가 있어야 성립한다 —
+ * 구조화 데이터의 거짓은 색인에서 걷어내기 어렵다. 조건 검색(`/search`)이 S7-02 로 생겼고
+ * `q` 하나로 결과 화면이 서므로 이제 사실이다.
  */
 const JSON_LD = {
   "@context": "https://schema.org",
@@ -76,6 +76,14 @@ const JSON_LD = {
       name: "웨딩클리어",
       inLanguage: "ko-KR",
       publisher: { "@id": `${APP_URL}/#organization` },
+      potentialAction: {
+        "@type": "SearchAction",
+        target: {
+          "@type": "EntryPoint",
+          urlTemplate: `${APP_URL}/search?q={search_term_string}`,
+        },
+        "query-input": "required name=search_term_string",
+      },
     },
   ],
 };
@@ -141,6 +149,10 @@ export default function LandingPage() {
             <Link href="/explore" className="text-foreground">
               탐색
             </Link>
+            {/* §6.1 이 요구하는 조건 검색 진입(S7-02). 그전에는 화면이 없어 탐색으로 보냈다. */}
+            <Link href="/search" className="text-foreground">
+              조건 검색
+            </Link>
             {/* 로그인 여부로 화면을 가르지 않는다 — 누르면 미들웨어가 판단한다. */}
             <Link href="/home" className="text-foreground">
               내 홈
@@ -180,6 +192,17 @@ export default function LandingPage() {
               >
                 상품 둘러보기
               </Link>
+              {/*
+                조건 검색 진입(F-C-30 · S7-02). 상품 목록보다 **뒤에** 둔다 — 첫 화면의
+                주장은 "상품이 진열돼 있다" 이고, 조건 검색은 그 진열을 좁히는 도구다.
+              */}
+              <Link
+                href="/search"
+                className="rounded-md border border-border px-4 py-2.5 text-sm font-medium text-foreground"
+                data-testid="cta-search"
+              >
+                조건으로 찾기
+              </Link>
               <Link
                 href="/vendor/apply"
                 className="rounded-md border border-border px-4 py-2.5 text-sm font-medium text-foreground"
@@ -188,6 +211,12 @@ export default function LandingPage() {
                 업체로 입점하기
               </Link>
             </div>
+
+            {/* 어떤 문장이 통하는지 첫 화면에서 보여준다 — 검색창이 비어 있으면 아무도 못 적는다. */}
+            <p className="text-caption text-muted-foreground" data-testid="landing-search-hint">
+              &lsquo;3월 14일 강남 300인 웨딩홀&rsquo; 처럼 적으면 조건으로 바꿔 찾아 드려요. 무엇으로
+              줄 세웠는지도 함께 보여드립니다.
+            </p>
 
             <AssetImage
               id="landing.hero"

@@ -23,6 +23,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: `${base}/`, lastModified: now, changeFrequency: "weekly", priority: 1 },
     { url: `${base}/explore`, lastModified: now, changeFrequency: "daily", priority: 0.8 },
+    // 조건 검색(S7-02)도 비로그인 화면이다(§1.4 guest). 결과 링크가 아니라 입력 화면만 싣는다 —
+    // 조건 조합은 무한하고, 그중 결과가 있는 조합을 우리가 미리 알지 못한다.
+    { url: `${base}/search`, lastModified: now, changeFrequency: "weekly", priority: 0.6 },
     { url: `${base}/login`, lastModified: now, changeFrequency: "monthly", priority: 0.3 },
   ];
 }

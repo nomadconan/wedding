@@ -73,6 +73,38 @@ export type ExploreResult = {
 export const AVAILABILITY_SCAN_LIMIT = 200;
 
 /**
+ * 조회 방식 옵션 (S7-02).
+ *
+ * 조건 검색(`/search`)은 **부합도로 줄을 세운다**(§5.5 3단계). 그 순서는 슬롯·스타일·수용
+ * 인원을 맞춰 본 뒤에야 나오므로 DB 가 정렬할 수 없다 — 참가격 편차 정렬이 메모리에서
+ * 서는 것과 같은 사정이다.
+ *
+ * **그렇다고 조건 검색이 자기 쿼리를 따로 쓰게 두지 않는다.** 필터 해석이 두 벌이 되면
+ * 같은 조건이 `/explore` 와 `/search` 에서 다른 결과를 낸다. 그래서 조회는 이 함수 하나로
+ * 두고 **순서만 호출자가 갈아 끼운다.**
+ */
+export type SearchVendorsOptions = {
+  /** 페이지 크기 대신 상한까지 후보를 읽는다. 메모리 정렬이 필요한 호출자용. */
+  scanAll?: boolean;
+  /** 페이지를 자르기 전에 적용할 순서. 상품 id 나열을 돌려준다. */
+  rank?: (candidates: RankCandidate[]) => string[];
+};
+
+/**
+ * 랭킹 함수에 넘기는 후보. **DB 행 타입이 아니다** — `lib/core` 가 DB 를 모른 채로
+ * 남아야 Expo 전환 때 그대로 옮겨진다(CLAUDE.md §3.1).
+ */
+export type RankCandidate = {
+  productId: string;
+  basePrice: number;
+  regionCode: string | null;
+  styleTags: string[];
+  capacityMin: number | null;
+  capacityMax: number | null;
+  availabilityKind: AvailabilityState["kind"];
+};
+
+/**
  * 쿼리 스트링 -> 필터 입력.
  *
  * **API 와 화면이 같은 파서를 쓴다.** 목록 화면이 자기 파싱을 따로 하면 같은 URL 로
@@ -293,6 +325,7 @@ async function countFor(client: SupabaseClient, filter: ExploreFilter): Promise<
 export async function searchVendors(
   client: SupabaseClient,
   input: unknown,
+  options?: SearchVendorsOptions,
 ): Promise<{ ok: true; result: ExploreResult } | { ok: false; issues: ZodIssue[] }> {
   const parsed = ExploreFilterSchema.safeParse(input);
   if (!parsed.success) return { ok: false, issues: parsed.error.issues };
@@ -322,7 +355,7 @@ export async function searchVendors(
 
   // '자리 있는 곳만'(슬롯)과 '참가격 대비'(지수)는 다른 테이블을 봐야 판정되므로
   // 페이지를 잘라내기 전에 후보를 넉넉히 읽는다. 상한에 걸리면 화면이 그 사실을 알린다.
-  const scanAll = filter.onlyAvailable || filter.sort === "price_index_gap";
+  const scanAll = options?.scanAll === true || filter.onlyAvailable || filter.sort === "price_index_gap";
   const fetchTo = scanAll ? AVAILABILITY_SCAN_LIMIT - 1 : from + EXPLORE_PAGE_SIZE - 1;
   const fetchFrom = scanAll ? 0 : from;
 
@@ -369,6 +402,35 @@ export async function searchVendors(
         { id: a.id, gapBp: gapOf(a).gapBp },
         { id: b.id, gapBp: gapOf(b).gapBp },
       ),
+    );
+  }
+
+  /**
+   * 호출자가 준 순서(조건 부합도 등)를 **페이지를 자르기 전에** 적용한다.
+   * 자른 뒤에 세우면 한 페이지 안에서만 줄이 바뀌어 순서가 거짓이 된다.
+   */
+  if (options?.rank) {
+    const order = options.rank(
+      products.map((product) => {
+        const vendor = vendorLookup.get(product.vendor_id);
+
+        return {
+          productId: product.id,
+          basePrice: product.base_price_total,
+          regionCode: vendor?.region_code ?? null,
+          styleTags: vendor?.style_tags ?? [],
+          capacityMin: product.capacity_min,
+          capacityMax: product.capacity_max,
+          availabilityKind: (availability.get(product.id) ?? { kind: "unknown" }).kind,
+        };
+      }),
+    );
+
+    const position = new Map(order.map((id, index) => [id, index]));
+    // 순서에 없는 상품은 뒤로 보낸다. 조용히 빼면 결과 수와 목록이 어긋난다.
+    products = [...products].sort(
+      (a, b) =>
+        (position.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (position.get(b.id) ?? Number.MAX_SAFE_INTEGER),
     );
   }
 

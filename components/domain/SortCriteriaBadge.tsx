@@ -19,6 +19,12 @@ import { cn } from "@/lib/utils";
 
 /** 정렬 기준 코드. API 응답·AI 툴 반환값과 동일한 값을 쓴다. */
 export const SORT_CRITERIA = {
+  /**
+   * 조건 검색(F-C-30 · S7-02)의 랭킹. **가중치는 화면이 함께 보여준다**(`FIT_RULES`) —
+   * 코드 이름만으로는 무엇으로 줄 세웠는지 확인할 수 없고, 그러면 이 배지가 증거 노릇을
+   * 못 한다. 채점할 조건이 없는 검색은 이 코드를 쓰지 않고 `price_asc` 로 내려간다.
+   */
+  condition_fit: "조건 부합도 순",
   price_asc: "가격 낮은 순",
   price_desc: "가격 높은 순",
   price_index_gap: "참가격 대비 편차 순",
