@@ -4652,6 +4652,56 @@ if (!vendorStaff || !adminUser) {
         communityFixture) === "0",
     );
 
+    // ── 모더레이션 (S7-17 · F-A-18 · D-62) ───────────────────────────────────
+    // **운영자는 읽기만 정책으로 연다.** 처리는 서비스롤 경유이며, 그 사실이 여기서
+    // 검사로 고정된다 — 정책을 열면 되돌릴 수 없는 권한이 클라이언트에 놓인다.
+    check(
+      "운영자는 신고 대상 글을 본문까지 본다 (판단하려면 봐야 한다)",
+      asUser(adminUser, `select count(*) from public.community_posts where id = '${POST}';`,
+        communityFixture) === "1",
+    );
+    check(
+      "**운영자도 클라이언트 경로로는 신고를 닫을 수 없다** (서비스롤 경유)",
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asUser(adminUser, `update public.community_reports
+             set status = 'resolved', resolution = '광고성 문구', resolved_by = '${adminUser}',
+                 resolved_at = now()
+           where id = '${RPT}';`, communityFixture)),
+    );
+    check(
+      "**서비스롤은 사유와 함께라면 닫을 수 있다**",
+      sql(`begin;
+           ${communityFixture}
+           update public.community_reports
+              set status = 'resolved', resolution = '광고성 문구를 확인했습니다',
+                  resolved_by = '${adminUser}', resolved_at = now()
+            where id = '${RPT}';
+           select status from public.community_reports where id = '${RPT}';
+           rollback;`) === "resolved",
+    );
+    check(
+      "**사유 없이는 서비스롤도 닫지 못한다** (CHECK 가 마지막 문이다)",
+      rejectedWith(/community_reports_resolution_shape/, () =>
+        sql(`begin;
+             ${communityFixture}
+             update public.community_reports set status = 'resolved' where id = '${RPT}';
+             rollback;`)),
+    );
+    check(
+      "**운영자가 글을 '삭제' 로 옮기지 않는다** — 화면이 '작성자가 지웠다' 고 거짓말한다",
+      sql(`begin;
+           ${communityFixture}
+           update public.community_posts set status = 'hidden' where id = '${POST}';
+           select status from public.community_posts where id = '${POST}';
+           rollback;`) === "hidden",
+    );
+    check(
+      "가려진 글의 작성자는 여전히 자기 글을 본다",
+      asUser(owner, `select count(*) from public.community_posts where id = '${POST}';`,
+        `${communityFixture}
+         update public.community_posts set status = 'hidden' where id = '${POST}';`) === "1",
+    );
+
     // ── 공개 플래그 (S7-15 · CLAUDE.md §2.1) ─────────────────────────────────
     // **만들어 두고 켜지 않는다.** 화면·API 는 완성돼 있고 스위치가 꺼져 있다 —
     // 모더레이션 큐(S7-17) 없이 커뮤니티를 열지 않는다는 T-00f 판단을 표가 들고 있다.
