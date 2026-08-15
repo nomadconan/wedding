@@ -79,6 +79,9 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/quality", label: "AI 품질·비용", icon: BarChart3 },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/tickets", label: "CS·신고", icon: Flag },
+  // S7-17. **CS·신고와 다른 큐다** — 이쪽은 커뮤니티 게시물이고 조치가 비공개·복구이며
+  // 사유가 기록에 남는다. 한 큐에 섞으면 처리 절차가 서로 다른 건이 같은 목록에 놓인다.
+  { href: "/admin/community-reports", label: "커뮤니티 신고", icon: Flag },
   { href: "/admin/disputes", label: "분쟁 중재", icon: Users },
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];

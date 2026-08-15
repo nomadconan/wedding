@@ -23,9 +23,23 @@ export async function readSetting(key: string): Promise<Record<string, unknown> 
   return (data?.value_json ?? null) as Record<string, unknown> | null;
 }
 
-/** 정수 파라미터. 값이 없거나 정수가 아니면 null 이며 호출부가 판단한다. */
+/**
+ * 정수 파라미터. 값이 없거나 정수가 아니면 null 이며 호출부가 판단한다.
+ *
+ * **`null` 을 0 으로 읽지 않는다(S7-17 에서 물렸다).** `seed.sql`·마이그레이션은 미결
+ * 파라미터를 `{"value": null, "status": "undecided"}` 로 넣는데, `Number(null)` 은 **0**
+ * 이고 `Number.isInteger(0)` 은 참이다 — 그래서 "값이 없다" 가 "값이 0 이다" 로 조용히
+ * 바뀌었다. 기한이 0시간이면 **모든 건이 기한 초과**가 되고, 유예가 0일이면 **오늘
+ * 지급 대상**이 된다. 미결 파라미터를 읽는 모든 호출부가 같은 함정을 지나므로 여기서
+ * 막는다(§7.4 · CLAUDE.md §7.6 — 값이 없으면 코드가 고르지 않는다).
+ */
 export async function readIntSetting(key: string, field: string): Promise<number | null> {
-  const value = Number((await readSetting(key))?.[field]);
+  const raw = (await readSetting(key))?.[field];
+
+  // null·undefined·빈 문자열은 **미결**이다. 숫자로 변환하기 전에 걸러낸다.
+  if (raw === null || raw === undefined || raw === "") return null;
+
+  const value = Number(raw);
 
   return Number.isInteger(value) ? value : null;
 }
