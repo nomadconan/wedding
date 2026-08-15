@@ -712,6 +712,250 @@ export type Database = {
         }
         Relationships: []
       }
+      community_comments: {
+        Row: {
+          author_id: string
+          body: string
+          created_at: string
+          id: string
+          parent_id: string | null
+          post_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string
+          body: string
+          created_at?: string
+          id?: string
+          parent_id?: string | null
+          post_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string
+          body?: string
+          created_at?: string
+          id?: string
+          parent_id?: string | null
+          post_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_comments_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "community_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_comments_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_likes: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_likes_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_post_tags: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          tagged_by: string
+          updated_at: string
+          vendor_id: string
+          verified_purchase: boolean
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          tagged_by?: string
+          updated_at?: string
+          vendor_id: string
+          verified_purchase?: boolean
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          tagged_by?: string
+          updated_at?: string
+          vendor_id?: string
+          verified_purchase?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_post_tags_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "community_post_tags_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      community_posts: {
+        Row: {
+          author_id: string
+          board_type: string
+          body: string
+          category: string | null
+          created_at: string
+          id: string
+          is_pinned: boolean
+          like_count: number
+          status: string
+          title: string
+          updated_at: string
+          view_count: number
+        }
+        Insert: {
+          author_id?: string
+          board_type: string
+          body: string
+          category?: string | null
+          created_at?: string
+          id?: string
+          is_pinned?: boolean
+          like_count?: number
+          status?: string
+          title: string
+          updated_at?: string
+          view_count?: number
+        }
+        Update: {
+          author_id?: string
+          board_type?: string
+          body?: string
+          category?: string | null
+          created_at?: string
+          id?: string
+          is_pinned?: boolean
+          like_count?: number
+          status?: string
+          title?: string
+          updated_at?: string
+          view_count?: number
+        }
+        Relationships: []
+      }
+      community_reports: {
+        Row: {
+          created_at: string
+          id: string
+          reason_code: string
+          reporter_id: string
+          resolution: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          status: string
+          target_id: string
+          target_type: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          reason_code: string
+          reporter_id?: string
+          resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          target_id: string
+          target_type: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          reason_code?: string
+          reporter_id?: string
+          resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          status?: string
+          target_id?: string
+          target_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      community_scraps: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "community_scraps_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       consents: {
         Row: {
           agreed_at: string
@@ -4977,6 +5221,7 @@ export type Database = {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
       booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }
+      bump_post_view: { Args: { p_post_id: string }; Returns: undefined }
       can_read_qna_post: { Args: { p_post_id: string }; Returns: boolean }
       cart_active_limit: { Args: never; Returns: number }
       cart_couple_id: { Args: { p_cart_id: string }; Returns: string }
@@ -5012,6 +5257,8 @@ export type Database = {
       is_inquiry_vendor: { Args: { p_inquiry_id: string }; Returns: boolean }
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
+      is_published_post: { Args: { p_post_id: string }; Returns: boolean }
+      is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {
         Args: { p_category: string }
@@ -5020,12 +5267,14 @@ export type Database = {
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       owns_coupon_issue: { Args: { p_issue_id: string }; Returns: boolean }
+      owns_post: { Args: { p_post_id: string }; Returns: boolean }
       planner_contract_count: {
         Args: { p_planner_id: string }
         Returns: number
       }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
+      recount_post_likes: { Args: { p_post_id: string }; Returns: number }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

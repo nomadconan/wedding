@@ -4405,6 +4405,261 @@ if (!vendorStaff || !adminUser) {
          select count(*) from d;`, aiFixture) === "0",
   );
 
+  // ── 커뮤니티 (S7-14 · §3.7 · D-26) ─────────────────────────────────────────
+  // **모더레이션이 없으면 커뮤니티를 열 수 없다**(T-00f). 그 모더레이션의 경계가
+  // 여기 있다 — 작성자가 자기 글을 가릴 수 없고, 운영자는 클라이언트 경로로
+  // 가릴 수 없으며(서비스롤 경유), 신고는 신고자와 운영자만 본다.
+  {
+    const POST = "00000000-0000-0000-0000-0000000000c1";
+    const HIDDEN_POST = "00000000-0000-0000-0000-0000000000c2";
+    const CMT = "00000000-0000-0000-0000-0000000000c3";
+    const RPT = "00000000-0000-0000-0000-0000000000c4";
+    const TAGV = "00000000-0000-0000-0000-0000000000c6";
+
+    // 태그 대상 업체를 트랜잭션 안에서 만든다. **승인 상태여야** 태그 트리거를 지난다.
+    const communityFixture = `
+      insert into public.vendors (id, name, category, status)
+        values ('${TAGV}', 'RLS커뮤니티업체', 'hall', 'active');
+      insert into public.vendor_members (vendor_id, user_id, vendor_role)
+        values ('${TAGV}', '${outsider}', 'owner');
+      insert into public.community_posts (id, author_id, board_type, title, body, status)
+        values ('${POST}', '${owner}', 'experience', 'RLS점검 글', '본문입니다', 'published'),
+               ('${HIDDEN_POST}', '${owner}', 'free', '가려진 글', '본문입니다', 'hidden');
+      insert into public.community_comments (id, post_id, author_id, body)
+        values ('${CMT}', '${POST}', '${partner}', '댓글입니다');
+      insert into public.community_post_tags (post_id, vendor_id, tagged_by, verified_purchase)
+        values ('${POST}', '${TAGV}', '${owner}', false);
+      insert into public.community_reports (id, target_type, target_id, reporter_id, reason_code)
+        values ('${RPT}', 'post', '${POST}', '${partner}', 'spam');
+    `;
+
+    check(
+      "**비로그인은 공개 글을 읽는다** (SEO·열람이 그 위에 선다)",
+      asAnon(`select count(*) from public.community_posts;`, communityFixture) === "1",
+    );
+    check(
+      "**비로그인에게 가려진 글은 안 보인다**",
+      asAnon(`select count(*) from public.community_posts where id = '${HIDDEN_POST}';`,
+        communityFixture) === "0",
+    );
+    check(
+      "작성자는 가려진 자기 글을 본다 — 그래야 '왜 안 보이나' 를 물을 수 있다",
+      asUser(owner, `select count(*) from public.community_posts;`, communityFixture) === "2",
+    );
+    check(
+      "남은 가려진 글을 못 본다",
+      asUser(outsider, `select count(*) from public.community_posts;`, communityFixture) === "1",
+    );
+    check(
+      "운영자는 전부 본다",
+      asUser(adminUser, `select count(*) from public.community_posts;`, communityFixture) === "2",
+    );
+
+    check(
+      "**남의 글을 고칠 수 없다**",
+      asUser(outsider, `with u as (update public.community_posts set title = '조작' returning id)
+         select count(*) from u;`, communityFixture) === "0",
+    );
+    check(
+      "**작성자가 스스로 비공개로 옮길 수 없다** — 그건 모더레이션이다",
+      rejectedWith(/비공개 처리는 운영자만/, () =>
+        asUser(owner, `update public.community_posts set status = 'hidden' where id = '${POST}';`,
+          communityFixture)),
+    );
+    // 고정·집계는 **열 단위 GRANT** 가 막는다 — 값 비교로 막으면 좋아요 캐시 트리거
+    // 자신이 걸린다(이 검사가 실제로 그것을 잡아냈다).
+    check(
+      "**작성자가 고정할 수 없다**",
+      rejectedWith(/permission denied/i, () =>
+        asUser(owner, `update public.community_posts set is_pinned = true where id = '${POST}';`,
+          communityFixture)),
+    );
+    check(
+      "**집계 값을 손으로 고칠 수 없다** (좋아요는 트리거, 조회수는 함수)",
+      rejectedWith(/permission denied/i, () =>
+        asUser(owner, `update public.community_posts set like_count = 999 where id = '${POST}';`,
+          communityFixture)) &&
+        rejectedWith(/permission denied/i, () =>
+          asUser(owner, `update public.community_posts set view_count = 999 where id = '${POST}';`,
+            communityFixture)),
+    );
+    check(
+      "제목·내용은 고칠 수 있다 — 좁힌 것은 칸이지 수정 자체가 아니다",
+      asUser(owner, `with u as (update public.community_posts set title = '고친 제목'
+           where id = '${POST}' returning id)
+         select count(*) from u;`, communityFixture) === "1",
+    );
+    check(
+      "**운영자도 클라이언트 경로로는 가릴 수 없다** (서비스롤 경유 · 근거 7)",
+      asUser(adminUser, `with u as (update public.community_posts set status = 'hidden'
+           where id = '${POST}' returning id)
+         select count(*) from u;`, communityFixture) === "0",
+    );
+    // 권한에서 막았으므로 **0행이 아니라 오류**로 끝난다 — 정책만 두면 DELETE 는
+    // 조용히 0행이 되고, 그때 호출부는 "지웠다" 고 믿는다(0019·0032 가 쓴 방식).
+    check(
+      "**글은 지워지지 않는다** — 삭제는 묘비다 (D-23)",
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asUser(owner, `delete from public.community_posts where id = '${POST}';`, communityFixture)),
+    );
+    check(
+      "작성자는 자기 글을 삭제 상태로 옮길 수 있다",
+      asUser(owner, `with u as (update public.community_posts set status = 'deleted'
+           where id = '${POST}' returning id)
+         select count(*) from u;`, communityFixture) === "1",
+    );
+
+    check(
+      "좋아요 캐시가 트리거로 유지된다 (행이 권위)",
+      asUser(
+        owner,
+        `insert into public.community_likes (post_id, user_id) values ('${POST}', '${owner}');
+         select like_count from public.community_posts where id = '${POST}';`,
+        communityFixture,
+      ) === "1",
+    );
+    check(
+      "**남이 누른 좋아요 행은 안 보인다** (총합은 like_count 가 이미 공개한다)",
+      asUser(
+        partner,
+        `select count(*) from public.community_likes;`,
+        `${communityFixture}
+         insert into public.community_likes (post_id, user_id) values ('${POST}', '${owner}');`,
+      ) === "0",
+    );
+    check(
+      "**스크랩은 본인만 본다**",
+      asUser(
+        partner,
+        `select count(*) from public.community_scraps;`,
+        `${communityFixture}
+         insert into public.community_scraps (post_id, user_id) values ('${POST}', '${owner}');`,
+      ) === "0",
+    );
+    check(
+      "남의 이름으로 좋아요를 누를 수 없다 (42501)",
+      rejectedWith(/row-level security/i, () =>
+        asUser(partner, `insert into public.community_likes (post_id, user_id)
+           values ('${POST}', '${owner}');`, communityFixture)),
+    );
+
+    check(
+      "**신고자는 자기 신고를 본다**",
+      asUser(partner, `select count(*) from public.community_reports where target_id = '${POST}';`,
+        communityFixture) === "1",
+    );
+    check(
+      "**피신고자는 신고를 못 본다** — 보복이 신고를 막는다",
+      asUser(owner, `select count(*) from public.community_reports where target_id = '${POST}';`,
+        communityFixture) === "0",
+    );
+    check(
+      "운영자는 신고 큐를 본다",
+      asUser(adminUser, `select count(*) from public.community_reports where target_id = '${POST}';`,
+        communityFixture) === "1",
+    );
+    check(
+      "**신고를 고치거나 지울 수 없다** — 처리 이력이 감사의 근거다",
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asUser(partner, `update public.community_reports set status = 'rejected'
+           where id = '${RPT}';`, communityFixture)) &&
+        rejectedWith(/permission denied|row-level security/i, () =>
+          asUser(partner, `delete from public.community_reports where id = '${RPT}';`,
+            communityFixture)),
+    );
+    check(
+      "**끝난 신고에는 사유가 있어야 한다** (CHECK)",
+      rejectedWith(/community_reports_resolution_shape/, () =>
+        sql(`insert into public.community_reports
+               (target_type, target_id, reporter_id, reason_code, status)
+             values ('post', '${POST}', '${partner}', 'spam', 'resolved');`)),
+    );
+    check(
+      "같은 대상을 두 번 신고할 수 없다 (중복이 큐를 채우면 진짜 신고가 묻힌다)",
+      rejectedWith(/uq_community_reports_reporter/, () =>
+        asUser(partner, `insert into public.community_reports
+             (target_type, target_id, reporter_id, reason_code)
+           values ('post', '${POST}', '${partner}', 'abuse');`, communityFixture)),
+    );
+
+    check(
+      "**업체는 자사 태그 글을 찾을 수 있다** (F-V-18)",
+      asUser(outsider, `select count(*) from public.community_post_tags;`,
+        communityFixture) === "1",
+    );
+    check(
+      "**남의 글에 업체를 태그할 수 없다** — 그 업체 화면에 엉뚱한 글이 뜬다",
+      rejectedWith(/row-level security/i, () =>
+        asUser(partner, `insert into public.community_post_tags (post_id, vendor_id, tagged_by)
+           values ('${POST}', '${TAGV}', '${partner}');`, communityFixture)),
+    );
+    check(
+      "**승인되지 않은 업체는 태그할 수 없다**",
+      rejectedWith(/승인된 업체만/, () =>
+        asUser(
+          owner,
+          `insert into public.community_post_tags (post_id, vendor_id, tagged_by)
+             values ('${POST}', '${TAGV}', '${owner}');`,
+          `${communityFixture}
+           delete from public.community_post_tags where post_id = '${POST}';
+           update public.vendors set status = 'pending' where id = '${TAGV}';`,
+        )),
+    );
+    check(
+      "같은 업체를 두 번 태그할 수 없다",
+      rejectedWith(/uq_community_post_tags/, () =>
+        asUser(owner, `insert into public.community_post_tags (post_id, vendor_id, tagged_by)
+           values ('${POST}', '${TAGV}', '${owner}');`, communityFixture)),
+    );
+
+    check(
+      "**답글의 답글은 달 수 없다** (2단 제한)",
+      rejectedWith(/답글의 답글/, () =>
+        sql(`begin;
+             ${communityFixture}
+             insert into public.community_comments (id, post_id, author_id, parent_id, body)
+               values ('00000000-0000-0000-0000-0000000000c5', '${POST}', '${owner}', '${CMT}', '답글');
+             insert into public.community_comments (post_id, author_id, parent_id, body)
+               values ('${POST}', '${owner}', '00000000-0000-0000-0000-0000000000c5', '답글의 답글');
+             rollback;`)),
+    );
+    check(
+      "다른 글의 댓글에는 답글을 달 수 없다",
+      rejectedWith(/다른 글의 댓글/, () =>
+        sql(`begin;
+             ${communityFixture}
+             insert into public.community_comments (post_id, author_id, parent_id, body)
+               values ('${HIDDEN_POST}', '${owner}', '${CMT}', '남의 글에 답글');
+             rollback;`)),
+    );
+    check(
+      "가려진 글의 댓글은 비로그인에게 안 보인다",
+      asAnon(`select count(*) from public.community_comments;`,
+        `${communityFixture}
+         update public.community_posts set status = 'hidden' where id = '${POST}';`) === "0",
+    );
+
+    check(
+      "조회수는 함수로만 오른다",
+      asUser(owner, `select public.bump_post_view('${POST}');
+         select view_count from public.community_posts where id = '${POST}';`,
+        communityFixture) === "1",
+    );
+    check(
+      "가려진 글의 조회수는 오르지 않는다 — 그 수가 무엇을 뜻하는지 알 수 없다",
+      asUser(owner, `select public.bump_post_view('${HIDDEN_POST}');
+         select view_count from public.community_posts where id = '${HIDDEN_POST}';`,
+        communityFixture) === "0",
+    );
+
+    check(
+      "**커뮤니티 운영 파라미터는 값이 비어 있다** (O-14 대기 — 지어낸 기한으로 재촉하지 않는다)",
+      sql(`select count(*) from public.app_settings
+             where key in ('community.report_sla_hours', 'community.post_daily_limit')
+               and value_json->>'value' is null;`) === "2",
+    );
+  }
+
   // ── 계약서 검토 (S7-03 · §3.5 · §5.2) ──────────────────────────────────────
   // **원문은 지워도 리포트는 남는다.** 그 남은 것이 남에게 보이면 안 된다 —
   // `findings.clause_excerpt_masked` 는 마스킹본이지만 여전히 그 커플의 계약 내용이다.
