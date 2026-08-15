@@ -4313,5 +4313,111 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── AI 플래너 대화·툴 호출 감사 (S7-20 · §3.6 · §5.6) ────────────────────────
+// **툴이 부르는 조회가 RLS 를 우회하지 않는지**가 이 태스크의 권한 질문이었다.
+// 핸들러 쪽은 `lib/ai/tools/boundary.test.ts` 가 소스로 붙잡고(서비스롤을 쥐지
+// 않는다), DB 쪽은 여기서 붙잡는다 — 대화·메시지·툴 호출이 **커플 경계 안에서만**
+// 보이는가. 이 셋은 툴 호출 인자와 요약을 들고 있어서, 새면 남의 대화가 통째로 샌다.
+{
+  const CONV = "00000000-0000-0000-0000-0000000000a1";
+  const MSG = "00000000-0000-0000-0000-0000000000a2";
+  const OTHER_CONV = "00000000-0000-0000-0000-0000000000a3";
+  const AI_OTHER_COUPLE = "00000000-0000-0000-0000-0000000000a4";
+
+  /** 우리 커플의 대화 하나 + 메시지 + 툴 호출 하나. */
+  const aiFixture = `
+    insert into public.ai_conversations (id, couple_id, title)
+      values ('${CONV}', '${coupleId}', 'RLS점검 대화');
+    insert into public.ai_messages (id, conversation_id, role, content)
+      values ('${MSG}', '${CONV}', 'assistant', 'RLS점검');
+    insert into public.ai_tool_calls (message_id, tool_name, arguments_json, result_summary, latency_ms)
+      values ('${MSG}', 'search_vendors', '{"query":"강남"}'::jsonb, 'ok:2', 12);
+  `;
+
+  /** 남의 커플의 대화. 우리 세션에서 보이면 안 된다. */
+  const aiForeignFixture = `${aiFixture}
+    insert into public.couples (id, owner_id, stage)
+      values ('${AI_OTHER_COUPLE}', '${outsider}', 'onboarding');
+    insert into public.ai_conversations (id, couple_id, title)
+      values ('${OTHER_CONV}', '${AI_OTHER_COUPLE}', '남의 대화');
+  `;
+
+  check(
+    "당사자는 자기 대화를 본다",
+    asUser(owner, `select count(*) from public.ai_conversations;`, aiFixture) === "1",
+  );
+  check(
+    "배우자도 같은 대화를 본다 (커플 공유 · D-19)",
+    asUser(partner, `select count(*) from public.ai_conversations;`, aiFixture) === "1",
+  );
+  check(
+    "**남의 커플 대화는 안 보인다**",
+    asUser(owner, `select count(*) from public.ai_conversations;`, aiForeignFixture) === "1",
+  );
+  check(
+    "커플이 아닌 사람에게는 아무 대화도 안 보인다",
+    asUser(outsider, `select count(*) from public.ai_conversations where id = '${CONV}';`,
+      aiFixture) === "0",
+  );
+  check(
+    "비로그인은 대화를 못 본다",
+    asAnon(`select count(*) from public.ai_conversations;`, aiFixture) === "0",
+  );
+
+  check(
+    "당사자는 자기 대화의 메시지를 본다",
+    asUser(owner, `select count(*) from public.ai_messages;`, aiFixture) === "1",
+  );
+  check(
+    "**남의 메시지는 안 보인다** (상위 대화 스코프가 전이된다)",
+    asUser(outsider, `select count(*) from public.ai_messages;`, aiFixture) === "0",
+  );
+  check(
+    "메시지는 클라이언트가 쓸 수 없다 — 저장은 서버(서비스롤)다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.ai_messages (conversation_id, role, content)
+         values ('${CONV}', 'user', '직접 쓰기');`, aiFixture)),
+  );
+
+  check(
+    "당사자는 자기 대화의 툴 호출 기록을 본다 (§3.6 감사)",
+    asUser(owner, `select count(*) from public.ai_tool_calls;`, aiFixture) === "1",
+  );
+  check(
+    "**남의 툴 호출 기록은 안 보인다** — 인자에 조회 조건이 들어 있다",
+    asUser(outsider, `select count(*) from public.ai_tool_calls;`, aiFixture) === "0",
+  );
+  check(
+    "비로그인은 툴 호출 기록을 못 본다",
+    asAnon(`select count(*) from public.ai_tool_calls;`, aiFixture) === "0",
+  );
+  check(
+    "툴 호출 기록은 클라이언트가 쓸 수 없다 (감사 기록을 당사자가 만들지 않는다)",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.ai_tool_calls (message_id, tool_name, result_summary)
+         values ('${MSG}', 'search_vendors', '지어낸 기록');`, aiFixture)),
+  );
+  check(
+    "툴 호출 기록은 고칠 수도 지울 수도 없다 (감사는 append-only)",
+    asUser(owner, `with u as (update public.ai_tool_calls set result_summary = '조작' returning id)
+       select count(*) from u;`, aiFixture) === "0" &&
+      asUser(owner, `with d as (delete from public.ai_tool_calls returning id)
+         select count(*) from d;`, aiFixture) === "0",
+  );
+
+  // ── 상한 파라미터 (§7.4 · S7-20) ────────────────────────────────────────────
+  // **키는 있고 값은 비어 있다.** 값이 없으면 대화를 열지 않는다는 결정이 코드에
+  // 있으므로(`conversationGate`), 키가 사라지면 그 결정이 조용히 무효가 된다.
+  check(
+    "AI 상한 파라미터 키가 시드에 있다",
+    sql(`select count(*) from public.app_settings
+           where key in ('ai.free_daily_turns', 'ai.session_token_cap');`) === "2",
+  );
+  check(
+    "비로그인은 운영 파라미터를 못 본다",
+    asAnon(`select count(*) from public.app_settings;`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
