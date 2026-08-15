@@ -4652,6 +4652,66 @@ if (!vendorStaff || !adminUser) {
         communityFixture) === "0",
     );
 
+    // ── 업체 대응 (S7-16 · F-V-18 · D-24) ────────────────────────────────────
+    // **업체는 답변까지다.** 본문을 고치지도 내리지도 못하고 신고만 할 수 있다 —
+    // 판정자가 아니라 조율자라는 D-24 가 여기서 권한으로 드러난다.
+    check(
+      "**태그된 업체는 답변을 달 수 있다** (F-V-18)",
+      asUser(
+        outsider,
+        `with i as (insert into public.community_comments (post_id, author_id, body)
+                   values ('${POST}', '${outsider}', '문의 주시면 안내드리겠습니다') returning id)
+         select count(*) from i;`,
+        communityFixture,
+      ) === "1",
+    );
+    check(
+      "**태그되지 않은 업체는 답변할 수 없다** (42501)",
+      rejectedWith(/row-level security/i, () =>
+        asUser(
+          outsider,
+          `insert into public.community_comments (post_id, author_id, body)
+             values ('${HIDDEN_POST}', '${outsider}', '남의 글에 답변');`,
+          communityFixture,
+        )),
+    );
+    check(
+      "**업체는 태그된 글의 본문을 고칠 수 없다**",
+      asUser(outsider, `with u as (update public.community_posts set body = '업체가 고침'
+           where id = '${POST}' returning id)
+         select count(*) from u;`, communityFixture) === "0",
+    );
+    // 정책이 **행을 고르는** 자리라 오류가 아니라 0행으로 끝난다(작성자가 아니므로
+    // 애초에 고를 행이 없다). 트리거까지 가지 않는다.
+    check(
+      "**업체는 태그된 글을 내릴 수 없다** — 내리는 것은 운영자의 일이다",
+      asUser(outsider, `with u as (update public.community_posts set status = 'hidden'
+           where id = '${POST}' returning id)
+         select count(*) from u;`, communityFixture) === "0",
+    );
+    check(
+      "업체도 신고는 할 수 있다 (본인 이름으로)",
+      asUser(
+        outsider,
+        `with i as (insert into public.community_reports
+                     (target_type, target_id, reporter_id, reason_code)
+                   values ('post', '${POST}', '${outsider}', 'false_info') returning id)
+         select count(*) from i;`,
+        communityFixture,
+      ) === "1",
+    );
+    check(
+      "**업체 답변도 신고 대상이다** — 예외를 두면 신고할 수 없는 글이 생긴다",
+      asUser(
+        owner,
+        `with i as (insert into public.community_reports
+                     (target_type, target_id, reporter_id, reason_code)
+                   values ('comment', '${CMT}', '${owner}', 'abuse') returning id)
+         select count(*) from i;`,
+        communityFixture,
+      ) === "1",
+    );
+
     // ── 모더레이션 (S7-17 · F-A-18 · D-62) ───────────────────────────────────
     // **운영자는 읽기만 정책으로 연다.** 처리는 서비스롤 경유이며, 그 사실이 여기서
     // 검사로 고정된다 — 정책을 열면 되돌릴 수 없는 권한이 클라이언트에 놓인다.
@@ -4705,9 +4765,15 @@ if (!vendorStaff || !adminUser) {
     // ── 공개 플래그 (S7-15 · CLAUDE.md §2.1) ─────────────────────────────────
     // **만들어 두고 켜지 않는다.** 화면·API 는 완성돼 있고 스위치가 꺼져 있다 —
     // 모더레이션 큐(S7-17) 없이 커뮤니티를 열지 않는다는 T-00f 판단을 표가 들고 있다.
+    // 0041 이 켰다 — 세 층(필터·모더레이션·라벨링)과 양측 절차가 모두 갖춰졌다.
     check(
-      "**커뮤니티 공개 플래그가 꺼져 있다** (모더레이션 큐 전까지)",
-      sql(`select enabled from public.feature_flags where key = 'community.enabled';`) === "f",
+      "**커뮤니티 공개 플래그가 켜져 있다** (S7-16 이 마지막 조건을 채웠다)",
+      sql(`select enabled from public.feature_flags where key = 'community.enabled';`) === "t",
+    );
+    check(
+      "왜 열렸는지 행이 들고 있다",
+      sql(`select rollout_json->>'opened_by' from public.feature_flags
+             where key = 'community.enabled';`) === "S7-16",
     );
     check(
       "**비로그인은 플래그를 못 본다** (미공개 기능의 존재를 노출하지 않는다)",
