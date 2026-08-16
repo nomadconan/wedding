@@ -104,6 +104,10 @@ export type EntityType =
   | "community_post"
   | "community_comment"
   | "community_report"
+  // S7-08. 체크리스트. **제목·메모를 memo 에 넣지 않는다**(§7.3) — 남길 사실은
+  // "자동 생성했다"·"선행 미완인 채 완료했다" 라는 전이와 셀 수 있는 값이다.
+  // `checklist_generated` 의 entity_id 는 커플 id 다(태스크 하나가 아니라 한 벌이다).
+  | "task"
   | "profile"
   | "data_deletion_request";
 

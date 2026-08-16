@@ -5138,6 +5138,52 @@ if (!vendorStaff || !adminUser) {
            where table_schema = 'public' and table_name = 'tasks'
              and column_name in ('ready', 'waiting', 'is_ready', 'is_waiting');`) === "0",
   );
+  // ── 역산 템플릿 시드 (S7-08) ───────────────────────────────────────────────
+  // **사본은 어긋나고 어긋나면 조용하다.** 진실은 `lib/core/schedule/templates.ts` 이고
+  // 시드는 그 사본이라 검출 룰(S7-01)과 같은 방식으로 대조한다.
+  {
+    const templateSrc = readFileSync("lib/core/schedule/templates.ts", "utf8");
+    const codes = [...templateSrc.matchAll(/code: "(T-[a-z-]+)"/g)].map((m) => m[1]);
+    const edgeCount = [...templateSrc.matchAll(/dependsOn: \[([^\]]*)\]/g)]
+      .map((m) => m[1].split(",").filter((v) => v.trim() !== "").length)
+      .reduce((a, b) => a + b, 0);
+
+    check(
+      "역산 템플릿이 시드에 들어 있다",
+      sql(`select count(*) from public.task_templates;`) === String(codes.length),
+      `code=${codes.length}`,
+    );
+    check(
+      "**코드와 DB 의 템플릿 코드 집합이 같다** (사본이 벌어지면 조용히 틀린다)",
+      sql(`select string_agg(code, ',' order by code) from public.task_templates;`) ===
+        [...codes].sort().join(","),
+    );
+    check(
+      "템플릿 순서 간선 수가 코드와 같다",
+      sql(`select count(*) from public.task_template_dependencies;`) === String(edgeCount),
+      `code=${edgeCount}`,
+    );
+    check(
+      "**템플릿 순서에 순환이 없다** (시드가 담으면 모든 커플에 복제된다)",
+      sql(`with recursive walk(root, code, depth) as (
+             select template_code, depends_on_code, 1 from public.task_template_dependencies
+             union all
+             select w.root, d.depends_on_code, w.depth + 1
+               from public.task_template_dependencies d
+               join walk w on d.template_code = w.code
+              where w.depth < 20
+           )
+           select count(*) from walk where root = code;`) === "0",
+    );
+    check(
+      "**선행이 나보다 늦게 시작하는 템플릿이 없다** (뒤집힌 순서)",
+      sql(`select count(*) from public.task_template_dependencies d
+             join public.task_templates t on t.code = d.template_code
+             join public.task_templates p on p.code = d.depends_on_code
+            where p.offset_days > t.offset_days;`) === "0",
+    );
+  }
+
   check(
     "의존 깊이 상한이 파라미터로 있다 (§7.4)",
     sql(`select value_json->>'value' from public.app_settings

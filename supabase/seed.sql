@@ -191,3 +191,67 @@ on conflict (code) do update set
   basis_ref        = excluded.basis_ref,
   version          = excluded.version,
   is_active        = excluded.is_active;
+
+
+-- =============================================================================
+-- task_templates · task_template_dependencies — 역산 템플릿 19종 (S7-08, §2.1 F-C-04)
+-- =============================================================================
+-- **진실은 `lib/core/schedule/templates.ts` 다.** 이 블록은 그 목록의 사본이며
+-- 검출 룰(S7-01)과 같은 구조다 — 코드가 정의하고 시드가 옮기며 `db:rls` 가 대조한다.
+-- 사본은 어긋날 수 있고 **어긋나면 조용하기** 때문이다.
+--
+-- **순서가 템플릿에 들어 있다**(IDEA-02 · §3.2). 자동 생성이 태스크를 만들면서 이
+-- 순서를 `task_dependencies` 로 함께 옮긴다(S7-18 이 그 표와 순환 방지 트리거를 만들었다).
+--
+-- **오프셋은 추정이지 사실이 아니다.** 그래서 선행 미완을 잠그지 않는다 — 스드메를
+-- 먼저 계약하고 홀을 나중에 잡는 커플이 있고 그것이 틀린 것이 아니다(§3.2).
+--
+-- 재실행 가능하다(`on conflict (code) do update`). 템플릿을 고치면 **코드를 먼저 고치고
+-- 이 블록을 다시 만든다.** 반대로 하지 않는다.
+-- =============================================================================
+
+insert into public.task_templates (code, category, title, offset_days) values
+('T-hall-tour', 'hall', '웨딩홀 투어·상담', -330),
+  ('T-hall-contract', 'hall', '웨딩홀 계약', -300),
+  ('T-hall-guest-count', 'hall', '예상 하객 수 정리', -120),
+  ('T-hall-meal', 'hall', '식사·연회 메뉴 확정', -60),
+  ('T-hall-rehearsal', 'hall', '예식 진행 순서 확정', -21),
+  ('T-sdm-contract', 'sdm', '스드메 계약', -270),
+  ('T-sdm-dress-fitting', 'sdm', '드레스 가봉', -120),
+  ('T-sdm-studio', 'sdm', '스튜디오 촬영', -150),
+  ('T-sdm-album', 'sdm', '앨범 사진 고르기', -90),
+  ('T-yedan-talk', 'yedan', '양가 예단 범위 상의', -180),
+  ('T-yedan-prepare', 'yedan', '예단·예물 준비', -90),
+  ('T-honsu-home', 'honsu', '신혼집 계약', -210),
+  ('T-honsu-furniture', 'honsu', '가전·가구 준비', -60),
+  ('T-doc-invitation', 'document', '청첩장 주문', -60),
+  ('T-doc-invitation-send', 'document', '청첩장 전달', -30),
+  ('T-doc-marriage', 'document', '혼인신고 서류 확인', -14),
+  ('T-honeymoon-plan', 'honeymoon', '허니문 일정·예산 정하기', -150),
+  ('T-honeymoon-booking', 'honeymoon', '항공·숙소 예약', -120),
+  ('T-honeymoon-doc', 'honeymoon', '여권·비자 확인', -60)
+on conflict (code) do update set
+  category    = excluded.category,
+  title       = excluded.title,
+  offset_days = excluded.offset_days;
+
+-- 간선 16개. **순환 방지 트리거가 이 삽입을 검사한다**(0042) — 시드가 순환을 담으면
+-- 그것이 모든 커플에게 복제되므로 상류에서 막는다.
+insert into public.task_template_dependencies (template_code, depends_on_code) values
+('T-hall-contract', 'T-hall-tour'),
+  ('T-hall-guest-count', 'T-hall-contract'),
+  ('T-hall-meal', 'T-hall-guest-count'),
+  ('T-hall-rehearsal', 'T-hall-contract'),
+  ('T-sdm-contract', 'T-hall-contract'),
+  ('T-sdm-dress-fitting', 'T-sdm-contract'),
+  ('T-sdm-studio', 'T-sdm-contract'),
+  ('T-sdm-album', 'T-sdm-studio'),
+  ('T-yedan-prepare', 'T-yedan-talk'),
+  ('T-honsu-furniture', 'T-honsu-home'),
+  ('T-doc-invitation', 'T-hall-contract'),
+  ('T-doc-invitation-send', 'T-doc-invitation'),
+  ('T-doc-invitation-send', 'T-hall-guest-count'),
+  ('T-honeymoon-plan', 'T-hall-contract'),
+  ('T-honeymoon-booking', 'T-honeymoon-plan'),
+  ('T-honeymoon-doc', 'T-honeymoon-plan')
+on conflict (template_code, depends_on_code) do nothing;
