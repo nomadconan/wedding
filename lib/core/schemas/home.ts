@@ -160,20 +160,14 @@ export const HOME_ALL_DONE_NOTE = "지금 급한 일은 없어요. 천천히 둘
  */
 export const HOME_PENDING_SECTIONS = [
   {
-    key: "checklist",
-    label: "다음 할 일 (체크리스트)",
-    reason: "일정·체크리스트를 아직 만들지 않았습니다.",
-    filledBy: "S7-08",
-  },
-  {
     key: "budget",
     label: "예산 게이지",
     reason: "예산 배분·추적을 아직 만들지 않았습니다.",
     filledBy: "S7-07",
   },
   // '최근 대화' 는 S4-04 가, **'AI 플래너 클리어' 는 S7-06 이**, **'최근 검토 리포트' 는
-  // S7-03 이** 채웠다. 자리를 지우지 않고 목록에서 뺐다 — 남겨 두면 화면이 "아직 못
-  // 만들었다" 고 거짓을 말한다.
+  // S7-03 이**, **'다음 할 일' 은 S7-08 이** 채웠다. 자리를 지우지 않고 목록에서 뺐다 —
+  // 남겨 두면 화면이 "아직 못 만들었다" 고 거짓을 말한다.
 ] as const satisfies readonly { key: string; label: string; reason: string; filledBy: string }[];
 
 export type HomePendingKey = (typeof HOME_PENDING_SECTIONS)[number]["key"];

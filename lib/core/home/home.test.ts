@@ -138,10 +138,11 @@ describe("아직 채울 수 없는 자리", () => {
   });
 
   it("사유와 담당 태스크를 값에 담는다", () => {
-    const metric = pendingMetric("checklist");
+    // '다음 할 일' 은 S7-08 이 채워 목록에서 빠졌다 — 남은 자리로 같은 규칙을 확인한다.
+    const metric = pendingMetric("budget");
 
     if (metric.status !== "not_yet") throw new Error("not_yet 이어야 한다");
-    expect(metric.filledBy).toBe("S7-08");
+    expect(metric.filledBy).toBe("S7-07");
     expect(metric.reason.length).toBeGreaterThan(0);
   });
 
