@@ -6349,5 +6349,264 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 컴플라이언스 자가 진단 (S7-13 · F-V-10 · 0050) ─────────────────────────
+// **여기서 가장 위험한 것은 배지다.** 배지가 붙으면 고객이 그것을 신뢰의 근거로
+// 삼으므로 (가) **스캔 없이 배지를 받을 수 없는가**, (나) **남의 진단 결과가 새지
+// 않는가**, (다) **배지가 회수되는가**, (라) **소비자에게 findings 가 아니라 날짜만
+// 가는가** 를 본다.
+//
+// **픽스처를 같은 트랜잭션에 붙인다.** 안 붙이면 대상 행이 없어 0행 갱신이 되고
+// "아무 일도 안 일어난 것" 이 통과로 둔갑한다(S7-11 에서 겪었다).
+{
+  const CV = "00000000-0000-0000-0000-0000000000e1";
+  const CV_OTHER = "00000000-0000-0000-0000-0000000000e2";
+  const SCAN = "00000000-0000-0000-0000-0000000000e3";
+
+  const vendorStaffId = vendorStaff ?? outsider;
+
+  const cmplFixture = `
+    delete from public.vendor_compliance_scans where vendor_id in ('${CV}', '${CV_OTHER}');
+    delete from public.vendors where id in ('${CV}', '${CV_OTHER}');
+    insert into public.vendors (id, name, category, status, biz_no_enc)
+      values ('${CV}', 'rls-check-업체A', 'hall', 'active', 'rls-cmpl-a'),
+             ('${CV_OTHER}', 'rls-check-업체B', 'hall', 'active', 'rls-cmpl-b');
+    insert into public.vendor_members (vendor_id, user_id, vendor_role)
+      values ('${CV}', '${vendorStaffId}', 'owner')
+      on conflict do nothing;
+    insert into public.vendor_compliance_scans (id, vendor_id, findings_json, rule_count)
+      values ('${SCAN}', '${CV}', '[]'::jsonb, 20);
+  `;
+
+  const withFixture = (body) => `begin;\n${cmplFixture}\n${body}\nrollback;`;
+
+  check(
+    "업체 멤버는 자기 진단 결과를 본다",
+    asUser(vendorStaffId, `select count(*) from public.vendor_compliance_scans where id = '${SCAN}';`, cmplFixture) === "1",
+  );
+  check(
+    "**남의 업체 진단 결과는 보이지 않는다** — 고치는 중인 약관의 약점이 인용까지 들어 있다",
+    asUser(owner, `select count(*) from public.vendor_compliance_scans where id = '${SCAN}';`, cmplFixture) === "0",
+  );
+  check(
+    "**비로그인은 진단 결과를 보지 못한다**",
+    asAnon(`select count(*) from public.vendor_compliance_scans;`, cmplFixture) === "0",
+  );
+
+  // ── 배지 위조 ─────────────────────────────────────────────────────────────
+  check(
+    "**스캔 행을 스스로 넣지 못한다** — 넣을 수 있으면 진단 없이 통과 결과만 넣어 배지를 받는다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        vendorStaffId,
+        `insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+           values ('${CV}', '[]'::jsonb, 20);`,
+        cmplFixture,
+      )),
+  );
+  check(
+    "**진단 결과를 고치지 못한다** — high 를 지우면 배지가 따라 붙는다",
+    asUser(
+      vendorStaffId,
+      `update public.vendor_compliance_scans set findings_json = '[]'::jsonb where id = '${SCAN}';
+       select rule_count from public.vendor_compliance_scans where id = '${SCAN}';`,
+      cmplFixture,
+    ) === "20",
+  );
+  // **컬럼 권한이라 오류로 끊긴다**(0050 · FIX-30) — 정책이었다면 0행이 되어 조용했다.
+  check(
+    "**배지를 직접 달지 못한다** — 손으로 달 수 있으면 진단 없이 배지를 받는다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        vendorStaffId,
+        `update public.vendors set badge_flags = array['transparent_contract'] where id = '${CV}';`,
+        cmplFixture,
+      )),
+  );
+  check(
+    "**업체가 스스로 심사를 통과시키지 못한다** — 같은 정책에서 나온 더 큰 구멍이었다(FIX-30)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        vendorStaffId,
+        `update public.vendors set status = 'active' where id = '${CV}';`,
+        cmplFixture,
+      )),
+  );
+  check(
+    "**프로필 편집은 그대로 된다** — 좁히면서 쓰던 것을 막지 않았다(PUT /api/vendor/profile)",
+    asUser(
+      vendorStaffId,
+      `update public.vendors set intro = '소개글', style_tags = array['modern'] where id = '${CV}';
+       select intro from public.vendors where id = '${CV}';`,
+      cmplFixture,
+    ) === "소개글",
+  );
+
+  // ── 트리거 — 판정자가 하나다 ──────────────────────────────────────────────
+  check(
+    "**깨끗한 진단이 들어오면 배지가 붙는다**",
+    sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[]'::jsonb, 20);
+                     select 'transparent_contract' = any (badge_flags) from public.vendors where id = '${CV_OTHER}';`))
+      .trim().endsWith("t"),
+  );
+  check(
+    "**high 가 있으면 붙지 않는다**",
+    sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[{"rule_code":"R-01","severity":"high"}]'::jsonb, 20);
+                     select 'transparent_contract' = any (badge_flags) from public.vendors where id = '${CV_OTHER}';`))
+      .trim().endsWith("f"),
+  );
+  check(
+    "**약관이 나빠지면 배지가 회수된다** — 붙이기만 하고 떼지 않으면 배지가 거짓이 된다",
+    sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[]'::jsonb, 20);
+                     insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[{"rule_code":"R-02","severity":"high"}]'::jsonb, 20);
+                     select 'transparent_contract' = any (badge_flags) from public.vendors where id = '${CV_OTHER}';`))
+      .trim().endsWith("f"),
+  );
+  check(
+    "**다른 배지를 건드리지 않는다** — 응답우수 배지가 진단 때문에 사라지면 안 된다",
+    sql(withFixture(`update public.vendors set badge_flags = array['response_fast'] where id = '${CV_OTHER}';
+                     insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[{"rule_code":"R-02","severity":"high"}]'::jsonb, 20);
+                     select 'response_fast' = any (badge_flags) from public.vendors where id = '${CV_OTHER}';`))
+      .trim().endsWith("t"),
+  );
+  check(
+    "**기준이 없으면 배지를 주지 않는다** — 없는 기준을 '0건이면 통과' 로 읽지 않는다",
+    sql(`begin;
+         ${cmplFixture}
+         update public.app_settings set value_json = '{"value": null}'::jsonb where key = 'compliance.badge_max_high';
+         insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+           values ('${CV_OTHER}', '[]'::jsonb, 20);
+         select 'transparent_contract' = any (badge_flags) from public.vendors where id = '${CV_OTHER}';
+         rollback;`).trim().endsWith("f"),
+  );
+
+  // ── 불변식 ────────────────────────────────────────────────────────────────
+  check(
+    "**findings 는 배열이어야 한다** — 객체가 오면 트리거가 세지 못한다",
+    rejectedWith(/vendor_compliance_scans_findings_array_chk|check constraint|cannot/, () =>
+      sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                         values ('${CV_OTHER}', '{}'::jsonb, 20);`))),
+  );
+  check(
+    "**검사한 룰 수가 0 일 수 없다** — 0종으로 통과한 진단은 통과가 아니다",
+    rejectedWith(/rule_count|check constraint/, () =>
+      sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                         values ('${CV_OTHER}', '[]'::jsonb, 0);`))),
+  );
+  check(
+    "**원문 컬럼이 없다** — 저장하지 않으므로 파기할 것도 없다(CLAUDE.md §5.1)",
+    sql(`select count(*) from information_schema.columns
+          where table_name = 'vendor_compliance_scans'
+            and column_name in ('body', 'body_md', 'terms', 'raw_text', 'storage_path');`) === "0",
+  );
+  check(
+    "**건수 컬럼이 없다** — findings_json 에서 센다(계산 가능한 값을 저장하지 않는다)",
+    sql(`select count(*) from information_schema.columns
+          where table_name = 'vendor_compliance_scans'
+            and column_name in ('high_count', 'mid_count', 'low_count');`) === "0",
+  );
+
+  // ── 소비자에게 가는 것 ────────────────────────────────────────────────────
+  check(
+    "**소비자는 날짜만 받는다** — findings 가 아니라 시각 한 칸이다",
+    sql(`select pg_get_function_result('public.transparent_contract_since(uuid)'::regprocedure);`)
+      === "TABLE(scanned_at timestamp with time zone)",
+  );
+  check(
+    "**비로그인도 배지 날짜를 부를 수 있다**(업체 상세는 공개 화면이다) — 그러면서 결과 표는 못 읽는다",
+    asAnon(`select count(*) = 1 from public.transparent_contract_since('${CV}');`, cmplFixture) === "t" &&
+      asAnon(`select count(*) from public.vendor_compliance_scans;`, cmplFixture) === "0",
+  );
+  check(
+    "**배지가 없으면 날짜도 나가지 않는다** — 진단했다 떨어진 사실이 흘러나가면 안 된다",
+    sql(withFixture(`insert into public.vendor_compliance_scans (vendor_id, findings_json, rule_count)
+                       values ('${CV_OTHER}', '[{"rule_code":"R-02","severity":"high"}]'::jsonb, 20);
+                     select count(*) = 0 from public.transparent_contract_since('${CV_OTHER}');`))
+      .trim().endsWith("t"),
+  );
+  check(
+    "**최신 진단 함수는 security invoker 다** — definer 면 남의 진단을 볼 경로가 생긴다",
+    !sql(`select pg_get_functiondef('public.latest_compliance_scan(uuid)'::regprocedure);`)
+      .includes("SECURITY DEFINER"),
+  );
+  check(
+    "**service_role 도 함수를 부를 수 있다**(S7-12 의 revoke 사고를 반복하지 않는다)",
+    sql(`select has_function_privilege('service_role', 'public.latest_compliance_scan(uuid)', 'execute')
+            and has_function_privilege('service_role', 'public.transparent_contract_since(uuid)', 'execute');`) === "t",
+  );
+
+  // ── 파라미터 ──────────────────────────────────────────────────────────────
+  check(
+    "**배지 기준에 값이 있다(0)** — 임의 숫자가 아니라 등급 정의에서 따라 나온 값이다",
+    sql(`select (value_json->>'value')::int = 0 from public.app_settings where key = 'compliance.badge_max_high';`) === "t",
+  );
+  check(
+    "**mid 허용 개수를 만들지 않았다** — 몇 개까지 봐줄지는 답이 임의다",
+    sql(`select count(*) from public.app_settings where key like 'compliance.badge_max_mid%';`) === "0",
+  );
+
+  // ── 코드↔코드 대조 ────────────────────────────────────────────────────────
+  {
+    const guidesSrc = readFileSync("lib/core/compliance/guides.ts", "utf8");
+    const rulesSrc = readFileSync("lib/core/rules/detect-rules.ts", "utf8");
+
+    const guideCodes = [...guidesSrc.matchAll(/ruleCode: "(R-\d+)"/g)].map((m) => m[1]).sort();
+    const ruleCodes = [...rulesSrc.matchAll(/code: "(R-\d+)"/g)].map((m) => m[1]).sort();
+
+    check(
+      "**룰 20종 전부에 수정 가이드가 있다** — 없으면 업체는 고치라는 말만 듣는다",
+      ruleCodes.length > 0 && guideCodes.join("|") === ruleCodes.join("|"),
+      `rules=${ruleCodes.length} guides=${guideCodes.length}`,
+    );
+
+    // DB 시드와도 같은 집합인가. 룰이 시드에만 늘면 가이드 없는 항목이 걸린다.
+    const dbCodes = sql(`select string_agg(code, '|' order by code) from public.detect_rules where is_active;`);
+
+    check(
+      "**DB 의 활성 룰과 가이드가 같은 집합이다**",
+      dbCodes === guideCodes.join("|"),
+      `db=${dbCodes}`,
+    );
+
+    check(
+      "**가이드에 조항 번호를 지어내지 않았다**(T-04 가 basis_ref 에 건 가드와 같은 규칙)",
+      !/제\s*\d+\s*조/.test(guidesSrc) && !/[^\w]\d+\s*항/.test(guidesSrc),
+    );
+
+    const complianceSrc = readFileSync("lib/core/compliance/compliance.ts", "utf8");
+
+    check(
+      "**AI 를 부르지 않는다** — 같은 문서에 같은 답이 나와야 배지가 우연이 아니다",
+      !complianceSrc.includes("@/lib/ai") &&
+        !readFileSync("lib/compliance/scan.ts", "utf8").includes("lib/ai/"),
+    );
+    check(
+      "**소비자 리포트와 같은 룰 엔진을 쓴다** — 룰을 새로 만들지 않았다",
+      readFileSync("lib/compliance/scan.ts", "utf8").includes('from "@/lib/core/rules/scan"'),
+    );
+    check(
+      "**저장 전에 마스킹한다** — 실수로 붙여넣은 고객 이름이 인용에 남지 않는다",
+      readFileSync("lib/compliance/scan.ts", "utf8").includes("maskText"),
+    );
+    check(
+      "**코드가 배지 기준 숫자를 갖지 않는다**(§7.4)",
+      complianceSrc.includes('key: "compliance.badge_max_high"'),
+    );
+    check(
+      "**배지 범위 고지가 자가 진단임을 밝힌다**",
+      complianceSrc.includes("제출한 약관") && complianceSrc.includes("실제 계약서와 다를 수 있"),
+    );
+  }
+
+  check(
+    "업체 내비가 진단 화면을 가리킨다 (만든 화면에 들어가는 자리를 잇는다)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/compliance"'),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

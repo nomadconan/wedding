@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { BrokerNotice } from "@/components/domain/BrokerNotice";
 import { ContactPathGuide } from "@/components/domain/ContactPathGuide";
+import { TransparentContractBadge } from "@/components/domain/TransparentContractBadge";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +48,13 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
 
   if (!vendor) notFound();
 
+  // **배지의 진단 날짜.** `vendor_compliance_scans` 는 업체 멤버만 읽을 수 있어
+  // (0050 [2]) definer 함수로 **시각 하나만** 꺼낸다 — findings 는 나가지 않는다.
+  // `vendors` 에 날짜를 복사하지 않은 이유는 같은 사실을 두 곳이 갖게 되기 때문이다.
+  const { data: badgeRow } = await client
+    .rpc("transparent_contract_since", { p_vendor_id: params.vendorId })
+    .maybeSingle();
+
   const styleTags = (vendor.style_tags ?? []) as string[];
   const facilities = (vendor.facilities ?? []) as string[];
 
@@ -58,6 +66,11 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
             {VENDOR_CATEGORY_LABEL[vendor.category as VendorCategory] ?? vendor.category}
             {vendor.region_code ? ` · ${vendor.region_code}` : ""}
           </p>
+
+          {/* 배지·날짜·범위 고지는 **한 덩어리**다(TransparentContractBadge 주석). */}
+          <TransparentContractBadge
+            scannedAt={(badgeRow as { scanned_at: string } | null)?.scanned_at ?? null}
+          />
 
           {styleTags.length > 0 ? (
             <div className="flex flex-wrap gap-1.5" data-testid="vendor-style-tags">
