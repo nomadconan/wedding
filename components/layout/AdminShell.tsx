@@ -71,6 +71,9 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },
   { href: "/vendor/members", label: "멤버 관리", icon: Users },
+  // 약관 자가 진단(F-V-10 · S7-13). 설정 바로 위에 둔다 — 자주 오는 화면은
+  // 아니지만 **배지가 여기서 정해지고** 그 배지는 고객 화면에 나간다.
+  { href: "/vendor/compliance", label: "컴플라이언스 진단", icon: ShieldCheck },
   { href: "/vendor/settings", label: "설정", icon: Settings },
 ];
 

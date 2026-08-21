@@ -4865,6 +4865,41 @@ export type Database = {
           },
         ]
       }
+      vendor_compliance_scans: {
+        Row: {
+          created_at: string
+          findings_json: Json
+          id: string
+          rule_count: number
+          scanned_by: string | null
+          vendor_id: string
+        }
+        Insert: {
+          created_at?: string
+          findings_json?: Json
+          id?: string
+          rule_count: number
+          scanned_by?: string | null
+          vendor_id: string
+        }
+        Update: {
+          created_at?: string
+          findings_json?: Json
+          id?: string
+          rule_count?: number
+          scanned_by?: string | null
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_compliance_scans_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vendor_documents: {
         Row: {
           created_at: string
@@ -5393,6 +5428,15 @@ export type Database = {
         Returns: boolean
       }
       is_vendor_owner: { Args: { p_vendor_id: string }; Returns: boolean }
+      latest_compliance_scan: {
+        Args: { p_vendor_id: string }
+        Returns: {
+          created_at: string
+          findings_json: Json
+          id: string
+          rule_count: number
+        }[]
+      }
       owns_couple_record: { Args: { p_couple_id: string }; Returns: boolean }
       owns_coupon_issue: { Args: { p_issue_id: string }; Returns: boolean }
       owns_post: { Args: { p_post_id: string }; Returns: boolean }
@@ -5433,6 +5477,12 @@ export type Database = {
       target_couple_id: { Args: { p_target_id: string }; Returns: string }
       target_vendor_id: { Args: { p_target_id: string }; Returns: string }
       timemultirange: { Args: never; Returns: unknown }
+      transparent_contract_since: {
+        Args: { p_vendor_id: string }
+        Returns: {
+          scanned_at: string
+        }[]
+      }
     }
     Enums: {
       ai_feature: "planner" | "report" | "estimate"

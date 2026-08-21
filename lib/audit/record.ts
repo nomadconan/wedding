@@ -123,6 +123,9 @@ export type EntityType =
   // `subscription_payments` 가 이미 갖고 있다. 남길 사실은 **어느 어댑터로 열렸는가**다:
   // 스텁으로 열린 구독과 실결제로 열린 구독은 나중에 반드시 구분해야 한다(D-28).
   | "membership"
+  // S7-13. 업체 약관 자가 진단. **원문도 인용도 memo 에 넣지 않는다**(§7.3) —
+  // 남길 사실은 **몇 종을 봤고 몇 건이 걸렸는가**이며, 그것이 배지의 근거다.
+  | "vendor_compliance_scan"
   | "profile"
   | "data_deletion_request";
 
