@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
@@ -48,10 +49,25 @@ async function InquiriesSection() {
     });
 
     return (
-      <InquiriesView
-        initialInquiries={inquiries}
-        maxTargets={effectiveMaxTargets(await loadMaxTargets())}
-      />
+      <div className="space-y-4">
+        {/* **견적 비교 진입**(S7-05 · F-C-06). 여기가 맥락이 맞는 자리다 — 견적을
+            **받는** 곳이고 비교는 받은 것을 견주는 일이다. 하단 탭은 늘리지 않았다(D-55). */}
+        <Link
+          href="/estimates"
+          className="block rounded-lg border border-border px-4 py-3"
+          data-testid="inquiries-estimates-link"
+        >
+          <p className="text-sm font-medium text-foreground">받은 견적 비교하기</p>
+          <p className="text-caption text-muted-foreground">
+            2~5개를 골라 표준 항목으로 맞춰 나란히 놓아요. 선택 옵션은 실총액에 넣지 않습니다.
+          </p>
+        </Link>
+
+        <InquiriesView
+          initialInquiries={inquiries}
+          maxTargets={effectiveMaxTargets(await loadMaxTargets())}
+        />
+      </div>
     );
   } catch {
     return (

@@ -5829,5 +5829,158 @@ if (!vendorStaff || !adminUser) {
   }
 }
 
+// ── 견적 정규화·비교 (S7-05 · F-C-06 · §3.5 · §5.4 · 0047) ───────────────────
+// 확인할 것 셋 — (가) **원천 조회 함수가 커플을 막는가**(업체 이름·카테고리를 임베드로
+// 읽지 않기 위해 SECURITY DEFINER 로 옮겼다 · S7-07 계열), (나) **저장한 비교표가 커플
+// 밖으로 새지 않는가**, (다) **스냅샷을 고칠 수 없는가**(고칠 수 있으면 "그때 무엇을
+// 견줬나" 를 답할 수 없다).
+{
+  const CMP = "00000000-0000-0000-0000-0000000000c1";
+  const CMP_OTHER = "00000000-0000-0000-0000-0000000000c2";
+  const CMP_COUPLE = "00000000-0000-0000-0000-0000000000c3";
+  const Q1 = "00000000-0000-0000-0000-0000000000c4";
+  const Q2 = "00000000-0000-0000-0000-0000000000c5";
+
+  const cmpFixture = `
+    insert into public.estimate_comparisons (id, couple_id, upload_ids, normalized_json)
+      values ('${CMP}', '${coupleId}', array['${Q1}', '${Q2}']::uuid[], '{"estimates":[],"comparison":{}}'::jsonb);
+  `;
+
+  const cmpForeignFixture = `
+    insert into public.couples (id, owner_id, stage)
+      values ('${CMP_COUPLE}', '${outsider}', 'onboarding');
+    insert into public.estimate_comparisons (id, couple_id, upload_ids, normalized_json)
+      values ('${CMP_OTHER}', '${CMP_COUPLE}', array['${Q1}', '${Q2}']::uuid[], '{}'::jsonb);
+  `;
+
+  check(
+    "당사자는 자기 비교표를 본다",
+    asUser(
+      owner,
+      `select count(*) from public.estimate_comparisons where id = '${CMP}';`,
+      cmpFixture,
+    ) === "1",
+  );
+  check(
+    "배우자도 같은 비교표를 본다 (커플 공유 · D-19)",
+    asUser(
+      partner,
+      `select count(*) from public.estimate_comparisons where id = '${CMP}';`,
+      cmpFixture,
+    ) === "1",
+  );
+  check(
+    "**남의 비교표는 보이지 않는다**",
+    asUser(
+      owner,
+      `select count(*) from public.estimate_comparisons where id = '${CMP_OTHER}';`,
+      `${cmpFixture}${cmpForeignFixture}`,
+    ) === "0",
+  );
+  check(
+    "비로그인은 비교표를 못 본다",
+    asAnon(`select count(*) from public.estimate_comparisons;`, cmpFixture) === "0",
+  );
+  check(
+    "**남의 커플에 비교표를 끼워 넣을 수 없다**",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.estimate_comparisons (couple_id, upload_ids)
+         values ('${CMP_COUPLE}', array['${Q1}', '${Q2}']::uuid[]);`, `${cmpFixture}${cmpForeignFixture}`)),
+  );
+  check(
+    "**스냅샷을 고칠 수 없다** — 고치면 '그때 무엇을 견줬나' 를 답할 수 없다(D-16·D-23)",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `update public.estimate_comparisons set normalized_json = '{}'::jsonb
+         where id = '${CMP}';`, cmpFixture)),
+  );
+  check(
+    "내 것은 내가 치운다",
+    asUser(
+      owner,
+      `with d as (delete from public.estimate_comparisons where id = '${CMP}' returning id)
+       select count(*) from d;`,
+      cmpFixture,
+    ) === "1",
+  );
+  check(
+    "**남의 것은 치울 수 없다**",
+    asUser(
+      outsider,
+      `with d as (delete from public.estimate_comparisons where id = '${CMP}' returning id)
+       select count(*) from d;`,
+      cmpFixture,
+    ) === "0",
+  );
+
+  // ── 2~5개 (§2.1) ──────────────────────────────────────────────────────────
+  check(
+    "**하나만 담은 비교표를 막는다** — 견줄 대상이 없다",
+    rejectedWith(/estimate_comparisons_count_chk|check constraint/, () =>
+      sql(`begin;
+           insert into public.estimate_comparisons (couple_id, upload_ids)
+             values ('${coupleId}', array['${Q1}']::uuid[]);
+           rollback;`)),
+  );
+  check(
+    "**여섯 개도 막는다**",
+    rejectedWith(/estimate_comparisons_count_chk|check constraint/, () =>
+      sql(`begin;
+           insert into public.estimate_comparisons (couple_id, upload_ids)
+             values ('${coupleId}', array['${Q1}','${Q2}','${Q1}','${Q2}','${Q1}','${Q2}']::uuid[]);
+           rollback;`)),
+  );
+
+  // ── 원천 조회 함수 (0047) ─────────────────────────────────────────────────
+  check(
+    "원천 조회가 SECURITY DEFINER 다 — 업체 행이 안 보여도 카테고리를 잃지 않는다",
+    sql(`select prosecdef from pg_proc where proname = 'estimate_quote_sources';`) === "t",
+  );
+  check(
+    "**함수 안에 권한 검사가 있다** — 없으면 아무 커플 id 로 남의 견적을 읽을 수 있다",
+    sql(`select pg_get_functiondef('public.estimate_quote_sources(uuid, uuid[])'::regprocedure);`)
+      .includes("is_couple_member"),
+  );
+  check(
+    "**보낸 견적만 낸다** — 초안은 고객에게 있는 값이 아니다",
+    sql(`select pg_get_functiondef('public.estimate_quote_sources(uuid, uuid[])'::regprocedure);`)
+      .replace(/\s+/g, " ")
+      .includes("q.status = 'sent'"),
+  );
+  check(
+    "**남의 커플 id 를 넣어도 아무것도 나오지 않는다**",
+    asUser(
+      outsider,
+      `select count(*) from public.estimate_quote_sources('${coupleId}', null);`,
+    ) === "0",
+  );
+  check(
+    "비로그인은 함수를 부를 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.estimate_quote_sources('${coupleId}', null);`)),
+  );
+
+  // 코드↔코드 대조. **견적과 예산이 같은 카테고리 표를 쓴다.**
+  {
+    const estimateSrc = readFileSync("lib/core/estimate/normalize.ts", "utf8");
+
+    check(
+      "**견적 매핑이 예산 표를 그대로 참조한다** — 사본을 만들면 사본이 어긋난다",
+      estimateSrc.includes("VENDOR_TO_ESTIMATE_CATEGORY = VENDOR_TO_BUDGET_CATEGORY"),
+    );
+    check(
+      "**업로드·파싱 표를 쓰지 않는다**(D-56 — PDF 파서·OCR 은 새 의존성이다)",
+      !estimateSrc.includes("estimate_uploads") &&
+        !readFileSync("lib/estimates/loader.ts", "utf8").includes("estimate_uploads"),
+    );
+  }
+
+  check(
+    "공유 레지스트리가 비교표를 연다 (S7-12 의 대기가 풀렸다)",
+    readFileSync("lib/core/share/share.ts", "utf8")
+      .replace(/\s+/g, " ")
+      .includes('type: "estimate_comparison", label: "견적 비교표",'),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
