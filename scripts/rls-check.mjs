@@ -11,7 +11,7 @@
 // 실행:  npm run db:rls        (먼저 npm run db:reset && npm run seed:accounts)
 // =============================================================================
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -6132,6 +6132,221 @@ if (!vendorStaff || !adminUser) {
       readFileSync("app/api/ai/planner/route.ts", "utf8").includes("loadMembership"),
     );
   }
+}
+
+// ── SEO 콘텐츠 허브 (S7-10 · F-C-24 · §3.7 · 0049) ──────────────────────────
+// 확인할 것 넷 — (가) **미발행·예약 글이 새지 않는가**(공개 화면이라 이것이 유일한
+// 경계다), (나) **누구도 글을 쓰거나 고칠 수 없는가**(발행은 서비스롤), (다) **빈
+// 페이지가 발행될 수 없는가**(제목만 있는 페이지가 색인되면 되돌리기 어렵다),
+// (라) **슬러그 규칙이 코드와 DB 에서 같은가**.
+//
+// **전체 개수를 세지 않는다.** 픽스처 slug 로 좁힌다 — 흐름 점검이 남긴 행이 개수를
+// 흔들면 시험이 사실과 무관하게 깨진다(S7-04·S7-12·S7-11 에서 겪었다).
+{
+  const LIVE = "rls-check-published";
+  const DRAFT = "rls-check-draft";
+  const FUTURE = "rls-check-scheduled";
+
+  // **픽스처를 같은 트랜잭션에 넣는다.** 안 그러면 대상 행이 없어 0행 갱신이 되고,
+  // "거절되지 않았다" 가 아니라 **아무 일도 안 일어난 것**이 통과로 둔갑한다(S7-11).
+  const contentFixture = `
+    delete from public.content_posts where slug in ('${LIVE}', '${DRAFT}', '${FUTURE}');
+    insert into public.content_posts (slug, type, title, body_md, seo_json, published_at) values
+      ('${LIVE}', 'guide', '발행됨', '본문이 있다.', '{"tools":["penalty"]}'::jsonb, now() - interval '1 day'),
+      ('${DRAFT}', 'guide', '미발행', '본문이 있다.', '{}'::jsonb, null),
+      ('${FUTURE}', 'guide', '예약', '본문이 있다.', '{}'::jsonb, now() + interval '7 days');
+  `;
+
+  const withFixture = (body) => `begin;\n${contentFixture}\n${body}\nrollback;`;
+
+  check(
+    "비로그인도 발행된 글을 본다 (SEO 화면이다)",
+    asAnon(`select count(*) from public.content_posts where slug = '${LIVE}';`, contentFixture) === "1",
+  );
+  check(
+    "**미발행 글은 비로그인에게 보이지 않는다**",
+    asAnon(`select count(*) from public.content_posts where slug = '${DRAFT}';`, contentFixture) === "0",
+  );
+  check(
+    "**발행 예약(미래)도 보이지 않는다** — 예약이 예약 노릇을 한다",
+    asAnon(`select count(*) from public.content_posts where slug = '${FUTURE}';`, contentFixture) === "0",
+  );
+  check(
+    "**로그인해도 미발행 글은 보이지 않는다** — 콘텐츠는 등급으로 갈리는 값이 아니다",
+    asUser(owner, `select count(*) from public.content_posts where slug in ('${DRAFT}', '${FUTURE}');`, contentFixture) === "0",
+  );
+
+  check(
+    "**아무도 글을 쓰지 못한다** — 발행은 서비스롤이다(F-A-05 는 8단계)",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.content_posts (slug, type, title, body_md)
+           values ('rls-check-intruder', 'guide', '남이 쓴 글', '본문');`,
+        contentFixture,
+      )),
+  );
+  check(
+    "**발행된 글을 고치지 못한다** — 공개 페이지의 내용은 로그인 사용자가 바꿀 것이 아니다",
+    asUser(
+      owner,
+      `update public.content_posts set title = '바뀐 제목' where slug = '${LIVE}';
+       select title from public.content_posts where slug = '${LIVE}';`,
+      contentFixture,
+    ) === "발행됨",
+  );
+  check(
+    "**글을 지우지 못한다**",
+    asUser(
+      owner,
+      `with d as (delete from public.content_posts where slug = '${LIVE}' returning id)
+       select count(*) from d;`,
+      contentFixture,
+    ) === "0",
+  );
+
+  // ── 불변식 ────────────────────────────────────────────────────────────────
+  check(
+    "**본문 없이 발행할 수 없다** — 제목만 있는 페이지가 색인되면 되돌리기 어렵다(S3-10)",
+    rejectedWith(/content_posts_published_body_chk|check constraint/, () =>
+      sql(withFixture(`update public.content_posts set body_md = '   ' where slug = '${LIVE}';`))),
+  );
+  check(
+    "미발행 글은 본문이 비어도 된다 (초안이다)",
+    sql(withFixture(`update public.content_posts set body_md = null where slug = '${DRAFT}';
+                     select count(*) from public.content_posts where slug = '${DRAFT}';`)).trim().endsWith("1"),
+  );
+  check(
+    "**슬래시가 든 슬러그를 넣지 못한다** — 경로 조작이 통하는 모양을 만들지 않는다",
+    rejectedWith(/content_posts_slug_format_chk|check constraint/, () =>
+      sql(withFixture(`update public.content_posts set slug = '../etc/passwd' where slug = '${DRAFT}';`))),
+  );
+  check(
+    "**한글 슬러그를 넣지 못한다** — URL 이 공유될 때 깨져 보인다",
+    rejectedWith(/content_posts_slug_format_chk|check constraint/, () =>
+      sql(withFixture(`update public.content_posts set slug = '웨딩홀-가이드' where slug = '${DRAFT}';`))),
+  );
+  check(
+    "**seo_json 이 객체가 아니면 막는다** — 파서가 조용히 기본값으로 읽어 메타가 사라진다",
+    rejectedWith(/content_posts_seo_object_chk|check constraint/, () =>
+      sql(withFixture(`update public.content_posts set seo_json = '[]'::jsonb where slug = '${DRAFT}';`))),
+  );
+
+  // ── 조회 함수 ─────────────────────────────────────────────────────────────
+  check(
+    "**발행 목록 함수는 security invoker 다** — definer 로 두면 미발행 글이 샐 경로를 스스로 만든다",
+    !sql(`select pg_get_functiondef('public.published_content(public.content_post_type)'::regprocedure);`)
+      .includes("SECURITY DEFINER"),
+  );
+  check(
+    "비로그인도 함수를 부를 수 있다 (공개 화면이 쓴다)",
+    asAnon(`select count(*) from public.published_content(null) where slug = '${LIVE}';`, contentFixture) === "1",
+  );
+  check(
+    "**함수로도 미발행 글이 나오지 않는다**",
+    asAnon(`select count(*) from public.published_content(null) where slug in ('${DRAFT}', '${FUTURE}');`, contentFixture) === "0",
+  );
+  check(
+    "유형으로 좁힌다",
+    asAnon(`select count(*) from public.published_content('glossary') where type <> 'glossary';`, contentFixture) === "0",
+  );
+  check(
+    "**service_role 도 함수를 부를 수 있다** — revoke all from public 이 상속분을 걷어간 적이 있다(S7-12)",
+    sql(`select has_function_privilege('service_role', 'public.published_content(public.content_post_type)', 'execute');`) === "t",
+  );
+
+  // ── 시드 콘텐츠 ───────────────────────────────────────────────────────────
+  check(
+    "**가격 리포트를 시드하지 않았다** — 참가격 표본이 부족하다(S3-08 · S8-10 대기)",
+    sql(`select count(*) from public.content_posts where type = 'price_report';`) === "0",
+  );
+  check(
+    "가이드·용어사전은 발행돼 있다",
+    Number(sql(`select count(*) from public.published_content('guide');`)) >= 4 &&
+      Number(sql(`select count(*) from public.published_content('glossary');`)) >= 3,
+  );
+
+  // ── 코드↔DB 대조 ──────────────────────────────────────────────────────────
+  {
+    const contentSrc = readFileSync("lib/core/content/content.ts", "utf8");
+
+    const types = [...contentSrc.matchAll(/CONTENT_TYPES = \[([^\]]+)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
+
+    check(
+      "**코드의 유형 어휘와 DB enum 이 같다**",
+      types.length === 3 &&
+        types.join("|") ===
+          sql(`select string_agg(enumlabel, '|' order by enumsortorder)
+                 from pg_enum where enumtypid = 'public.content_post_type'::regtype;`),
+      `code=${types.join("|")}`,
+    );
+
+    // 슬러그 규칙은 코드와 DB 둘 다 갖는다 — **같은 값에 같은 답을 내는지** 본다.
+    const samples = ["hall-guide", "guide2026", "웨딩홀", "a/b", "-앞", "두--하이픈", ""];
+    const agree = samples.every((sample) => {
+      const inDb = sql(`select public.is_content_slug($sample$${sample}$sample$);`) === "t";
+      const inCode = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(sample) && sample.length > 0 && sample.length <= 80;
+
+      return inDb === inCode;
+    });
+
+    check("**슬러그 규칙이 코드와 DB 에서 같은 답을 낸다**", agree);
+
+    // 도구 CTA 는 **실재하는 라우트**여야 한다. 없는 화면을 가리키면 글이
+    // "이런 도구가 있습니다" 라고 말하는데 눌러 보면 404 다.
+    const hrefs = [...contentSrc.matchAll(/href: "(\/[^"]*)"/g)].map((m) => m[1]);
+    const missing = hrefs.filter((href) => {
+      const candidates = [
+        `app/(consumer)${href}/page.tsx`,
+        `app/(marketing)${href}/page.tsx`,
+        `app${href}/page.tsx`,
+      ];
+
+      return !candidates.some((path) => existsSync(path));
+    });
+
+    check(
+      "**CTA 가 가리키는 화면이 전부 실재한다** — 죽은 링크를 글에 심지 않는다",
+      hrefs.length > 0 && missing.length === 0,
+      `missing=${missing.join("|")}`,
+    );
+
+    // 시드 글이 지정한 도구 키도 레지스트리에 있어야 한다.
+    const keys = [...contentSrc.matchAll(/key: "([a-z_]+)"/g)].map((m) => m[1]);
+    const seeded = sql(`select coalesce(string_agg(distinct t, '|'), '')
+                          from public.content_posts c,
+                               lateral jsonb_array_elements_text(coalesce(c.seo_json->'tools', '[]'::jsonb)) t;`)
+      .split("|")
+      .filter((key) => key.length > 0);
+
+    check(
+      "**시드 글의 도구 키가 전부 레지스트리에 있다** — 없으면 CTA 가 조용히 사라진다",
+      seeded.length > 0 && seeded.every((key) => keys.includes(key)),
+      `seeded=${seeded.join("|")}`,
+    );
+  }
+
+  // 사이트맵·상세가 같은 신선도 창을 쓰는지. 값이 갈리면 목록에는 있는데 상세는
+  // 아직 옛 내용인 상태가 생긴다.
+  {
+    const windows = [
+      "app/(marketing)/guides/page.tsx",
+      "app/(marketing)/guides/[slug]/page.tsx",
+    ].map((path) => /export const revalidate = (\d+)/.exec(readFileSync(path, "utf8"))?.[1]);
+
+    check(
+      "**두 콘텐츠 화면의 재생성 창이 같다**",
+      windows[0] !== undefined && windows[0] === windows[1],
+      `revalidate=${windows.join("|")}`,
+    );
+  }
+
+  check(
+    "사이트맵이 발행 목록을 **같은 함수**에서 가져온다 (판정이 둘로 갈리면 404 가 생긴다)",
+    readFileSync("app/sitemap.ts", "utf8").includes("publishedSlugs") &&
+      readFileSync("lib/content/loader.ts", "utf8").includes('rpc("published_content"'),
+  );
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

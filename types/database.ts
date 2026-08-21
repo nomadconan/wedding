@@ -5376,6 +5376,7 @@ export type Database = {
       is_any_vendor_member: { Args: never; Returns: boolean }
       is_budget_category: { Args: { p_value: string }; Returns: boolean }
       is_chat_room_member: { Args: { p_room_id: string }; Returns: boolean }
+      is_content_slug: { Args: { p_value: string }; Returns: boolean }
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
@@ -5399,6 +5400,18 @@ export type Database = {
       planner_contract_count: {
         Args: { p_planner_id: string }
         Returns: number
+      }
+      published_content: {
+        Args: { p_type?: Database["public"]["Enums"]["content_post_type"] }
+        Returns: {
+          body_md: string
+          published_at: string
+          seo_json: Json
+          slug: string
+          title: string
+          type: Database["public"]["Enums"]["content_post_type"]
+          updated_at: string
+        }[]
       }
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
