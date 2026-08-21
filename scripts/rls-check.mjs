@@ -5315,5 +5315,254 @@ if (!vendorStaff || !adminUser) {
   }
 }
 
+// ── 예산 배분·추적 (S7-07 · F-C-05 · §3.2 · §6.2) ────────────────────────────
+// 확인할 것 셋 — (가) 커플 스코프가 실제로 막는가 (나) **플래너는 읽기만** 하는가
+// (다) 0045 가 세운 불변식(커플당 예산 하나 · 카테고리당 계획 하나 · 어휘)이 도는가.
+{
+  const BUDGET = "00000000-0000-0000-0000-0000000000b1";
+  const OTHER_BUDGET = "00000000-0000-0000-0000-0000000000b2";
+  const OTHER_COUPLE = "00000000-0000-0000-0000-0000000000b3";
+  const EXPENSE = "00000000-0000-0000-0000-0000000000b4";
+  const BUDGET_PLANNER = "00000000-0000-0000-0000-0000000000b5";
+
+  const budgetFixture = `
+    insert into public.budgets (id, couple_id) values ('${BUDGET}', '${coupleId}');
+    insert into public.budget_items (budget_id, category, planned_amount)
+      values ('${BUDGET}', 'hall', 10000000);
+    insert into public.expenses (id, couple_id, category, amount, memo)
+      values ('${EXPENSE}', '${coupleId}', 'dress', 500000, '가봉비');
+  `;
+
+  const foreignFixture = `
+    insert into public.couples (id, owner_id, stage)
+      values ('${OTHER_COUPLE}', '${outsider}', 'onboarding');
+    insert into public.budgets (id, couple_id) values ('${OTHER_BUDGET}', '${OTHER_COUPLE}');
+    insert into public.budget_items (budget_id, category, planned_amount)
+      values ('${OTHER_BUDGET}', 'hall', 99000000);
+  `;
+
+  check(
+    "당사자는 자기 예산을 본다",
+    asUser(owner, `select count(*) from public.budgets;`, budgetFixture) === "1",
+  );
+  check(
+    "배우자도 같은 예산을 본다 (커플 공유 · D-19)",
+    asUser(partner, `select count(*) from public.budget_items;`, budgetFixture) === "1",
+  );
+  check(
+    "**남의 예산은 보이지 않는다**",
+    asUser(owner, `select count(*) from public.budgets;`, `${budgetFixture}${foreignFixture}`) === "1",
+  );
+  check(
+    "**남의 카테고리 계획도 보이지 않는다** (상위 budgets 를 통해 스코프가 정해진다)",
+    asUser(owner, `select count(*) from public.budget_items;`, `${budgetFixture}${foreignFixture}`) === "1",
+  );
+  check(
+    "**남의 지출은 보이지 않는다**",
+    asUser(
+      outsider,
+      `select count(*) from public.expenses;`,
+      budgetFixture,
+    ) === "0",
+  );
+  check(
+    "비로그인은 예산을 못 본다",
+    asAnon(`select count(*) from public.budgets;`, budgetFixture) === "0",
+  );
+  check(
+    "**남의 예산에 계획을 끼워 넣을 수 없다**",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.budget_items (budget_id, category, planned_amount)
+         values ('${OTHER_BUDGET}', 'dress', 1);`, `${budgetFixture}${foreignFixture}`)),
+  );
+  check(
+    "**남의 지출을 지울 수 없다**",
+    asUser(
+      outsider,
+      `with d as (delete from public.expenses returning id) select count(*) from d;`,
+      budgetFixture,
+    ) === "0",
+  );
+
+  // ── 플래너는 읽기만 한다 (§3.9 · D-43) ────────────────────────────────────
+  // **시드가 이미 플래너 행을 만들어 두었다**(S6-01 `planner@local.test`). 새로 넣으면
+  // `planners_user_id_key` 에 걸린다 — 있는 것을 쓰고 위임만 붙인다.
+  const budgetPlannerFixture = `
+    ${budgetFixture}
+    insert into public.planners (id, user_id, status, profile_json, regions)
+      values ('${BUDGET_PLANNER}', '${plannerAccount ?? outsider}', 'active',
+              '{"headline":"예산 픽스처","categories":["hall"]}'::jsonb, array['서울'])
+      on conflict (user_id) do nothing;
+    insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+      select p.id, '${coupleId}', '{"tables":["budgets","budget_items","expenses"]}'::jsonb,
+             'active', now() - interval '1 day', now() + interval '30 days'
+        from public.planners p where p.user_id = '${plannerAccount ?? outsider}';
+  `;
+
+  if (plannerAccount) {
+    check(
+      "위임받은 플래너는 예산을 읽는다 (§3.9 플래너 위임)",
+      asUser(plannerAccount, `select count(*) from public.budgets;`, budgetPlannerFixture) === "1",
+    );
+    check(
+      "**플래너는 예산을 고칠 수 없다** — 위임은 열람이지 편집이 아니다",
+      asUser(
+        plannerAccount,
+        `with u as (update public.budget_items set planned_amount = 1 returning id)
+         select count(*) from u;`,
+        budgetPlannerFixture,
+      ) === "0",
+    );
+    check(
+      "**플래너는 지출을 적을 수 없다**",
+      rejectedWith(/row-level security/i, () =>
+        asUser(plannerAccount, `insert into public.expenses (couple_id, category, amount)
+           values ('${coupleId}', 'hall', 1);`, budgetPlannerFixture)),
+    );
+  }
+
+  // ── 0045 불변식 ───────────────────────────────────────────────────────────
+  check(
+    "**커플당 예산은 하나다** — 둘이면 어느 것이 진짜인지 화면이 답할 수 없다",
+    rejectedWith(/uq_budgets_couple|duplicate key/, () =>
+      sql(`begin;
+           ${budgetFixture}
+           insert into public.budgets (couple_id) values ('${coupleId}');
+           rollback;`)),
+  );
+  check(
+    "**카테고리당 계획도 하나다** — 두 줄이면 합계가 조용히 두 배가 된다",
+    rejectedWith(/uq_budget_items_category|duplicate key/, () =>
+      sql(`begin;
+           ${budgetFixture}
+           insert into public.budget_items (budget_id, category, planned_amount)
+             values ('${BUDGET}', 'hall', 1);
+           rollback;`)),
+  );
+  check(
+    "**`unmapped` 는 예산 카테고리가 아니다** — '확인 필요' 에 돈을 배정하게 된다",
+    rejectedWith(/budget_items_category_vocab|check constraint/, () =>
+      sql(`begin;
+           ${budgetFixture}
+           insert into public.budget_items (budget_id, category, planned_amount)
+             values ('${BUDGET}', 'unmapped', 1);
+           rollback;`)),
+  );
+  check(
+    "어휘 밖의 카테고리를 막는다 (오타 하나가 새 카테고리를 만들지 않는다)",
+    rejectedWith(/budget_items_category_vocab|check constraint/, () =>
+      sql(`begin;
+           ${budgetFixture}
+           insert into public.budget_items (budget_id, category, planned_amount)
+             values ('${BUDGET}', 'hall2', 1);
+           rollback;`)),
+  );
+  check(
+    "지출도 같은 어휘를 쓴다",
+    rejectedWith(/expenses_category_vocab|check constraint/, () =>
+      sql(`begin;
+           insert into public.expenses (couple_id, category, amount)
+             values ('${coupleId}', 'unmapped', 1);
+           rollback;`)),
+  );
+  check(
+    "음수 금액을 막는다",
+    rejectedWith(/check constraint|planned_amount/, () =>
+      sql(`begin;
+           ${budgetFixture}
+           insert into public.budget_items (budget_id, category, planned_amount)
+             values ('${BUDGET}', 'meal', -1);
+           rollback;`)),
+  );
+
+  // 코드↔DB 어휘 대조. **사본은 어긋나고 어긋나면 조용하다**(검출 룰 S7-01 과 같은 구조).
+  {
+    const budgetSrc = readFileSync("lib/core/schemas/estimate.ts", "utf8");
+    // **배열 블록만 읽는다.** 파일 전체를 훑으면 라벨표의 따옴표까지 걸려 수가 부푼다.
+    const block = (budgetSrc.match(/ESTIMATE_CATEGORIES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
+    const estimateCodes = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    const expected = estimateCodes.filter((code) => code !== "unmapped");
+
+    check(
+      "**코드의 예산 카테고리와 DB 어휘가 같다** (견적 카테고리 - unmapped)",
+      expected.length > 0 &&
+        expected.every((code) => sql(`select public.is_budget_category('${code}');`) === "t") &&
+        sql(`select public.is_budget_category('unmapped');`) === "f",
+      `code=${expected.length}`,
+    );
+  }
+
+  // ── 계약 자동 반영 (0045 `budget_contracted`) ─────────────────────────────
+  // **업체 행을 못 읽어도 카테고리가 흔들리지 않아야 한다.** 임베드로 읽던 시절에는
+  // 커플이 vendors 를 못 읽으면 계약이 통째로 `etc` 로 떨어졌다(흐름 점검이 잡았다).
+  check(
+    "계약 분류 함수가 SECURITY DEFINER 다 — 업체 노출이 바뀌어도 카테고리가 안 움직인다",
+    sql(`select prosecdef from pg_proc where proname = 'budget_contracted';`) === "t",
+  );
+  check(
+    "**함수 안에 권한 검사가 있다** — 없으면 아무 커플 id 로 남의 계약을 셀 수 있다",
+    (() => {
+      const src = sql(`select pg_get_functiondef('public.budget_contracted(uuid)'::regprocedure);`);
+
+      return src.includes("is_couple_member") && src.includes("has_planner_scope");
+    })(),
+  );
+  check(
+    "**남의 커플 id 를 넣어도 아무것도 세지 않는다**",
+    asUser(
+      outsider,
+      `select coalesce(sum(contracted), 0) from public.budget_contracted('${coupleId}');`,
+    ) === "0",
+  );
+  check(
+    "비로그인은 함수를 부를 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.budget_contracted('${coupleId}');`)),
+  );
+  {
+    // 코드↔DB 매핑 대조. **사본은 어긋나고 어긋나면 조용하다.**
+    const budgetCoreSrc = readFileSync("lib/core/budget/budget.ts", "utf8");
+    const block = (budgetCoreSrc.match(
+      /VENDOR_TO_BUDGET_CATEGORY: Record<string, BudgetCategory> = \{([\s\S]*?)\}/,
+    ) ?? ["", ""])[1];
+    const pairs = [...block.matchAll(/(\w+):\s*"([a-z]+)"/g)].map((m) => [m[1], m[2]]);
+    // **정렬 공백을 지우고 견준다.** SQL 쪽은 `when 'dress'  then` 처럼 칸을 맞춰
+    // 적어 두었는데, 공백 수까지 맞추라고 하면 서식만 손봐도 검사가 깨진다.
+    const fnSrc = sql(`select pg_get_functiondef('public.budget_contracted(uuid)'::regprocedure);`)
+      .replace(/\s+/g, " ");
+
+    check(
+      "**코드의 업체→예산 카테고리 표와 DB 함수가 같다**",
+      pairs.length > 0 &&
+        pairs.every(([vendor, budget]) =>
+          vendor === "agency"
+            ? // 에이전시는 `else 'etc'` 로 떨어진다 — 함수에 자기 줄이 없다.
+              !fnSrc.includes(`when 'agency'`) && fnSrc.includes(`else 'etc'`)
+            : fnSrc.includes(`when '${vendor}' then '${budget}'`),
+        ),
+      `pairs=${pairs.length}`,
+    );
+  }
+
+  check(
+    "**총예산은 couples.total_budget 이 진실이다** — nullable 이라 '미정'을 표현한다",
+    sql(`select is_nullable from information_schema.columns
+           where table_schema = 'public' and table_name = 'couples'
+             and column_name = 'total_budget';`) === "YES",
+  );
+  check(
+    "`budgets.total_amount` 는 쓰지 않는다 — not null default 0 이라 '미정'이 없다",
+    sql(`select is_nullable from information_schema.columns
+           where table_schema = 'public' and table_name = 'budgets'
+             and column_name = 'total_amount';`) === "NO",
+  );
+  check(
+    "지출은 계획 줄이 사라져도 카테고리를 잃지 않는다 (expenses.category not null)",
+    sql(`select is_nullable from information_schema.columns
+           where table_schema = 'public' and table_name = 'expenses'
+             and column_name = 'category';`) === "NO",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

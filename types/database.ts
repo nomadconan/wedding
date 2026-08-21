@@ -2324,6 +2324,7 @@ export type Database = {
         Row: {
           amount: number
           budget_item_id: string | null
+          category: string
           couple_id: string
           created_at: string
           id: string
@@ -2335,6 +2336,7 @@ export type Database = {
         Insert: {
           amount: number
           budget_item_id?: string | null
+          category: string
           couple_id: string
           created_at?: string
           id?: string
@@ -2346,6 +2348,7 @@ export type Database = {
         Update: {
           amount?: number
           budget_item_id?: string | null
+          category?: string
           couple_id?: string
           created_at?: string
           id?: string
@@ -5312,6 +5315,14 @@ export type Database = {
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
       booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }
+      budget_contracted: {
+        Args: { p_couple_id: string }
+        Returns: {
+          category: string
+          contracted: number
+          paid: number
+        }[]
+      }
       bump_post_view: { Args: { p_post_id: string }; Returns: undefined }
       can_read_qna_post: { Args: { p_post_id: string }; Returns: boolean }
       cart_active_limit: { Args: never; Returns: number }
@@ -5341,6 +5352,7 @@ export type Database = {
       is_active_vendor: { Args: { p_vendor_id: string }; Returns: boolean }
       is_any_planner: { Args: never; Returns: boolean }
       is_any_vendor_member: { Args: never; Returns: boolean }
+      is_budget_category: { Args: { p_value: string }; Returns: boolean }
       is_chat_room_member: { Args: { p_room_id: string }; Returns: boolean }
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
