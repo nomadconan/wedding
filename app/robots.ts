@@ -27,6 +27,10 @@ const PRIVATE_PATHS = [
   "/admin",
   "/explore/compare",
   "/design-system",
+  // 초대(청첩) 링크는 **검색 결과에 나올 값이 아니다**(S7-09). 토큰을 가진 것이
+  // 곧 권한이므로 색인되면 그 자체가 유출이다. 페이지 메타에도 noindex 를 걸었다.
+  "/rsvp/",
+  "/guests",
 ];
 
 export default function robots(): MetadataRoute.Robots {

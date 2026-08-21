@@ -287,6 +287,26 @@ async function HomeSection() {
         )}
       </section>
 
+      {/* ── 2-c) 하객 (S7-09 — F-C-22) ──────────────────────────────────── */}
+      {/* **하단 탭을 늘리지 않는다**(D-55). `/guests` 는 자주 오는 화면이 아니라
+          예식이 가까워질 때 오는 화면이라 홈에서 잇는다. **숫자를 여기서 세지
+          않는다** — 명단 집계는 `/guests` 가 한 번에 읽어 계산하고, 홈이 따로 세면
+          두 화면이 다른 숫자를 말한다(D-84 와 같은 판단). */}
+      <section className="space-y-2" data-testid="home-guests">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-foreground">하객</h2>
+          <Link href="/guests" className="text-caption font-medium text-brand-600">
+            자세히
+          </Link>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          명단을 적어 두면 참석 응답을 링크로 받고 답례품 수량까지 세어 드려요.{" "}
+          <Link href="/guests" className="font-medium text-brand-600">
+            하객 관리
+          </Link>
+        </p>
+      </section>
+
       {/* ── 3) 담아 둔 것 — 지금 실제로 셀 수 있는 숫자 ───────────────────── */}
       <section className="space-y-2" data-testid="home-cart">
         <div className="flex items-center justify-between gap-2">

@@ -2460,10 +2460,12 @@ export type Database = {
           couple_id: string
           created_at: string
           id: string
+          invite_token: string | null
           name: string
           party_size: number
+          responded_at: string | null
           rsvp_status: string
-          side: string | null
+          side: string
           updated_at: string
         }
         Insert: {
@@ -2471,10 +2473,12 @@ export type Database = {
           couple_id: string
           created_at?: string
           id?: string
+          invite_token?: string | null
           name: string
           party_size?: number
+          responded_at?: string | null
           rsvp_status?: string
-          side?: string | null
+          side?: string
           updated_at?: string
         }
         Update: {
@@ -2482,10 +2486,12 @@ export type Database = {
           couple_id?: string
           created_at?: string
           id?: string
+          invite_token?: string | null
           name?: string
           party_size?: number
+          responded_at?: string | null
           rsvp_status?: string
-          side?: string | null
+          side?: string
           updated_at?: string
         }
         Relationships: [
@@ -5406,6 +5412,16 @@ export type Database = {
         Returns: boolean
       }
       inquiry_couple_id: { Args: { p_inquiry_id: string }; Returns: string }
+      invite_context: {
+        Args: { p_token: string }
+        Returns: {
+          closed: boolean
+          guest_name: string
+          party_size: number
+          rsvp_status: string
+          wedding_date: string
+        }[]
+      }
       is_active_vendor: { Args: { p_vendor_id: string }; Returns: boolean }
       is_any_planner: { Args: never; Returns: boolean }
       is_any_vendor_member: { Args: never; Returns: boolean }
@@ -5415,11 +5431,13 @@ export type Database = {
       is_couple_member: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
+      is_guest_side: { Args: { p_value: string }; Returns: boolean }
       is_inquiry_vendor: { Args: { p_inquiry_id: string }; Returns: boolean }
       is_membership_status: { Args: { p_value: string }; Returns: boolean }
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_published_post: { Args: { p_post_id: string }; Returns: boolean }
+      is_rsvp_status: { Args: { p_value: string }; Returns: boolean }
       is_share_resource_type: { Args: { p_value: string }; Returns: boolean }
       is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
@@ -5460,6 +5478,13 @@ export type Database = {
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
       recount_post_likes: { Args: { p_post_id: string }; Returns: number }
+      respond_to_invite: {
+        Args: { p_answer: string; p_party_size: number; p_token: string }
+        Returns: {
+          ok: boolean
+          reason: string
+        }[]
+      }
       share_link_open: {
         Args: { p_token: string }
         Returns: {

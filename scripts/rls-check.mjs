@@ -6608,5 +6608,307 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 하객·좌석 (S7-09 · F-C-22 · 0051) ──────────────────────────────────────
+// **여기서 가장 위험한 것은 이름과 토큰이다.** 하객은 우리 사용자가 아니고 명단은
+// 커플이 옮겨 적은 제3자 정보다. 확인할 것 다섯 —
+//  (가) **남의 명단이 보이지 않는가**, (나) **플래너가 위임받은 만큼만 보는가**(읽기만),
+//  (다) **토큰·응답시각을 당사자가 직접 못 넣는가**(FIX-30 계열), (라) **비로그인이
+//  함수 하나로만 들어오는가**, (마) **응답이 이름을 바꾸지 못하는가**.
+//
+// **픽스처를 같은 트랜잭션에 붙인다**(S7-11 에서 배운 것) — 안 붙이면 대상 행이 없어
+// 0행 갱신이 되고 "아무 일도 안 일어난 것" 이 통과로 둔갑한다.
+{
+  const G1 = "00000000-0000-0000-0000-0000000000f1";
+  const G2 = "00000000-0000-0000-0000-0000000000f2";
+  const TOKEN = "s709-rls-check-token-0123456789abcdef";
+
+  const guestFixture = `
+    delete from public.guests where id in ('${G1}', '${G2}');
+    update public.couples set wedding_date = current_date + 30 where id = '${coupleId}';
+    insert into public.guests (id, couple_id, name, side, rsvp_status, party_size, invite_token)
+      values ('${G1}', '${coupleId}', '홍길동', 'groom', 'pending', 2, '${TOKEN}');
+    insert into public.guests (id, couple_id, name, side, rsvp_status, party_size)
+      values ('${G2}', '${coupleId}', '김철수', 'bride', 'pending', 1);
+  `;
+
+  const withFixture = (body) => `begin;\n${guestFixture}\n${body}\nrollback;`;
+
+  // ── 명단 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "커플 구성원은 자기 명단을 본다",
+    asUser(owner, `select count(*) from public.guests where couple_id = '${coupleId}';`, guestFixture) === "2",
+  );
+  check(
+    "배우자도 같은 명단을 본다 (커플은 함께 준비한다)",
+    asUser(partner, `select count(*) from public.guests where id = '${G1}';`, guestFixture) === "1",
+  );
+  check(
+    "**남의 커플 명단은 보이지 않는다** — 하객 이름은 제3자 정보다",
+    asUser(outsider, `select count(*) from public.guests where id = '${G1}';`, guestFixture) === "0",
+  );
+  check(
+    "**비로그인은 명단을 보지 못한다** (표 권한 자체를 걷었다)",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.guests;`, guestFixture)),
+  );
+  check(
+    "**비로그인은 명단에 쓰지도 못한다**",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(
+        `insert into public.guests (couple_id, name, side, rsvp_status, party_size)
+           values ('${coupleId}', '침입자', 'groom', 'pending', 1);`,
+        guestFixture,
+      )),
+  );
+
+  // ── 토큰·응답시각 위조 (FIX-30 계열) ──────────────────────────────────────
+  check(
+    "**커플도 초대 토큰을 직접 넣지 못한다** — 넣을 수 있으면 남의 토큰을 자기 행에 복사한다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `update public.guests set invite_token = 'forged-token-0123456789abcdef012345' where id = '${G2}';`,
+        guestFixture,
+      )),
+  );
+  check(
+    "**응답 시각도 직접 쓰지 못한다** — 쓰면 \"언제 답했나\" 가 사실이 아니게 된다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.guests set responded_at = now() where id = '${G2}';`, guestFixture)),
+  );
+  check(
+    "**커플 id 를 옮겨 남의 커플로 보내지 못한다**",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.guests set couple_id = '${coupleId}' where id = '${G2}';`, guestFixture)),
+  );
+  check(
+    "**이름·인원·응답 상태는 커플이 고칠 수 있다** — 좁히면서 쓰던 것을 막지 않았다",
+    asUser(
+      owner,
+      `update public.guests set name = '고친이름', party_size = 3 where id = '${G2}';
+       select name from public.guests where id = '${G2}';`,
+      guestFixture,
+    ) === "고친이름",
+  );
+
+  // ── 어휘·불변식 ───────────────────────────────────────────────────────────
+  check(
+    "**어휘 밖 응답 상태를 넣지 못한다** — 오타 하나가 집계에서 빠진다",
+    rejectedWith(/guests_rsvp_status_vocab|check constraint/, () =>
+      sql(withFixture(`update public.guests set rsvp_status = 'maybe' where id = '${G2}';`))),
+  );
+  check(
+    "**어휘 밖 side 를 넣지 못한다**",
+    rejectedWith(/guests_side_vocab|check constraint/, () =>
+      sql(withFixture(`update public.guests set side = '제3자' where id = '${G2}';`))),
+  );
+  check(
+    "**이름이 빌 수 없다** — 빈 줄은 인원만 늘리고 아무도 가리키지 않는다",
+    rejectedWith(/guests_name_not_blank_chk|check constraint/, () =>
+      sql(withFixture(`update public.guests set name = '   ' where id = '${G2}';`))),
+  );
+  check(
+    "**인원 수 상한이 있다**",
+    rejectedWith(/guests_party_size_chk2|check constraint/, () =>
+      sql(withFixture(`update public.guests set party_size = 999 where id = '${G2}';`))),
+  );
+  check(
+    "**답한 줄에는 답한 시각이 있다**",
+    rejectedWith(/guests_responded_at_chk|check constraint/, () =>
+      sql(withFixture(`update public.guests set rsvp_status = 'attending' where id = '${G2}';`))),
+  );
+  check(
+    "**토큰이 겹치지 않는다**",
+    rejectedWith(/uq_guests_invite_token|duplicate key/, () =>
+      sql(withFixture(`update public.guests set invite_token = '${TOKEN}', responded_at = null where id = '${G2}';`))),
+  );
+  check(
+    "**짧은 토큰을 넣지 못한다** — 짧으면 맞혀진다",
+    rejectedWith(/guests_invite_token_len_chk|check constraint/, () =>
+      sql(withFixture(`update public.guests set invite_token = 'short' where id = '${G2}';`))),
+  );
+
+  // ── 공개 응답 함수 — 비로그인이 들어오는 유일한 문 ────────────────────────
+  check(
+    "**비로그인이 토큰으로 답한다**",
+    asAnon(
+      `select ok from public.respond_to_invite('${TOKEN}', 'attending', 3);`,
+      guestFixture,
+    ) === "t",
+  );
+  // **anon 으로 답하고 postgres 로 확인한다.** anon 은 `guests` 를 읽을 권한이
+  // 아예 없으므로(0051) 같은 세션에서 이름을 볼 수 없다 — 그것 자체가 이 태스크가
+  // 원한 상태다. 그래서 역할을 갈아 끼우며 한 트랜잭션에서 본다.
+  check(
+    "**응답이 이름을 바꾸지 못한다** — 링크를 받은 사람은 답만 한다",
+    sql(`begin;
+         ${guestFixture}
+         set local role anon;
+         set local request.jwt.claims = '{"role":"anon"}';
+         select ok from public.respond_to_invite('${TOKEN}', 'attending', 3);
+         reset role;
+         select name from public.guests where id = '${G1}';
+         rollback;`).trim().endsWith("홍길동"),
+  );
+  check(
+    "응답이 상태·인원·시각을 채운다",
+    sql(withFixture(
+      `select public.respond_to_invite('${TOKEN}', 'declined', 2);
+       select rsvp_status || '|' || party_size || '|' || (responded_at is not null)::text
+         from public.guests where id = '${G1}';`,
+    )).trim().endsWith("declined|2|true"),
+  );
+  check(
+    "**모르는 토큰은 실패한다**",
+    asAnon(
+      `select reason from public.respond_to_invite('없는토큰', 'attending', 1);`,
+      guestFixture,
+    ) === "not_found",
+  );
+  check(
+    "**어휘 밖 답을 받지 않는다**",
+    asAnon(
+      `select reason from public.respond_to_invite('${TOKEN}', 'maybe', 1);`,
+      guestFixture,
+    ) === "bad_answer",
+  );
+  check(
+    "**인원 수 상한을 함수도 본다** — 화면만 막으면 API 로 넘어온다",
+    asAnon(
+      `select reason from public.respond_to_invite('${TOKEN}', 'attending', 999);`,
+      guestFixture,
+    ) === "bad_party_size",
+  );
+  check(
+    "**예식일이 지나면 받지 않는다** — 만료를 예식일이 정한다",
+    sql(`begin;
+         ${guestFixture}
+         update public.couples set wedding_date = current_date - 1 where id = '${coupleId}';
+         select reason from public.respond_to_invite('${TOKEN}', 'attending', 1);
+         rollback;`).trim().endsWith("closed"),
+  );
+  check(
+    "**예식일이 없으면 받지 않는다** — 언제까지 받을지 모르는 채로 열지 않는다",
+    sql(`begin;
+         ${guestFixture}
+         update public.couples set wedding_date = null where id = '${coupleId}';
+         select reason from public.respond_to_invite('${TOKEN}', 'attending', 1);
+         rollback;`).trim().endsWith("no_wedding_date"),
+  );
+
+  // ── 응답 화면 컨텍스트 — 본인 한 줄만 ─────────────────────────────────────
+  check(
+    "**같은 커플의 다른 하객은 나오지 않는다** — 본인 한 줄이다",
+    asAnon(`select count(*) from public.invite_context('${TOKEN}');`, guestFixture) === "1",
+  );
+  check(
+    "**연락처·토큰이 나가지 않는다**",
+    (() => {
+      const result = sql(
+        `select pg_get_function_result('public.invite_context(text)'::regprocedure);`,
+      );
+
+      return !result.includes("contact") && !result.includes("token");
+    })(),
+  );
+  check(
+    "**service_role 도 함수를 부를 수 있다**(S7-12 의 revoke 사고를 반복하지 않는다)",
+    sql(`select has_function_privilege('service_role', 'public.respond_to_invite(text, text, integer)', 'execute')
+            and has_function_privilege('service_role', 'public.invite_context(text)', 'execute');`) === "t",
+  );
+
+  // ── 좌석 ──────────────────────────────────────────────────────────────────
+  check(
+    "**커플당 좌석 배치는 하나다** — 여럿이면 어느 것이 지금 배치인지 답할 수 없다",
+    rejectedWith(/uq_seating_plans_couple|duplicate key/, () =>
+      sql(`begin;
+           insert into public.seating_plans (couple_id, layout_json) values ('${coupleId}', '{}'::jsonb);
+           insert into public.seating_plans (couple_id, layout_json) values ('${coupleId}', '{}'::jsonb);
+           rollback;`)),
+  );
+  check(
+    "**배치가 객체가 아니면 막는다** — 배열이 오면 파서가 조용히 빈 배치로 읽는다",
+    rejectedWith(/seating_plans_layout_object_chk|check constraint/, () =>
+      sql(`begin;
+           delete from public.seating_plans where couple_id = '${coupleId}';
+           insert into public.seating_plans (couple_id, layout_json) values ('${coupleId}', '[]'::jsonb);
+           rollback;`)),
+  );
+  check(
+    "**남의 좌석 배치는 보이지 않는다**",
+    asUser(
+      outsider,
+      `select count(*) from public.seating_plans where couple_id = '${coupleId}';`,
+      `delete from public.seating_plans where couple_id = '${coupleId}';
+       insert into public.seating_plans (couple_id, layout_json) values ('${coupleId}', '{"tables":[]}'::jsonb);`,
+    ) === "0",
+  );
+
+  // ── 저장하지 않는 것 ──────────────────────────────────────────────────────
+  check(
+    "**답례품 수량 컬럼이 없다** — RSVP 응답에서 계산한다",
+    sql(`select count(*) from information_schema.columns
+          where table_name = 'guests'
+            and column_name in ('favor_count', 'favor_quantity', 'attending_count');`) === "0",
+  );
+  check(
+    "**이름 암호화 컬럼을 만들지 않았다** — §3.2 가 적은 대로 평문이며 보호는 나가는 자리를 막는 것이다",
+    sql(`select count(*) from information_schema.columns
+          where table_name = 'guests' and column_name = 'name_enc';`) === "0",
+  );
+
+  // ── 코드↔DB 어휘 대조 ─────────────────────────────────────────────────────
+  {
+    const guestSrc = readFileSync("lib/core/guest/guest.ts", "utf8");
+
+    const statuses = [...guestSrc.matchAll(/RSVP_STATUSES = \[([^\]]+)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
+    const sides = [...guestSrc.matchAll(/GUEST_SIDES = \[([^\]]+)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
+
+    check(
+      "**코드의 응답 어휘와 DB 어휘가 같다**",
+      statuses.length === 3 &&
+        statuses.every((status) => sql(`select public.is_rsvp_status('${status}');`) === "t") &&
+        sql(`select public.is_rsvp_status('maybe');`) === "f",
+      `code=${statuses.join("|")}`,
+    );
+    check(
+      "**코드의 side 어휘와 DB 어휘가 같다**",
+      sides.length === 4 &&
+        sides.every((side) => sql(`select public.is_guest_side('${side}');`) === "t"),
+      `code=${sides.join("|")}`,
+    );
+
+    // 이름이 이벤트로 나가지 않는지 소스로 본다. 흐름 점검이 값으로 다시 확인한다.
+    const loaderSrc = readFileSync("lib/guest/loader.ts", "utf8");
+
+    check(
+      "**이벤트 memo 에 이름을 넣지 않는다**(§7.3)",
+      !/memo:\s*`[^`]*\$\{[^}]*name/.test(loaderSrc) && !/memo:\s*[^,]*\.name/.test(loaderSrc),
+    );
+    check(
+      "**이벤트에 토큰을 넣지 않는다** — 이벤트에 남으면 링크가 로그로 새는 것과 같다",
+      !/memo:\s*`[^`]*token/i.test(loaderSrc),
+    );
+    check(
+      "**목록 응답이 토큰·연락처 해시를 싣지 않는다** — 있는지 여부만 넘긴다",
+      loaderSrc.includes("hasContact") &&
+        loaderSrc.includes("hasInvite") &&
+        !/contactHash:/.test(loaderSrc) &&
+        !/inviteToken:/.test(loaderSrc),
+    );
+
+    check(
+      "**초대 링크가 색인되지 않는다** — 토큰을 가진 것이 곧 권한이다",
+      readFileSync("app/robots.ts", "utf8").includes('"/rsvp/"'),
+    );
+    check(
+      "홈이 하객 화면을 가리킨다 (만든 화면에 들어가는 자리를 잇는다)",
+      readFileSync("app/(consumer)/home/page.tsx", "utf8").includes('href="/guests"'),
+    );
+  }
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
