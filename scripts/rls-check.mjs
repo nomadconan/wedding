@@ -5564,5 +5564,130 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 위약금 시뮬레이터 (S7-04 · F-C-08 · §3.5 · §5.3 · §7.7) ──────────────────
+// 계산은 순수 함수라 DB 가 볼 것이 없다. 여기서 확인할 것은 둘이다 —
+// (가) **저장한 계산이 커플 밖으로 새지 않는가** (나) **기준을 시드하지 않았다는 사실**
+// 이 그대로인가(0031 근거 6 — 법무 검수 전 수치를 DB 에 넣으면 운영 기준처럼 굳는다).
+{
+  const SIM = "00000000-0000-0000-0000-0000000000f1";
+  const FOREIGN_SIM = "00000000-0000-0000-0000-0000000000f2";
+  const FOREIGN_COUPLE_P = "00000000-0000-0000-0000-0000000000f3";
+
+  const simFixture = `
+    insert into public.penalty_simulations
+      (id, couple_id, inputs_json, standard_amount, contract_amount, excess_amount, rule_version)
+      values ('${SIM}', '${coupleId}',
+              '{"category":"hall","totalAmount":30000000}'::jsonb,
+              3000000, 6000000, 3000000, '2026.8-draft');
+  `;
+
+  const foreignSimFixture = `
+    insert into public.couples (id, owner_id, stage)
+      values ('${FOREIGN_COUPLE_P}', '${outsider}', 'onboarding');
+    insert into public.penalty_simulations
+      (id, couple_id, inputs_json, standard_amount, contract_amount, excess_amount, rule_version)
+      values ('${FOREIGN_SIM}', '${FOREIGN_COUPLE_P}', '{}'::jsonb, 1, 2, 1, 'x');
+  `;
+
+  // **픽스처가 넣은 행만 센다.** 이 표에는 흐름 점검이 남긴 행이 있을 수 있고,
+  // 전체 개수를 세면 검사가 "언제 돌리느냐" 에 좌우된다.
+  check(
+    "당사자는 자기 계산을 본다",
+    asUser(
+      owner,
+      `select count(*) from public.penalty_simulations where id in ('${SIM}', '${FOREIGN_SIM}');`,
+      simFixture,
+    ) === "1",
+  );
+  check(
+    "배우자도 같은 계산을 본다 (커플 공유 · D-19)",
+    asUser(
+      partner,
+      `select count(*) from public.penalty_simulations where id = '${SIM}';`,
+      simFixture,
+    ) === "1",
+  );
+  check(
+    "**남의 계산은 보이지 않는다**",
+    asUser(
+      owner,
+      `select count(*) from public.penalty_simulations where id = '${FOREIGN_SIM}';`,
+      `${simFixture}${foreignSimFixture}`,
+    ) === "0",
+  );
+  check(
+    "비로그인은 계산을 못 본다",
+    asAnon(`select count(*) from public.penalty_simulations;`, simFixture) === "0",
+  );
+  check(
+    "**남의 계산도 비로그인에게 보이지 않는다**",
+    asAnon(
+      `select count(*) from public.penalty_simulations;`,
+      `${simFixture}${foreignSimFixture}`,
+    ) === "0",
+  );
+  check(
+    "**남의 커플에 계산을 끼워 넣을 수 없다**",
+    rejectedWith(/row-level security/i, () =>
+      asUser(owner, `insert into public.penalty_simulations (couple_id, inputs_json)
+         values ('${FOREIGN_COUPLE_P}', '{}'::jsonb);`, `${simFixture}${foreignSimFixture}`)),
+  );
+  check(
+    "**남의 계산을 지울 수 없다**",
+    asUser(
+      outsider,
+      `with d as (delete from public.penalty_simulations where id = '${SIM}' returning id)
+       select count(*) from d;`,
+      simFixture,
+    ) === "0",
+  );
+  check(
+    "**계산을 고칠 수는 없다** — 저장한 값은 그때의 기준으로 낸 스냅샷이다(D-16 과 같은 이유)",
+    asUser(
+      owner,
+      `with u as (update public.penalty_simulations set standard_amount = 1
+                  where id = '${SIM}' returning id)
+       select count(*) from u;`,
+      simFixture,
+    ) === "0",
+  );
+
+  // ── 기준을 시드하지 않았다 (0031 근거 6) ──────────────────────────────────
+  check(
+    "**`penalty_rules` 를 시드하지 않았다** — 법무 검수 전 수치가 운영 기준처럼 굳지 않게",
+    sql(`select count(*) from public.penalty_rules;`) === "0",
+  );
+  check(
+    "기준 표는 밴드 구조를 갖고 있다 (행이 들어오면 코드 변경 없이 전환된다)",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'penalty_rules'
+             and column_name in ('min_days_before_event', 'max_days_before_event',
+                                 'rate_bp', 'refund_deposit', 'is_draft');`) === "5",
+  );
+  check(
+    "요율은 정수 bp 다 — 부동소수점을 쓰지 않는다",
+    sql(`select data_type from information_schema.columns
+           where table_schema = 'public' and table_name = 'penalty_rules'
+             and column_name = 'rate_bp';`) === "integer",
+  );
+
+  // 코드↔화면 대조. **가정치라는 사실이 화면까지 가야 한다**(§7.7).
+  {
+    const viewSrc = readFileSync("lib/core/pricing/penalty-view.ts", "utf8");
+    // **주석을 걷어내고 본다.** 주석에는 "‘과도한 조항’ 같은 말은 쓰지 않는다" 처럼
+    // 금지어를 설명하는 문장이 있고, 그것까지 걸면 규칙을 적어 둔 것이 위반이 된다.
+    const viewCode = viewSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+    check(
+      "**기준 미설정을 '0원' 으로 말하지 않는다** — 화면 문구가 그것을 보장한다",
+      viewCode.includes("등록되지 않았") && !/headline:\s*"[^"]*0원/.test(viewCode),
+    );
+    check(
+      "**평가어를 문구에 넣지 않았다**(CLAUDE.md §2.3 — 사실과 편차로만)",
+      ["과도", "부당", "불리", "악성", "심각"].every((word) => !viewCode.includes(word)),
+    );
+  }
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

@@ -62,6 +62,21 @@ async function ReportsSection() {
 
       <p className="text-caption text-muted-foreground">{PURGE_NOTICE}</p>
 
+      {/* **위약금 시뮬레이터 진입**(S7-04 · F-C-08). 여기가 맥락이 맞는 자리다 —
+          리포트가 위약 조항을 **찾아내는** 자리이고 시뮬레이터는 그 조항을 기준과
+          **견주는** 도구다. 하단 탭은 늘리지 않았다(D-55). 계약서가 없어도 쓸 수
+          있으므로 목록이 비어 있을 때도 보인다. */}
+      <Link
+        href="/tools/penalty"
+        className="block rounded-lg border border-border px-4 py-3"
+        data-testid="reports-penalty-tool-link"
+      >
+        <p className="text-sm font-medium text-foreground">위약금 시뮬레이터</p>
+        <p className="text-caption text-muted-foreground">
+          계약서에 적힌 위약 조건이 기준과 얼마나 다른지 계산해 봐요. 계약서를 올리지 않아도 됩니다.
+        </p>
+      </Link>
+
       {rows.length === 0 ? (
         <EmptyState
           title="아직 검토한 계약서가 없어요"

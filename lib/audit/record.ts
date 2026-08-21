@@ -108,6 +108,10 @@ export type EntityType =
   // "자동 생성했다"·"선행 미완인 채 완료했다" 라는 전이와 셀 수 있는 값이다.
   // `checklist_generated` 의 entity_id 는 커플 id 다(태스크 하나가 아니라 한 벌이다).
   | "task"
+  // S7-04. 위약금 시뮬레이션. **금액을 memo 에 넣지 않는다**(§7.3) — 행이 이미 갖고
+  // 있고 옮겨 적으면 두 곳이 갈린다. 남길 사실은 **어떤 기준으로 계산했는가**
+  // (등록 기준인가 가정치인가)이며, 기준이 바뀐 뒤 "그때 무엇으로 냈나" 를 답한다.
+  | "penalty_simulation"
   | "profile"
   | "data_deletion_request";
 
