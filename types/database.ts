@@ -5380,6 +5380,7 @@ export type Database = {
       is_couple_owner: { Args: { p_couple_id: string }; Returns: boolean }
       is_couple_principal: { Args: { p_couple_id: string }; Returns: boolean }
       is_inquiry_vendor: { Args: { p_inquiry_id: string }; Returns: boolean }
+      is_membership_status: { Args: { p_value: string }; Returns: boolean }
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_published_post: { Args: { p_post_id: string }; Returns: boolean }

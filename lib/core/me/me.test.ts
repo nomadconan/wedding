@@ -146,12 +146,22 @@ describe("아직 없는 자리", () => {
     expect(ME_PENDING_SECTIONS.every((section) => /^S\d/.test(section.filledBy))).toBe(true);
   });
 
+  it("**채운 자리는 목록에 없다** — 멤버십은 S7-11 이, 파기 이력은 S7-03 이 채웠다", () => {
+    const keys = ME_PENDING_SECTIONS.map((section) => section.key);
+
+    // 만들어 둔 기능을 화면이 "아직 없다" 고 말하면 없는 것과 같아진다(FIX-29).
+    expect(keys).not.toContain("membership");
+    expect(keys).not.toContain("purge_history");
+  });
+
   it("0이 아니라 '아직 측정하지 않음'으로 만든다", () => {
-    expect(mePendingMetric("membership").status).toBe("not_yet");
+    for (const section of ME_PENDING_SECTIONS) {
+      expect(mePendingMetric(section.key).status).toBe("not_yet");
+    }
   });
 
   it("모르는 항목은 던진다", () => {
-    // @ts-expect-error 정의되지 않은 키는 타입에서 먼저 막힌다.
+    // 키 타입은 `string` 이다(자리가 늘었다 줄었다 한다) — 막는 자리는 런타임이다.
     expect(() => mePendingMetric("nope")).toThrow(RangeError);
   });
 });

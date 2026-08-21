@@ -17,7 +17,9 @@ import { plannerMode, runPlannerTurn, saveToolAudits } from "@/lib/ai/planner/ru
 import { buildToolContext } from "@/lib/ai/tools/context";
 import { aiLimitSettings } from "@/lib/ai/tools/reference";
 import { findMyCouple } from "@/lib/couple/membership";
+import { loadMembership } from "@/lib/membership/actions";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/ai/planner — 플래너 대화 (F-C-03, 명세서 §4.2 · §5.6)
@@ -40,8 +42,6 @@ import { getSessionUser } from "@/lib/supabase/auth";
  */
 export const dynamic = "force-dynamic";
 
-/** 멤버십 등급. **S7-11 전까지 모두 무료**다 — 등급을 지어내지 않는다. */
-const MEMBERSHIP_TIER = "free";
 
 function sseHeaders() {
   return {
@@ -87,7 +87,10 @@ export async function POST(request: NextRequest) {
     sessionTokens: await sessionTokens(requestedId ?? null),
     freeDailyTurns: limits.freeDailyTurns,
     sessionTokenCap: limits.sessionTokenCap,
-    membership: MEMBERSHIP_TIER,
+    // **등급을 여기서 지어내지 않는다**(S7-11). 저장된 것은 무엇을 샀는가뿐이고
+    // 지금 유효한 등급은 `membershipState` 가 계산한다 — 화면과 같은 함수를 본다.
+    // 만료된 유료 구독은 여기서 자동으로 `free` 로 읽힌다.
+    membership: (await loadMembership(await createClient())).state.plan,
   });
 
   if (!gate.ok) {

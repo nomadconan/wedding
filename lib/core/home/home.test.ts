@@ -120,7 +120,13 @@ describe("지금 할 일", () => {
 });
 
 describe("아직 채울 수 없는 자리", () => {
-  it("전부 담당 태스크를 밝힌다", () => {
+  it("**지금은 비어 있다** — 담당 태스크가 다 끝났다(S7-11 에서 예산 게이지를 걷었다)", () => {
+    // 이 목록이 비지 않으면 홈이 "아직 못 만들었다" 고 적는다. **채운 자리를 남겨 두는
+    // 것이 FIX-29 였다** — 만들어 둔 기능을 없다고 말하면 없는 것과 같아진다.
+    expect(HOME_PENDING_SECTIONS).toHaveLength(0);
+  });
+
+  it("남는 항목이 생기면 전부 담당 태스크를 밝힌다", () => {
     expect(HOME_PENDING_SECTIONS.every((section) => /^S\d/.test(section.filledBy))).toBe(true);
   });
 
@@ -130,24 +136,21 @@ describe("아직 채울 수 없는 자리", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it("0이 아니라 '아직 측정하지 않음'으로 만든다", () => {
-    const metric = pendingMetric("budget");
+  it("항목이 있다면 0이 아니라 '아직 측정하지 않음'이다", () => {
+    // 목록이 빈 지금은 도는 것이 없다. **규칙은 남긴다** — 자리가 다시 생기는 날
+    // 0으로 적히는 것을 여기서 잡는다.
+    for (const section of HOME_PENDING_SECTIONS) {
+      const metric = pendingMetric(section.key);
 
-    expect(metric.status).toBe("not_yet");
-    expect(metric).not.toMatchObject({ status: "measured" });
+      expect(metric.status).toBe("not_yet");
+      if (metric.status !== "not_yet") throw new Error("not_yet 이어야 한다");
+      expect(metric.filledBy).toBe(section.filledBy);
+      expect(metric.reason.length).toBeGreaterThan(0);
+    }
   });
-
-  it("사유와 담당 태스크를 값에 담는다", () => {
-    // '다음 할 일' 은 S7-08 이 채워 목록에서 빠졌다 — 남은 자리로 같은 규칙을 확인한다.
-    const metric = pendingMetric("budget");
-
-    if (metric.status !== "not_yet") throw new Error("not_yet 이어야 한다");
-    expect(metric.filledBy).toBe("S7-07");
-    expect(metric.reason.length).toBeGreaterThan(0);
-  });
-
   it("모르는 항목은 던진다", () => {
-    // @ts-expect-error 정의되지 않은 키를 넣으면 타입에서 먼저 막힌다.
+    // 키 타입은 `string` 이다 — 목록이 비었다 찼다 하므로 좁히지 않는다(S7-11).
+    // 그래서 **막는 자리는 런타임**이며, 여기가 그 자리다.
     expect(() => pendingMetric("nope")).toThrow(RangeError);
   });
 });
