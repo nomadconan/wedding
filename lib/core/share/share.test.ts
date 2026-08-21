@@ -20,7 +20,8 @@ const never = () => false;
 
 describe("공유할 수 있는 자원 — 로더가 있는 것만 연다", () => {
   it("가용 유형만 내보낸다", () => {
-    expect(shareableTypes(always)).toEqual(["report"]);
+    // S7-05 가 `estimate_comparison` 을 열었다 — 비교표 행이 생기면서 로더가 붙었다.
+    expect(shareableTypes(always)).toEqual(["report", "estimate_comparison"]);
   });
 
   it("**로더가 없으면 상태가 가용이어도 열지 않는다** — 링크는 나가는데 여는 쪽이 실패한다", () => {
@@ -28,6 +29,7 @@ describe("공유할 수 있는 자원 — 로더가 있는 것만 연다", () =>
   });
 
   it("**대기 유형에는 담당 태스크가 적혀 있다** — 언제 열리는지 모르는 대기는 방치다", () => {
+    // 지금은 대기가 없다. 규칙은 남긴다 — 유형이 늘면 다시 걸린다.
     for (const spec of SHARE_RESOURCE_SPECS.filter((item) => item.status === "pending")) {
       expect(spec.filledBy).toMatch(/^S\d-\d\d$/);
     }
@@ -40,18 +42,18 @@ describe("공유할 수 있는 자원 — 로더가 있는 것만 연다", () =>
     }
   });
 
-  it("**비교표는 아직 자원이 없다** — S7-05 가 행을 만들 때 열린다", () => {
+  it("**비교표가 열렸다** — S7-05 가 스냅샷 행을 만들면서 상태 한 글자와 로더 하나로 열었다", () => {
     const spec = shareResourceSpec("estimate_comparison");
 
-    expect(spec?.status).toBe("pending");
-    expect(spec?.filledBy).toBe("S7-05");
+    expect(spec?.status).toBe("available");
+    expect(spec?.filledBy).toBeNull();
+    expect(spec?.backing).toContain("estimate_comparisons");
   });
 
   it("안 열린 유형과 그 이유를 낸다", () => {
-    expect(shareGaps(always)).toEqual([
-      { type: "estimate_comparison", reason: "status", filledBy: "S7-05" },
-    ]);
-    expect(shareGaps(never).map((gap) => gap.reason)).toEqual(["loader", "status"]);
+    // 상태는 둘 다 available 이므로 **로더가 없을 때만** 빈자리가 생긴다.
+    expect(shareGaps(always)).toEqual([]);
+    expect(shareGaps(never).map((gap) => gap.reason)).toEqual(["loader", "loader"]);
   });
 
   it("모르는 유형은 null 이다", () => {

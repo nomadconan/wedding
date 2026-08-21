@@ -23,9 +23,9 @@
  * 링크는 발급되는데 여는 쪽에서 실패한다. 그때의 증상은 **받은 사람에게 뜨는 빈 화면**
  * 이고, 링크를 보낸 사람은 그 사실을 모른다.
  *
- * `estimate_comparison` 은 **자원 자체가 아직 없다** — `estimate_comparisons` 행을
- * 만드는 것은 S7-05 다(§3.5). 담당 태스크가 끝나는 날 **상태 한 글자와 로더 하나면**
- * 열린다.
+ * `estimate_comparison` 은 **S7-05 가 열었다** — 비교표는 조회 시점 계산이지만
+ * 공유하려고 누를 때 `estimate_comparisons` 행이 생긴다(D-87 과 같은 규칙). 대기가
+ * 열리는 방식이 이랬다: **상태 한 글자와 로더 하나.**
  */
 export type ShareResourceSpec = {
   type: string;
@@ -48,13 +48,12 @@ export const SHARE_RESOURCE_SPECS: readonly ShareResourceSpec[] = [
   {
     type: "estimate_comparison",
     label: "견적 비교표",
-    status: "pending",
-    // §2.1 F-C-20 은 "리포트·비교표" 를 적었다. 비교표는 **저장된 자원이 아니라**
-    // 조회 시점 계산이고(장바구니 비교 · D-77), 행으로 남는 비교표는
-    // `estimate_comparisons` 이며 그것을 만드는 것은 S7-05 다.
-    // `resource_id` 는 uuid 하나라 **행으로 존재하는 것만** 가리킬 수 있다.
-    filledBy: "S7-05",
-    backing: "estimate_comparisons (§3.5 · 미착수)",
+    // **S7-05 가 열었다.** 비교표는 조회 시점 계산이지만(장바구니 비교와 같다 · D-77)
+    // **공유하려고 누를 때 행이 생긴다**(D-87 과 같은 규칙) — `resource_id` 는 uuid
+    // 하나라 행으로 존재하는 것만 가리킬 수 있고, 그 행이 이제 있다.
+    status: "available",
+    filledBy: null,
+    backing: "estimate_comparisons (S7-05 · 저장한 스냅샷)",
   },
 ];
 

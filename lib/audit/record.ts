@@ -116,6 +116,9 @@ export type EntityType =
   // 읽을 수 있는 사람이 그 링크를 열 수 있게 된다. 남길 사실은 "무엇을 밖으로
   // 보냈고 언제 거뒀나" 이며, 그것이 D-23 이 말하는 증거다.
   | "share_link"
+  // S7-05. 저장한 견적 비교표. **금액·업체명을 memo 에 넣지 않는다**(§7.3) —
+  // 행이 스냅샷을 이미 갖고 있고 옮겨 적으면 두 곳이 갈린다.
+  | "estimate_comparison"
   | "profile"
   | "data_deletion_request";
 

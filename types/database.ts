@@ -5352,6 +5352,19 @@ export type Database = {
         Args: { p_coupon_id: string }
         Returns: string
       }
+      estimate_quote_sources: {
+        Args: { p_couple_id: string; p_quote_ids?: string[] }
+        Returns: {
+          product_name: string
+          quote_id: string
+          sent_at: string
+          total_amount: number
+          valid_until: string
+          vendor_category: string
+          vendor_id: string
+          vendor_name: string
+        }[]
+      }
       has_coupon_issue: { Args: { p_coupon_id: string }; Returns: boolean }
       has_planner_scope: {
         Args: { p_couple_id: string; p_scope: string }

@@ -10,6 +10,7 @@ import {
   shareableTypes,
   type ShareState,
 } from "@/lib/core/share/share";
+import type { EstimateComparison, NormalizedEstimate } from "@/lib/core/estimate/normalize";
 import { loadReport, type ReportDetail } from "@/lib/reports/loader";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
@@ -80,7 +81,21 @@ export type SharedReport = {
   basisRefs: string[];
 };
 
-export type SharedResource = SharedReport;
+/**
+ * 뷰 전용으로 내보내는 비교표 (S7-05).
+ *
+ * **저장한 스냅샷을 그대로 낸다** — 지금 다시 계산하지 않는다(D-87). 견적이 만료·
+ * 변경됐다면 받은 사람이 보는 표와 보낸 사람이 만든 표가 달라지는데, 공유는 **그때
+ * 무엇을 견줬는지**를 보이는 일이다.
+ */
+export type SharedComparison = {
+  kind: "estimate_comparison";
+  createdAt: string;
+  estimates: NormalizedEstimate[];
+  comparison: EstimateComparison;
+};
+
+export type SharedResource = SharedReport | SharedComparison;
 
 /**
  * 유형별 로더.
@@ -110,6 +125,36 @@ const LOADERS: Record<string, (resourceId: string) => Promise<SharedResource | n
       findings: report.findings.map(({ negotiationScript: _script, ...rest }) => rest),
       counts: report.counts,
       basisRefs: report.basisRefs,
+    };
+  },
+
+  // **S7-05 가 연 유형.** 비교표는 조회 시점 계산이지만 공유하려고 누를 때 행이
+  // 생기고(D-87), 여기서는 **그 스냅샷을 그대로** 낸다 — 다시 계산하지 않는다.
+  estimate_comparison: async (resourceId) => {
+    const { data } = await createShareClient()
+      .from("estimate_comparisons")
+      .select("normalized_json, created_at")
+      .eq("id", resourceId)
+      .maybeSingle();
+
+    const row = (data ?? null) as {
+      normalized_json: { estimates?: NormalizedEstimate[]; comparison?: EstimateComparison } | null;
+      created_at: string;
+    } | null;
+
+    const snapshot = row?.normalized_json ?? null;
+
+    // 스냅샷이 비어 있으면 **빈 표를 그리지 않는다** — 받은 사람에게는 "아무것도 없는
+    // 비교표" 가 뜨고 보낸 사람은 그 사실을 모른다.
+    if (row === null || snapshot?.comparison === undefined || snapshot.estimates === undefined) {
+      return null;
+    }
+
+    return {
+      kind: "estimate_comparison",
+      createdAt: row.created_at,
+      estimates: snapshot.estimates,
+      comparison: snapshot.comparison,
     };
   },
 };
@@ -159,6 +204,18 @@ async function canReach(
   if (resourceType === "report") {
     return (await loadReport(session, resourceId)) !== null;
   }
+  if (resourceType === "estimate_comparison") {
+    // **세션으로 읽어 본다.** `estimate_comparisons` 는 커플 스코프 RLS 라(0005 [48])
+    // 읽히면 그의 것이고 안 읽히면 남의 것이다 — 판정을 여기서 다시 짜지 않는다.
+    const { data } = await session
+      .from("estimate_comparisons")
+      .select("id")
+      .eq("id", resourceId)
+      .maybeSingle();
+
+    return data !== null;
+  }
+
 
   return false;
 }
