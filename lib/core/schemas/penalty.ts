@@ -156,3 +156,19 @@ export function percentToBp(percent: number): number {
 export function bpToPercent(bp: number): number {
   return bp / 100;
 }
+
+/**
+ * 시뮬레이터 요청 (S7-04 · 명세서 §4.2 `POST /api/penalty/simulate`)
+ *
+ * **저장은 기본이 아니다.** 계산은 입력만으로 성립하고 아무것도 남기지 않는다 —
+ * 화면을 열 때마다 행이 쌓이면 `penalty_simulations` 는 기록이 아니라 로그가 된다.
+ * 남기고 싶을 때 사용자가 누른다(D-73 과 같은 판단).
+ *
+ * `save: true` 는 **로그인 + 커플**을 요구한다. 계산 자체는 커플 데이터를 읽지 않으므로
+ * 로그인 없이도 된다 — 계약서에 서명하기 **전에** 확인하는 것이 이 도구의 쓸모다.
+ */
+export const PenaltySimulateRequestSchema = PenaltyInputSchema.extend({
+  save: z.boolean().default(false),
+}).strict();
+
+export type PenaltySimulateRequest = z.infer<typeof PenaltySimulateRequestSchema>;
