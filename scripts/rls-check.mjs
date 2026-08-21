@@ -4811,13 +4811,15 @@ if (!vendorStaff || !adminUser) {
         values ('${ANA}', 'R-01', 'high'::public.finding_severity, '위약금은 총 금액의 80%로 한다', '소비자분쟁해결기준(예식업)', true);
     `;
 
+    // **픽스처가 넣은 행만 센다.** 이 표에는 흐름 점검이 남긴 행이 있을 수 있고,
+    // 전체 개수를 세면 검사가 "언제 돌리느냐" 에 좌우된다.
     check(
       "당사자는 자기 문서를 본다",
-      asUser(owner, `select count(*) from public.documents;`, reportFixture) === "1",
+      asUser(owner, `select count(*) from public.documents where id = '${DOC}';`, reportFixture) === "1",
     );
     check(
       "배우자도 같은 문서를 본다 (커플 공유 · D-19)",
-      asUser(partner, `select count(*) from public.documents;`, reportFixture) === "1",
+      asUser(partner, `select count(*) from public.documents where id = '${DOC}';`, reportFixture) === "1",
     );
     check(
       "**남의 문서는 안 보인다**",
@@ -4829,7 +4831,7 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "당사자는 분석 결과를 본다",
-      asUser(owner, `select count(*) from public.document_analyses;`, reportFixture) === "1",
+      asUser(owner, `select count(*) from public.document_analyses where id = '${ANA}';`, reportFixture) === "1",
     );
     check(
       "**남의 분석은 안 보인다** (상위 문서 스코프가 전이된다)",
@@ -4837,7 +4839,7 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "당사자는 조항 검출 결과를 본다",
-      asUser(owner, `select count(*) from public.findings;`, reportFixture) === "1",
+      asUser(owner, `select count(*) from public.findings where analysis_id = '${ANA}';`, reportFixture) === "1",
     );
     check(
       "**남의 조항 인용은 안 보인다** — 마스킹본이어도 그 커플의 계약 내용이다",
@@ -5685,6 +5687,144 @@ if (!vendorStaff || !adminUser) {
     check(
       "**평가어를 문구에 넣지 않았다**(CLAUDE.md §2.3 — 사실과 편차로만)",
       ["과도", "부당", "불리", "악성", "심각"].every((word) => !viewCode.includes(word)),
+    );
+  }
+}
+
+// ── 만료형 공유 링크 (S7-12 · F-C-20 · §3.7 · §4.2 · 0046) ───────────────────
+// 확인할 것 셋 — (가) **표가 정책 없는 서비스롤 전용으로 남아 있는가**(0005 [61]),
+// (나) **여는 함수가 만료·거둠을 실제로 막는가**(토큰이 곧 권한이라 RLS 로 표현할 수
+// 없다), (다) **열람 수가 살아 있는 링크에서만 오르는가**.
+{
+  const LIVE = "00000000-0000-0000-0000-0000000000a1";
+  const EXPIRED = "00000000-0000-0000-0000-0000000000a2";
+  const REVOKED = "00000000-0000-0000-0000-0000000000a3";
+  const RES = "00000000-0000-0000-0000-0000000000a4";
+
+  const linkFixture = `
+    insert into public.share_links (id, resource_type, resource_id, token, expires_at, revoked_at)
+      values ('${LIVE}',    'report', '${RES}', 'tok-live',    now() + interval '7 days', null),
+             ('${EXPIRED}', 'report', '${RES}', 'tok-expired', now() - interval '1 hour', null),
+             ('${REVOKED}', 'report', '${RES}', 'tok-revoked', now() + interval '7 days', now());
+  `;
+
+  check(
+    "**공유 링크 표에 정책이 없다** — 토큰 대조는 서버에서만 한다 (0005 [61])",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'share_links';`) === "0",
+  );
+  check(
+    "RLS 는 켜져 있다 (정책이 없으므로 아무도 못 읽는다)",
+    sql(`select relrowsecurity from pg_class where relname = 'share_links';`) === "t",
+  );
+  check(
+    "**당사자도 표를 직접 읽지 못한다** — 토큰을 훑어볼 경로를 열지 않는다",
+    asUser(owner, `select count(*) from public.share_links;`, linkFixture) === "0",
+  );
+  check(
+    "비로그인도 못 읽는다",
+    asAnon(`select count(*) from public.share_links;`, linkFixture) === "0",
+  );
+  check(
+    "**표에 직접 쓸 수도 없다** — 발급은 서버가 판정한 뒤에만 한다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `insert into public.share_links (resource_type, resource_id, token, expires_at)
+         values ('report', '${RES}', 'tok-x', now() + interval '1 day');`)),
+  );
+
+  // ── 여는 함수 (0046) ──────────────────────────────────────────────────────
+  check(
+    "여는 함수가 SECURITY DEFINER 다 — 토큰이 곧 권한이라 RLS 로 표현할 수 없다",
+    sql(`select prosecdef from pg_proc where proname = 'share_link_open';`) === "t",
+  );
+  check(
+    "**비로그인이 살아 있는 링크를 연다**",
+    asAnon(
+      `select resource_id from public.share_link_open('tok-live');`,
+      linkFixture,
+    ) === RES,
+  );
+  check(
+    "**만료된 링크도 행은 나오되 만료 시각이 지나 있다** — 판정 문장은 코드가 갖는다",
+    (() => {
+      const value = asAnon(
+        `select (expires_at < now()) from public.share_link_open('tok-expired');`,
+        linkFixture,
+      );
+
+      return value === "t";
+    })(),
+  );
+  check(
+    "거둔 링크는 `revoked_at` 이 채워져 나온다",
+    asAnon(
+      `select (revoked_at is not null) from public.share_link_open('tok-revoked');`,
+      linkFixture,
+    ) === "t",
+  );
+  check(
+    "**없는 토큰은 아무 행도 내지 않는다** — 만료와 구분된다",
+    asAnon(`select count(*) from public.share_link_open('없는토큰');`, linkFixture) === "0",
+  );
+
+  check(
+    "**살아 있는 링크만 열람 수가 오른다**",
+    // psql 은 여러 select 의 출력을 줄로 이어 준다. **마지막 줄**이 궁금한 값이다.
+    sql(`begin;
+         ${linkFixture}
+         select count(*) from public.share_link_open('tok-live');
+         select view_count from public.share_links where id = '${LIVE}';
+         rollback;`)
+      .trim()
+      .split("\n")
+      .at(-1)
+      ?.trim() === "1",
+  );
+  check(
+    "**만료·거둠 요청은 세지 않는다** — 열리지 않은 링크가 열린 것으로 세어지면 안 된다",
+    sql(`begin;
+         ${linkFixture}
+         select count(*) from public.share_link_open('tok-expired');
+         select count(*) from public.share_link_open('tok-revoked');
+         select coalesce(sum(view_count), 0) from public.share_links
+           where id in ('${EXPIRED}', '${REVOKED}');
+         rollback;`)
+      .trim()
+      .split("\n")
+      .at(-1) === "0",
+  );
+
+  // ── 어휘·파라미터 ─────────────────────────────────────────────────────────
+  check(
+    "**어휘 밖의 자원 유형을 막는다** — 오타 하나가 영영 열리지 않는 링크를 만든다",
+    rejectedWith(/share_links_resource_type_vocab|check constraint/, () =>
+      sql(`begin;
+           insert into public.share_links (resource_type, resource_id, token, expires_at)
+             values ('cart', '${RES}', 'tok-bad', now() + interval '1 day');
+           rollback;`)),
+  );
+  check(
+    "공유 기한이 파라미터로 있다 (§7.4)",
+    sql(`select value_json->>'hours' from public.app_settings
+           where key = 'share.link_ttl_hours';`) === "168",
+  );
+  check(
+    "**기한 파라미터도 사용자에게 보이지 않는다** — 정책이 없어 0행으로 온다",
+    asUser(owner, `select count(*) from public.app_settings
+                     where key = 'share.link_ttl_hours';`) === "0",
+  );
+
+  // 코드↔DB 어휘 대조. **사본은 어긋나고 어긋나면 조용하다.**
+  {
+    const shareSrc = readFileSync("lib/core/share/share.ts", "utf8");
+    const types = [...shareSrc.matchAll(/type: "([a-z_]+)"/g)].map((m) => m[1]);
+
+    check(
+      "**코드의 자원 유형과 DB 어휘가 같다**",
+      types.length > 0 &&
+        types.every((type) => sql(`select public.is_share_resource_type('${type}');`) === "t") &&
+        sql(`select public.is_share_resource_type('cart');`) === "f",
+      `code=${types.join("|")}`,
     );
   }
 }

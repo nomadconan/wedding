@@ -4469,30 +4469,39 @@ export type Database = {
       share_links: {
         Row: {
           created_at: string
+          created_by: string | null
           expires_at: string
           id: string
+          last_viewed_at: string | null
           resource_id: string
           resource_type: string
+          revoked_at: string | null
           token: string
           updated_at: string
           view_count: number
         }
         Insert: {
           created_at?: string
+          created_by?: string | null
           expires_at: string
           id?: string
+          last_viewed_at?: string | null
           resource_id: string
           resource_type: string
+          revoked_at?: string | null
           token: string
           updated_at?: string
           view_count?: number
         }
         Update: {
           created_at?: string
+          created_by?: string | null
           expires_at?: string
           id?: string
+          last_viewed_at?: string | null
           resource_id?: string
           resource_type?: string
+          revoked_at?: string | null
           token?: string
           updated_at?: string
           view_count?: number
@@ -5361,6 +5370,7 @@ export type Database = {
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_published_post: { Args: { p_post_id: string }; Returns: boolean }
+      is_share_resource_type: { Args: { p_value: string }; Returns: boolean }
       is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {
@@ -5379,6 +5389,17 @@ export type Database = {
       qna_post_vendor_id: { Args: { p_post_id: string }; Returns: string }
       quote_target_id: { Args: { p_quote_id: string }; Returns: string }
       recount_post_likes: { Args: { p_post_id: string }; Returns: number }
+      share_link_open: {
+        Args: { p_token: string }
+        Returns: {
+          expires_at: string
+          id: string
+          resource_id: string
+          resource_type: string
+          revoked_at: string
+          view_count: number
+        }[]
+      }
       shares_couple_with: { Args: { p_user_id: string }; Returns: boolean }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
