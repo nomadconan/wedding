@@ -153,6 +153,11 @@ export default function LandingPage() {
             <Link href="/search" className="text-foreground">
               조건 검색
             </Link>
+            {/* SEO 콘텐츠 허브(S7-10 · F-C-24). **랜딩이 진입점이다** — 검색으로
+                들어온 사람이 처음 닿는 화면이고, 가이드는 로그인 없이 열린다. */}
+            <Link href="/guides" className="text-foreground">
+              가이드
+            </Link>
             {/* 로그인 여부로 화면을 가르지 않는다 — 누르면 미들웨어가 판단한다. */}
             <Link href="/home" className="text-foreground">
               내 홈
