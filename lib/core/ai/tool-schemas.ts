@@ -116,6 +116,16 @@ const ListCouponsInput = z
   })
   .strict();
 
+/**
+ * 준비 순서 조회 (S7-19 · F-C-37).
+ *
+ * **인자가 없다.** 커플은 세션이 정하고(`ToolContext`) 범위를 좁히는 일은 화면의
+ * 카테고리 필터가 한다 — 모델에게 범위를 고르게 하면 "홀만 보고 순서를 말하는" 답이
+ * 나오는데, **순서의 요점은 카테고리를 가로지르는 것**이다(홀 확정 → 날짜 확정 →
+ * 스드메 예약).
+ */
+const TaskGraphInput = z.object({}).strict();
+
 // =============================================================================
 // 등록표
 // =============================================================================
@@ -265,6 +275,7 @@ export const TOOL_INPUTS: Record<string, ToolInputDefinition> = {
       required: [],
     },
   },
+  get_task_graph: { schema: TaskGraphInput, jsonSchema: EMPTY_INPUT },
 };
 
 export function hasToolSchema(name: string): boolean {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { MetricTile } from "@/components/domain/MetricTile";
+import { NextTaskList } from "@/components/domain/NextTaskList";
 import { formatKrw } from "@/components/domain/PriceDisplay";
 import { isUnknownAmount } from "@/lib/core/pricing/amount";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
@@ -21,8 +22,6 @@ import {
   pendingMetric,
 } from "@/lib/core/schemas/home";
 import { ANALYSIS_STATUS_LABEL } from "@/lib/core/report/pipeline";
-import { READINESS_LABEL } from "@/lib/core/schedule/graph";
-import { TASK_CATEGORY_LABEL, type TaskCategory } from "@/lib/core/schedule/templates";
 import { measured } from "@/lib/core/stats/metric";
 import { latestReport } from "@/lib/reports/loader";
 import { loadNextTasks } from "@/lib/tasks/loader";
@@ -369,9 +368,11 @@ async function HomeSection() {
         )}
       </section>
 
-      {/* ── 5) 다음 할 일 (S7-08 — F-C-04) ───────────────────────────────── */}
+      {/* ── 5) 다음 할 일 (S7-08 — F-C-04 · 표현 C 는 S7-19) ─────────────── */}
       {/* **`/checklist` 와 같은 규칙으로 고른 3건**이다(§6.2). `waiting` 은 넣지 않는다 —
-          먼저 할 일이 있는 태스크를 '다음 할 일' 로 올리면 그 카드가 순서를 뒤집는다. */}
+          먼저 할 일이 있는 태스크를 '다음 할 일' 로 올리면 그 카드가 순서를 뒤집는다.
+          **마크업도 `/checklist` 표현 C 와 한 벌이다**(S7-19 · `NextTaskList`) — S7-08 은
+          고르는 함수만 공유했고 그리는 쪽은 여기에만 있었다. 두 벌이면 한쪽만 고치는 날이 온다. */}
       <section className="space-y-2" data-testid="home-next-tasks">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-foreground">다음 할 일</h2>
@@ -380,35 +381,18 @@ async function HomeSection() {
           </Link>
         </div>
 
-        {nextTaskList.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            아직 만든 일정이 없어요.{" "}
-            <Link href="/checklist" className="font-medium text-brand-600">
-              예식일 기준으로 만들기
-            </Link>
-          </p>
-        ) : (
-          <ul className="space-y-2" data-testid="home-next-task-list">
-            {nextTaskList.map((item) => (
-              <li key={item.id}>
-                <Link
-                  href="/checklist"
-                  className="block rounded-lg border border-border p-4"
-                  data-testid="home-next-task"
-                >
-                  <p className="text-sm font-medium text-foreground">{item.title}</p>
-                  <p className="text-caption text-muted-foreground">
-                    {TASK_CATEGORY_LABEL[item.category as TaskCategory] ?? item.category}
-                    {" · "}
-                    {item.dueDate === null ? "기한 미정" : item.dueDate}
-                    {" · "}
-                    {READINESS_LABEL[item.readiness]}
-                  </p>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <NextTaskList
+          tasks={nextTaskList}
+          testId="home-next-task-list"
+          emptyHint={
+            <>
+              아직 만든 일정이 없어요.{" "}
+              <Link href="/checklist" className="font-medium text-brand-600">
+                예식일 기준으로 만들기
+              </Link>
+            </>
+          }
+        />
       </section>
 
       {/* ── 6) 최근 검토 리포트 (S7-03 — F-C-07) ─────────────────────────── */}

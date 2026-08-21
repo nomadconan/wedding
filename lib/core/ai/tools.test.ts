@@ -29,9 +29,11 @@ describe("툴 목록 — §5.6 표와 코드가 같은 것을 말한다", () => 
     expect(new Set(TOOL_SPECS.map((spec) => spec.name)).size).toBe(16);
   });
 
-  it("가용 11 · 대기 5 다 (§5.6 표 기준)", () => {
-    expect(TOOL_SPECS.filter((spec) => spec.status === "available")).toHaveLength(11);
-    expect(TOOL_SPECS.filter((spec) => spec.status === "pending")).toHaveLength(5);
+  // S7-19 가 `get_task_graph` 를 열어 11/5 → **12/4** 가 됐다. 07 §5.6 표도 함께 고쳤다
+  // (FIX-20 이 남긴 교훈 — 표와 요약이 어긋나면 어느 쪽이 진실인지 알 수 없다).
+  it("가용 12 · 대기 4 다 (§5.6 표 기준)", () => {
+    expect(TOOL_SPECS.filter((spec) => spec.status === "available")).toHaveLength(12);
+    expect(TOOL_SPECS.filter((spec) => spec.status === "pending")).toHaveLength(4);
   });
 
   it("대기 툴에는 담당 태스크가 적혀 있다 — 언제 열리는지 모르는 대기는 방치다", () => {
@@ -70,7 +72,7 @@ describe("등록 조건 — 없는 툴을 등록하지 않는다", () => {
   it("스키마와 핸들러가 모두 있어야 등록된다", () => {
     const registered = registrableTools({ hasSchema: always, hasHandler: always });
 
-    expect(registered).toHaveLength(11);
+    expect(registered).toHaveLength(12);
     expect(registered.every((spec) => spec.status === "available")).toBe(true);
   });
 

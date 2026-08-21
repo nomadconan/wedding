@@ -10,36 +10,53 @@ import {
   READINESS_LABEL,
   WAITING_NOTE,
   type AnnotatedTask,
+  type CategoryProgress,
+  type TaskEdge,
+  type TimelineBucket,
 } from "@/lib/core/schedule/graph";
 import { TASK_CATEGORIES, TASK_CATEGORY_LABEL, type TaskCategory } from "@/lib/core/schedule/templates";
+import type { ScheduleView } from "@/lib/core/schedule/view";
 import { TASK_TITLE_MAX_LENGTH } from "@/lib/core/schemas/task";
 import { cn } from "@/lib/utils";
+
+import { ScheduleViews } from "./ScheduleViews";
 
 /**
  * /checklist — 일정·체크리스트 (F-C-04 · 명세서 §6.2)
  *
- * ── 이 화면이 하는 일과 하지 않는 일 ────────────────────────────────────────
- * **한다** — 목록·추가·기한 변경·완료·담당자·카테고리 필터.
- * **하지 않는다** — 표현 넷(역산 타임라인 · 진행 게이지 · 다음 할 일 카드 · 의존 관계
- * 뷰)의 **토글**과 선행 관계 편집. 그것은 **S7-19**(F-C-37)다. 이 태스크가 표현을
- * 늘리면 "S7-08 완료" 가 두 가지를 뜻하게 된다.
+ * ── 화면이 둘로 나뉜다 — 보는 곳과 고치는 곳 ────────────────────────────────
+ * 위는 **표현 넷**(S7-19 · F-C-37 · `ScheduleViews`)이고 아래는 **목록**(S7-08)이다.
+ * 표현은 순서를 보이는 일이고 목록은 고치는 일이라 섞지 않았다 — 네 표현마다 완료
+ * 버튼과 날짜 입력을 다시 그리면 **같은 편집 수단이 다섯 벌**이 되고 그 중 하나만
+ * 고치는 날이 온다(§6.2 가 컴포넌트 공유를 요구한 것과 같은 이유다).
+ *
+ * **카테고리 필터는 하나다.** 위아래가 같은 필터를 쓴다 — 두 곳이 다른 범위를
+ * 보여주면 사용자는 어느 쪽이 맞는지 묻게 된다.
  *
  * ── 등록·기한 변경은 캘린더 형식이다 ────────────────────────────────────────
  * §6.2 가 정한 전제다. 날짜를 고르는 일은 달력이 가장 익숙하며, **바꾸는 것은
- * 표현이지 입력이 아니다** — 그래서 입력은 `<input type="date">` 하나로 두고 표현을
- * 다양하게 만드는 일은 S7-19 에 남긴다.
+ * 표현이지 입력이 아니다** — 그래서 입력은 `<input type="date">` 하나이고 표현을
+ * 다양하게 만드는 일은 위쪽 넷이 한다.
  *
  * ── `waiting` 을 회색으로 칠하지 않는다 ─────────────────────────────────────
- * 회색 비활성은 '못 한다' 로 읽히는데 **잠긴 것이 아니다**(§3.2 · S7-18). 순서를
- * 알려 주는 배지로만 쓰고 완료 버튼은 그대로 살아 있다 — 화면이 잠그지 않기로 한
- * 결정을 시각적으로 뒤집으면 안 된다.
+ * 회색 비활성은 '못 한다' 로 읽히는데 **잠긴 것이 아니다**(§3.2 · S7-18 · D-71).
+ * 순서를 알려 주는 배지로만 쓰고 완료 버튼은 그대로 살아 있다 — 화면이 잠그지 않기로
+ * 한 결정을 시각적으로 뒤집으면 안 된다. 표현 넷도 같은 규칙을 쓴다(`readinessBadge`).
  */
 export function ChecklistView({
   initialTasks,
+  edges,
+  timeline,
+  progress,
+  enabledViews,
   hasWeddingDate,
   generated,
 }: {
   initialTasks: AnnotatedTask[];
+  edges: TaskEdge[];
+  timeline: TimelineBucket[];
+  progress: CategoryProgress[];
+  enabledViews: ScheduleView[];
   hasWeddingDate: boolean;
   /** 이미 자동 생성한 적이 있는가. 버튼 문구가 달라진다. */
   generated: boolean;
@@ -129,6 +146,24 @@ export function ChecklistView({
         <p role="status" className="text-sm text-muted-foreground" data-testid="checklist-notice">
           {notice}
         </p>
+      ) : null}
+
+      {/* ── 보는 곳 — 표현 넷 (S7-19 · F-C-37) ─────────────────────────────
+          넷이 **같은 응답**을 쓴다(§4.2). 전환에 서버 왕복이 없다. */}
+      {initialTasks.length > 0 ? (
+        <ScheduleViews
+          tasks={initialTasks}
+          edges={edges}
+          timeline={timeline}
+          progress={progress}
+          enabledViews={enabledViews}
+          categoryFilter={category}
+        />
+      ) : null}
+
+      {/* ── 고치는 곳 — 목록 (S7-08) ──────────────────────────────────────── */}
+      {initialTasks.length > 0 ? (
+        <h2 className="pt-2 text-sm font-semibold text-foreground">목록에서 고치기</h2>
       ) : null}
 
       {tasks.length === 0 ? (
