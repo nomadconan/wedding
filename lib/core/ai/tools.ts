@@ -163,11 +163,14 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
   },
   {
     name: "get_task_graph",
-    summary: "준비 순서(선행 관계 · ready·waiting)를 돌려준다.",
+    summary:
+      "준비 순서를 돌려준다 — 지금 할 수 있는 일과 먼저 끝내야 하는 일. '무엇부터 해야 하나요' 에 답하는 근거다.",
     mode: "read",
-    status: "pending",
-    filledBy: "S7-19",
-    backing: "—",
+    // **S7-19 가 열었다** — 화면·API 가 서면서 상태·스키마·핸들러 셋이 다 찼다(D-46).
+    // `filledBy` 는 **아직 안 열린 툴의 담당 태스크**를 적는 칸이라 열리는 순간 비운다.
+    status: "available",
+    filledBy: null,
+    backing: "GET /api/tasks/graph (loadChecklist)",
     requiresConfirmation: false,
   },
   {

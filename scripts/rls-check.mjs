@@ -5191,5 +5191,129 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 준비 순서 뷰 (S7-19 · F-C-37 · §6.2 · O-16) ──────────────────────────────
+// S7-19 는 **표현과 편집 API** 를 얹었다. DB 층에서 확인할 것은 둘이다 —
+// (가) 사용자가 손으로 잇는 간선도 **트리거를 그대로 지난다**(라우트가 우회로가 아니다)
+// (나) 표현 스위치가 **행으로 존재한다**(O-16 이 코드를 고치지 않고 끌 수 있어야 한다).
+{
+  const TA = "00000000-0000-0000-0000-0000000000e1";
+  const TB = "00000000-0000-0000-0000-0000000000e2";
+  const TC = "00000000-0000-0000-0000-0000000000e3";
+
+  const fixture = `
+    insert into public.tasks (id, couple_id, category, title, status)
+      values ('${TA}', '${coupleId}', 'hall', '웨딩홀 계약', 'todo'),
+             ('${TB}', '${coupleId}', 'sdm', '스드메 계약', 'todo'),
+             ('${TC}', '${coupleId}', 'etc', '청첩장 주문', 'todo');
+  `;
+
+  check(
+    "손으로 이은 간선에 작성자가 남는다 (누가 순서를 정했나 · D-23)",
+    asUser(
+      owner,
+      `with i as (insert into public.task_dependencies (task_id, depends_on_task_id, created_by)
+                 values ('${TB}', '${TA}', '${owner}') returning created_by)
+       select count(*) from i where created_by = '${owner}';`,
+      fixture,
+    ) === "1",
+  );
+  check(
+    "**배우자가 지운 순서가 나에게도 사라진다** — 그래프는 커플 것이다 (D-19)",
+    asUser(
+      partner,
+      `with d as (delete from public.task_dependencies where task_id = '${TB}' returning task_id)
+       select count(*) from d;`,
+      `${fixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id, created_by)
+         values ('${TB}', '${TA}', '${owner}');`,
+    ) === "1",
+  );
+  check(
+    "**남이 우리 순서를 지울 수 없다**",
+    asUser(
+      outsider,
+      `with d as (delete from public.task_dependencies where task_id = '${TB}' returning task_id)
+       select count(*) from d;`,
+      `${fixture}
+       insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+    ) === "0",
+  );
+  check(
+    "**없는 간선을 지워도 오류가 아니다** — 결과가 요청한 대로다 (라우트가 성공으로 답한다)",
+    asUser(
+      owner,
+      `with d as (delete from public.task_dependencies
+                   where task_id = '${TB}' and depends_on_task_id = '${TC}' returning task_id)
+       select count(*) from d;`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**같은 간선을 다시 넣으면 PK 가 막는다** — 라우트는 그 23505 를 성공으로 옮긴다",
+    rejectedWith(/task_dependencies_pkey|duplicate key/, () =>
+      asUser(
+        owner,
+        `insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+        `${fixture}
+         insert into public.task_dependencies (task_id, depends_on_task_id) values ('${TB}', '${TA}');`,
+      )),
+  );
+
+  // **거절 사유가 API 까지 간다**(0044). PostgREST 는 `constraint` 이름을 응답에 싣지
+  // 않아서 라우트가 순환·타 커플·깊이를 구분하지 못하고 500 으로 답했다 — 흐름 점검이
+  // 잡았고 트리거가 `hint` 에도 사유를 싣도록 갈아 끼웠다. 그 사실을 여기서 붙잡아
+  // 둔다: 함수를 다시 손보는 날 `hint` 가 빠지면 화면이 조용히 이유를 잃는다.
+  check(
+    "**거절 사유가 hint 로도 나간다** — PostgREST 는 constraint 를 싣지 않는다",
+    ["task_cycle", "task_foreign_couple", "task_depth_exceeded", "task_depth_unconfigured"].every(
+      (name) =>
+        sql(`select pg_get_functiondef('public.task_dependency_guard()'::regprocedure);`).includes(
+          `hint = '${name}'`,
+        ),
+    ),
+  );
+
+  // ── 표현 스위치 (0043 · O-16) ──────────────────────────────────────────────
+  check(
+    "표현 스위치 행이 있다 (schedule.views)",
+    sql(`select count(*) from public.feature_flags where key = 'schedule.views';`) === "1",
+  );
+  check(
+    "**표현 넷이 다 켜져 있다** — 판정은 S8-01 이후다(O-16). 지금 끄면 판정을 앞지른 것이다",
+    sql(`select (rollout_json->>'timeline')::boolean and (rollout_json->>'progress')::boolean
+                and (rollout_json->>'next')::boolean and (rollout_json->>'graph')::boolean
+           from public.feature_flags where key = 'schedule.views';`) === "t",
+  );
+  check(
+    "**무엇을 근거로 끄는지가 행에 적혀 있다** — 다음 사람이 판정 계획을 읽는다",
+    sql(`select rollout_json->>'decided_by' from public.feature_flags
+           where key = 'schedule.views';`) === "O-16",
+  );
+  check(
+    "표현 스위치도 사용자에게 보이지 않는다 (미공개 기능의 존재를 노출하지 않는다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `select count(*) from public.feature_flags;`)),
+  );
+
+  // 코드↔DB 대조. **사본은 어긋나고 어긋나면 조용하다**(검출 룰 S7-01 과 같은 구조).
+  {
+    const viewSrc = readFileSync("lib/core/schedule/view.ts", "utf8");
+    const codes = (viewSrc.match(/export const SCHEDULE_VIEWS = \[([^\]]*)\]/) ?? ["", ""])[1]
+      .split(",")
+      .map((v) => v.trim().replace(/"/g, ""))
+      .filter((v) => v !== "");
+
+    check(
+      "**코드의 표현 목록과 플래그의 키가 같다** (하나만 늘면 스위치 없는 표현이 생긴다)",
+      sql(`select string_agg(k, ',' order by k) from (
+             select jsonb_object_keys(rollout_json) as k from public.feature_flags
+              where key = 'schedule.views'
+           ) t where k in (${codes.map((c) => `'${c}'`).join(", ")});`) ===
+        [...codes].sort().join(","),
+      `code=${codes.join("|")}`,
+    );
+  }
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

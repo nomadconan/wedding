@@ -28,7 +28,10 @@ import { priceProductsForDate } from "@/lib/explore/customer-price";
 import { loadMarket } from "@/lib/planners/loader";
 import { findPriceIndex } from "@/lib/pricing/price-index-query";
 import { loadPenaltyRuleSet } from "@/lib/pricing/penalty-rule-set";
+import { WAITING_NOTE } from "@/lib/core/schedule/graph";
+import { dependencyLevels } from "@/lib/core/schedule/view";
 import { bodyToParams, conditionSearch, toSearchInput } from "@/lib/search/query";
+import { loadChecklist } from "@/lib/tasks/loader";
 
 import type { ToolContext } from "./context";
 import { paymentSplitSetting, plannerRateBpFor } from "./reference";
@@ -574,6 +577,68 @@ const listCoupons: ToolHandler = async (args, ctx) => {
 // 등록표
 // =============================================================================
 
+// =============================================================================
+// 준비 순서 (S7-19 · F-C-37)
+// =============================================================================
+
+/**
+ * **화면과 같은 조회를 부른다** — `loadChecklist` 하나다(`GET /api/tasks/graph` 도
+ * 같은 함수를 부른다). 툴이 자기 조회를 가지면 대화가 말하는 순서와 화면이 그리는
+ * 순서가 갈리고, 그 차이는 사용자가 재현할 수 없다(§5.6 · `search_vendors` 와 같은 규칙).
+ *
+ * **모델에게 주는 것은 제목·카테고리·기한·판정뿐이다.** 태스크 id·간선 id 를 넣지
+ * 않는다 — 후처리가 대조할 값이 아니고 모델이 말할 이유도 없다(§5.3). 대신
+ * `blockedByTitles` 로 **무엇을 먼저 해야 하는지**를 이름으로 준다: "이걸 먼저 해야
+ * 저게 됩니다" 가 이 툴이 답해야 하는 문장이다(§2.1 F-C-37).
+ *
+ * **모델이 세지 않는다** — 남은 건수·단계 수는 여기서 계산해 넘긴다(§5.6 "AI 는
+ * 산술을 하지 않는다").
+ */
+const getTaskGraph: ToolHandler = async (_args, ctx) => {
+  if (ctx.coupleId === null) return { result: unavailableResult("no_couple") };
+
+  const view = await loadChecklist(ctx.supabase, { coupleId: ctx.coupleId, today: ctx.asOf });
+
+  if (view.tasks.length === 0) {
+    // **아직 만들지 않은 것**이지 순서가 없는 것이 아니다 — 자동 생성은 사용자가 누른다(D-73).
+    return { result: emptyResult("no_match", { reason: "no_tasks_yet" }) };
+  }
+
+  const titleById = new Map(view.tasks.map((task) => [task.id, task.title]));
+  const layout = dependencyLevels(view.tasks, view.edges);
+
+  const describe = (task: (typeof view.tasks)[number]) => ({
+    title: task.title,
+    category: task.category,
+    dueDate: task.dueDate,
+    readiness: task.readiness,
+    blockedByTitles: task.blockedBy.map((id) => titleById.get(id) ?? "목록에 없는 일"),
+  });
+
+  return {
+    result: okResult({
+      asOf: ctx.asOf,
+      // 세는 일은 툴이 한다. 모델은 이 값을 옮겨 적을 뿐이다.
+      total: view.tasks.length,
+      readyCount: view.tasks.filter((task) => task.readiness === "ready").length,
+      waitingCount: view.tasks.filter((task) => task.readiness === "waiting").length,
+      doneCount: view.tasks.filter((task) => task.readiness === "done").length,
+      next: view.next.map(describe),
+      // 단계는 **위상 순서 그대로**다. 화면(D 의존 관계 뷰)과 같은 계산을 쓴다.
+      levels: layout.levels.map((level) => ({
+        depth: level.depth,
+        tasks: level.tasks.map(describe),
+      })),
+      // **순환을 숨기지 않는다.** 단계를 정할 수 없었다는 사실을 그대로 넘긴다.
+      unorderedCount: layout.cycle.length,
+      progress: view.progress,
+      // `waiting` 을 '못 한다' 로 말하지 않게 문구를 함께 넘긴다(§3.2 · D-71).
+      waitingNote: WAITING_NOTE,
+    }),
+    count: view.tasks.length,
+  };
+};
+
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   get_couple_context: getCoupleContext,
   search_price_index: searchPriceIndex,
@@ -586,6 +651,7 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   explain_planner_fee: explainPlannerFee,
   search_planners: searchPlanners,
   list_coupons: listCoupons,
+  get_task_graph: getTaskGraph,
 };
 
 export function hasToolHandler(name: string): boolean {

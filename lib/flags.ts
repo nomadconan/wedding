@@ -57,6 +57,42 @@ export async function isFeatureEnabled(key: string): Promise<boolean> {
 }
 
 /**
+ * 플래그의 `rollout_json` (S7-19).
+ *
+ * **켬/끔이 아니라 '어느 부분을 켜는가' 를 담는 자리다**(§3.8). 준비 순서 뷰는 표현이
+ * 넷이고 O-16 이 그 중 일부를 끌 수 있으므로(§7.5 — "못 주는 표현은 삭제가 아니라
+ * `feature_flags` 로 끈다") 키 하나에 넷을 담는다. 키를 넷으로 쪼개면 **한 기능의
+ * 개폐가 네 행에 흩어지고** 그 중 하나만 고치는 날이 온다(D-67 이 개방 조건을
+ * `rollout_json` 에 적어 둔 것과 같은 자리다).
+ *
+ * `isFeatureEnabled` 와 같은 클라이언트를 쓴다 — **캐시를 끈다**(FIX-22).
+ * **행이 없으면 `null`** 이며, 읽는 쪽이 그것을 '판정 전' 으로 볼지 '꺼짐' 으로 볼지
+ * 정한다. 커뮤니티는 꺼짐이었고 이쪽은 판정 전이다 — 두 상황이 다르므로 이 함수가
+ * 대신 정하지 않는다.
+ */
+export async function featureRollout(key: string): Promise<Record<string, unknown> | null> {
+  try {
+    const { data } = await createFlagClient()
+      .from("feature_flags")
+      .select("rollout_json")
+      .eq("key", key)
+      .maybeSingle();
+
+    return (data as { rollout_json: Record<string, unknown> } | null)?.rollout_json ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 준비 순서 뷰의 표현 스위치 (F-C-37 · O-16).
+ *
+ * **지금은 넷 다 켜져 있다.** 판정은 지표가 붙는 S8-01 이후이며(O-16) 그때 못 주는
+ * 표현을 **행 하나로** 끈다 — 코드를 고치지 않는다.
+ */
+export const SCHEDULE_VIEWS_FLAG = "schedule.views";
+
+/**
  * 커뮤니티 공개 플래그.
  *
  * **T-00f 가 "모더레이션 없이 커뮤니티를 열 수 없다" 고 정했다.** 신고 버튼은
