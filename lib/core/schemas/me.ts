@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { notYet, type MetricValue } from "../stats/metric";
 
+import type { PendingSection } from "./home";
+
 /**
  * 마이페이지 · 개인정보 (S3-09 · 명세서 §2.1 F-C-23, §4.2, §6.2 `/me`, §7.3)
  *
@@ -221,27 +223,19 @@ export const UNLINK_KEEPS_NOTICE =
 
 /** 자리는 두되 숫자를 지어내지 않는다(S2-08·S3-11 과 같은 원칙). */
 export const ME_PENDING_SECTIONS = [
-  {
-    key: "membership",
-    label: "멤버십·결제수단",
-    reason: "멤버십 구독을 아직 만들지 않았습니다.",
-    filledBy: "S7-11",
-  },
-  {
-    key: "purge_history",
-    label: "문서 파기 이력",
-    reason: "계약서 업로드·파기를 아직 만들지 않았습니다.",
-    filledBy: "S7-03",
-  },
+  // '멤버십·결제수단' 은 **S7-11 이** 채웠고(`/membership`), '문서 파기 이력' 은
+  // **S7-03 이** 채웠다. 둘 다 목록에서 걷었다 — 만들어 둔 기능을 화면이
+  // "아직 없다" 고 말하면 **없는 것과 같아진다**(FIX-29).
   {
     key: "notifications",
     label: "알림 수신 설정",
     reason: "알림센터를 아직 만들지 않았습니다.",
     filledBy: "S4-13",
   },
-] as const satisfies readonly { key: string; label: string; reason: string; filledBy: string }[];
+] as const satisfies readonly PendingSection[];
 
-export type MePendingKey = (typeof ME_PENDING_SECTIONS)[number]["key"];
+/** 홈과 같은 이유로 좁히지 않는다 — 자리는 담당 태스크가 끝날 때마다 빠진다. */
+export type MePendingKey = PendingSection["key"];
 
 export function mePendingMetric(key: MePendingKey): MetricValue<number> {
   const section = ME_PENDING_SECTIONS.find((item) => item.key === key);

@@ -24,7 +24,7 @@ describe("턴 상한 — 무료 사용자 일일 제한", () => {
   });
 
   it("멤버십은 턴 무제한이다 — 0이 아니라 null 이다", () => {
-    expect(turnAllowance({ usedToday: 999, freeDailyTurns: 10, membership: "member" })).toEqual({
+    expect(turnAllowance({ usedToday: 999, freeDailyTurns: 10, membership: "premium" })).toEqual({
       ok: true,
       remaining: null,
     });
@@ -61,7 +61,7 @@ describe("대화 게이트 — 토큰을 먼저 본다", () => {
       sessionTokens: 60_000,
       freeDailyTurns: 10,
       sessionTokenCap: 50_000,
-      membership: "member",
+      membership: "premium",
     });
 
     expect(gate.ok).toBe(false);
@@ -86,7 +86,7 @@ describe("대화 게이트 — 토큰을 먼저 본다", () => {
       sessionTokens: 0,
       freeDailyTurns: 10,
       sessionTokenCap: null,
-      membership: "member",
+      membership: "premium",
     });
 
     expect(gate.ok).toBe(false);

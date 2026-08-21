@@ -11,7 +11,10 @@
  * 누구에게나 걸린다 — 비용 사고는 한 세션에서 난다(§5.6).
  */
 
-export const MEMBERSHIP_TIERS = ["free", "member"] as const;
+// **어휘는 DB 가 진실이다**(`membership_plan` enum = free | premium · S7-11).
+// S7-20 이 `member` 로 적었던 것을 그쪽으로 맞췄다 — 같은 것에 이름이 둘이면
+// 경계마다 옮겨야 하고 옮기는 자리가 곧 어긋나는 자리다.
+export const MEMBERSHIP_TIERS = ["free", "premium"] as const;
 export type MembershipTier = (typeof MEMBERSHIP_TIERS)[number];
 
 export const TURN_BLOCK_REASONS = ["daily_limit", "unconfigured"] as const;
@@ -41,7 +44,7 @@ export function turnAllowance(input: {
 }): TurnVerdict {
   // 멤버십은 턴 무제한이다(§5.6). 설정값을 보지 않으므로 값이 없어도 막지 않는다 —
   // 막을 이유가 그쪽에는 없다(비용 방어는 아래 토큰 상한이 진다).
-  if (input.membership === "member") return { ok: true, remaining: null };
+  if (input.membership === "premium") return { ok: true, remaining: null };
 
   if (input.freeDailyTurns === null || !Number.isInteger(input.freeDailyTurns)) {
     return { ok: false, reason: "unconfigured", notice: TURN_BLOCK_NOTICE.unconfigured };

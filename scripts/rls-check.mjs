@@ -5982,5 +5982,157 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ── 멤버십 구독 (S7-11 · F-C-19 · §3.1 · 0048) ──────────────────────────────
+// 확인할 것 넷 — (가) **남의 등급을 볼 수 없는가**, (나) **등급을 스스로 올릴 수
+// 없는가**(여기가 뚫리면 결제 없이 AI 턴 상한이 풀린다 · §5.6), (다) **한 사람에
+// 구독이 하나인가**, (라) **결제 이력을 고칠 수 없는가**.
+//
+// **전체 개수를 세지 않는다.** 픽스처 id 로 좁힌다 — 흐름 점검이 남긴 행이 개수를
+// 흔들면 시험이 사실과 무관하게 깨진다(S7-04·S7-12 에서 겪었다).
+{
+  const MB = "00000000-0000-0000-0000-0000000000d1";
+  const MB_OTHER = "00000000-0000-0000-0000-0000000000d2";
+  const PAY = "00000000-0000-0000-0000-0000000000d3";
+
+  // 0048 이 사용자당 유니크를 걸었으므로 **있던 행을 치운 뒤** 픽스처를 심는다.
+  const mbFixture = `
+    delete from public.memberships where user_id in ('${owner}', '${outsider}');
+    insert into public.memberships (id, user_id, plan, status, started_at, expires_at, source)
+      values ('${MB}', '${owner}', 'premium', 'active', now() - interval '1 day', now() + interval '29 days', 'stub');
+    insert into public.memberships (id, user_id, plan, status, started_at, expires_at, source)
+      values ('${MB_OTHER}', '${outsider}', 'premium', 'active', now() - interval '1 day', now() + interval '29 days', 'stub');
+    insert into public.subscription_payments (id, membership_id, amount, billing_cycle, status)
+      values ('${PAY}', '${MB}', 9900, 'monthly', 'paid');
+  `;
+
+  // `sql()` 은 setup 인자를 받지 않는다 — **픽스처를 같은 트랜잭션에 함께 넣어야**
+  // CHECK 위반을 볼 수 있다. 안 그러면 대상 행이 없어 0행 갱신이 되고, 그러면
+  // "거절되지 않았다" 가 아니라 **아무 일도 안 일어난 것**이 통과로 둔갑한다.
+  const withFixture = (body) => `begin;\n${mbFixture}\n${body}\nrollback;`;
+  check(
+    "본인 구독은 본인이 본다",
+    asUser(owner, `select count(*) from public.memberships where id = '${MB}';`, mbFixture) === "1",
+  );
+  check(
+    "**남의 구독은 보이지 않는다** — 등급은 남에게 답할 값이 아니다",
+    asUser(owner, `select count(*) from public.memberships where id = '${MB_OTHER}';`, mbFixture) === "0",
+  );
+  check(
+    "비로그인은 구독을 보지 못한다",
+    asAnon(`select count(*) from public.memberships;`, mbFixture) === "0",
+  );
+
+  // **여기가 이 태스크에서 가장 위험한 자리다.** UPDATE 정책이 없으므로 0행이 되고
+  // 오류가 나지 않는다 — 그래서 "바뀌었는가" 를 값으로 확인한다.
+  check(
+    "**등급을 스스로 올릴 수 없다** — 뚫리면 결제 없이 AI 턴 상한이 풀린다(§5.6)",
+    asUser(
+      owner,
+      `update public.memberships set expires_at = now() + interval '999 days' where id = '${MB}';
+       select expires_at < now() + interval '30 days' from public.memberships where id = '${MB}';`,
+      mbFixture,
+    ) === "t",
+  );
+  check(
+    "**해지도 스스로 적지 못한다** — 상태 전이는 서버가 정한다",
+    asUser(
+      owner,
+      `update public.memberships set status = 'canceled' where id = '${MB}';
+       select status from public.memberships where id = '${MB}';`,
+      mbFixture,
+    ) === "active",
+  );
+  check(
+    "**남의 구독을 지우지 못한다**",
+    asUser(
+      owner,
+      `with d as (delete from public.memberships where id = '${MB_OTHER}' returning id)
+       select count(*) from d;`,
+      mbFixture,
+    ) === "0",
+  );
+
+  check(
+    "**한 사람에 구독은 하나다** — 재시도·웹훅 재전송이 행을 늘리면 등급이 갈린다",
+    rejectedWith(/uq_memberships_user|duplicate key/, () =>
+      sql(withFixture(`insert into public.memberships (user_id, plan, status, started_at)
+           values ('${owner}', 'premium', 'active', now());`))),
+  );
+  check(
+    "**어휘 밖 상태를 넣지 못한다** — `cancelled` 오타 하나가 활성으로 읽힌다",
+    rejectedWith(/memberships_status_vocab|check constraint/, () =>
+      sql(withFixture(`update public.memberships set status = 'cancelled' where id = '${MB}';`))),
+  );
+  check(
+    "**유료 구독에는 시작 시각이 있다**",
+    rejectedWith(/memberships_premium_started_chk|check constraint/, () =>
+      sql(withFixture(`update public.memberships set started_at = null where id = '${MB}';`))),
+  );
+
+  check(
+    "본인 결제 이력은 본인이 본다",
+    asUser(owner, `select count(*) from public.subscription_payments where id = '${PAY}';`, mbFixture) === "1",
+  );
+  check(
+    "**남의 결제 이력은 보이지 않는다**",
+    asUser(outsider, `select count(*) from public.subscription_payments where id = '${PAY}';`, mbFixture) === "0",
+  );
+  check(
+    "**결제 이력을 고칠 수 없다**(0048 이 UPDATE 를 회수했다) — 고치면 얼마를 언제 받았는지 답할 수 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.subscription_payments set amount = 0 where id = '${PAY}';`, mbFixture)),
+  );
+  // INSERT 는 정책이 없으면 **조용히 0행이 아니라 오류**다 — 그래서 여기는
+  // `rejectedWith` 로 본다(UPDATE 와 다르다).
+  check(
+    "**결제 이력을 스스로 쓰지 못한다** — 받지 않은 돈이 장부에 남는다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        outsider,
+        `insert into public.subscription_payments (membership_id, amount, billing_cycle, status)
+           values ('${MB_OTHER}', 1, 'monthly', 'paid');`,
+        mbFixture,
+      )),
+  );
+
+  // 파라미터 자리. **가격은 값이 비어 있어야 한다**(O-17).
+  check(
+    "**멤버십 가격은 값이 비어 있다** — 정해진 적이 없다(O-17). 0으로도 채우지 않는다",
+    sql(`select value_json->>'value' is null from public.app_settings where key = 'membership.monthly_price';`) === "t",
+  );
+  check(
+    "구독 주기는 값이 있다 — 없으면 만료 시각을 만들 수 없어 기능이 서지 않는다",
+    sql(`select (value_json->>'value')::int > 0 from public.app_settings where key = 'membership.period_days';`) === "t",
+  );
+
+  // 코드↔DB 어휘 대조.
+  {
+    const membershipSrc = readFileSync("lib/core/membership/membership.ts", "utf8");
+    const statuses = [...membershipSrc.matchAll(/MEMBERSHIP_STATUSES = \[([^\]]+)\]/g)]
+      .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
+
+    check(
+      "**코드의 상태 어휘와 DB 어휘가 같다**",
+      statuses.length === 3 &&
+        statuses.every((status) => sql(`select public.is_membership_status('${status}');`) === "t") &&
+        sql(`select public.is_membership_status('cancelled');`) === "f",
+      `code=${statuses.join("|")}`,
+    );
+    check(
+      "**등급 판정 컬럼을 만들지 않았다** — 등급은 계산값이다",
+      sql(`select count(*) from information_schema.columns
+            where table_name = 'memberships' and column_name = 'effective_plan';`) === "0",
+    );
+    check(
+      "**AI 턴 상한이 같은 어휘를 쓴다**(S7-20 의 member 를 premium 으로 맞췄다)",
+      readFileSync("lib/core/ai/limits.ts", "utf8").includes('MEMBERSHIP_TIERS = ["free", "premium"]'),
+    );
+    check(
+      "**플래너가 등급을 지어내지 않는다** — 저장값이 아니라 계산값을 본다",
+      readFileSync("app/api/ai/planner/route.ts", "utf8").includes("loadMembership"),
+    );
+  }
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

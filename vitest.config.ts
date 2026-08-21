@@ -45,6 +45,9 @@ export default defineConfig({
       // 나가고, 그 사고는 화면에 아무 흔적도 남기지 않는다. 소스를 글자로 읽는
       // 검사라 서버 API 를 끌어오지 않는다(`lib/core/no-framework-imports` 와 같은 방식).
       "lib/ai/**/*.test.ts",
+      // S7-11. 구독 어댑터도 같은 이유다 — 깨지면 **받지 않은 돈으로 멤버십이 열리고**
+      // 그 등급이 AI 턴 상한을 푼다(§5.6). 프로덕션에서 스텁을 거부하는지도 여기서 본다.
+      "lib/membership/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {

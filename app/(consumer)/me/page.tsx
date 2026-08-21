@@ -15,8 +15,14 @@ import {
   mePendingMetric,
   type DeletionStatus,
 } from "@/lib/core/schemas/me";
+import {
+  MEMBERSHIP_PLAN_LABEL,
+  MEMBERSHIP_REASON_NOTE,
+  daysLeft,
+} from "@/lib/core/membership/membership";
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
 import { findMyCouple } from "@/lib/couple/membership";
+import { loadMembership } from "@/lib/membership/actions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -62,6 +68,10 @@ async function MeSection() {
     .maybeSingle();
 
   const membership = await findMyCouple(user.id);
+
+  // 멤버십 등급. **저장된 값을 그대로 적지 않는다** — 만료 여부는 계산이다(S7-11).
+  const now = new Date();
+  const subscription = (await loadMembership(supabase, { now })).state;
 
   const { count: memberCount } = membership
     ? await admin
@@ -131,6 +141,37 @@ async function MeSection() {
             : null
         }
       />
+
+      <Separator />
+
+      {/* ── 멤버십 ───────────────────────────────────────────────────────
+          **여기가 `/membership` 의 진입점이다.** 하단 탭은 다섯 칸이 찼고(D-55)
+          결제·구독은 자주 오는 화면이 아니라 계정 설정에서 찾는 화면이다.
+          이 줄은 **지금 등급을 계산해서** 적는다 — 만료된 유료 구독을 '멤버십' 이라고
+          적으면 화면이 거짓말을 한다. */}
+      <section className="space-y-2" data-testid="me-membership">
+        <h2 className="text-base font-semibold text-foreground">멤버십</h2>
+        <Card>
+          <CardContent className="space-y-1 pt-5">
+            <p className="text-sm font-medium text-foreground">
+              {MEMBERSHIP_PLAN_LABEL[subscription.plan]}
+              {subscription.cancelPending ? " · 해지 예약" : ""}
+            </p>
+            <p className="text-caption text-muted-foreground">
+              {MEMBERSHIP_REASON_NOTE[subscription.reason]}
+            </p>
+            {subscription.expiresAt !== null ? (
+              <p className="text-caption text-muted-foreground">
+                {subscription.expiresAt.slice(0, 10)}까지 ·{" "}
+                {daysLeft(subscription.expiresAt, now.toISOString())}일 남았어요
+              </p>
+            ) : null}
+            <Link href="/membership" className="text-sm font-medium text-brand-600">
+              멤버십 보기
+            </Link>
+          </CardContent>
+        </Card>
+      </section>
 
       <Separator />
 

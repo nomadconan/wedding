@@ -158,19 +158,24 @@ export const HOME_ALL_DONE_NOTE = "지금 급한 일은 없어요. 천천히 둘
  *
  * `filledBy` 는 커버리지 표의 태스크 ID 다. 화면이 그대로 노출한다.
  */
-export const HOME_PENDING_SECTIONS = [
-  {
-    key: "budget",
-    label: "예산 게이지",
-    reason: "예산 배분·추적을 아직 만들지 않았습니다.",
-    filledBy: "S7-07",
-  },
-  // '최근 대화' 는 S4-04 가, **'AI 플래너 클리어' 는 S7-06 이**, **'최근 검토 리포트' 는
-  // S7-03 이**, **'다음 할 일' 은 S7-08 이** 채웠다. 자리를 지우지 않고 목록에서 뺐다 —
-  // 남겨 두면 화면이 "아직 못 만들었다" 고 거짓을 말한다.
-] as const satisfies readonly { key: string; label: string; reason: string; filledBy: string }[];
+export type PendingSection = { key: string; label: string; reason: string; filledBy: string };
 
-export type HomePendingKey = (typeof HOME_PENDING_SECTIONS)[number]["key"];
+/**
+ * **지금은 비어 있다.**
+ *
+ * '최근 대화' 는 S4-04 가, 'AI 플래너 클리어' 는 S7-06 이, '최근 검토 리포트' 는
+ * S7-03 이, '다음 할 일' 은 S7-08 이, **'예산 게이지' 는 S7-07 이** 채웠다. 채워진
+ * 자리를 목록에 남겨 두면 화면이 **"아직 못 만들었다" 고 거짓을 말한다**
+ * (FIX-29 · S7-11 에서 걷었다). 목록이 비면 화면은 절을 아예 그리지 않는다 —
+ * 빈 제목만 남는 것도 거짓말의 일종이다.
+ *
+ * **`as const` 를 쓰지 않는다.** 빈 배열에 붙이면 키 타입이 `never` 가 되어
+ * 화면의 `.map` 이 컴파일되지 않고, 다음에 자리가 생길 때 파일 모양을 또 바꿔야 한다.
+ * 자리는 늘었다 줄었다 하는 것이므로 **타입이 그 사실을 견디게** 둔다.
+ */
+export const HOME_PENDING_SECTIONS: readonly PendingSection[] = [];
+
+export type HomePendingKey = PendingSection["key"];
 
 /** 아직 못 세는 지표를 `MetricValue` 로 만든다. 화면은 `MetricTile` 로 그대로 그린다. */
 export function pendingMetric(key: HomePendingKey): MetricValue<number> {

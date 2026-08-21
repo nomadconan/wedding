@@ -119,6 +119,10 @@ export type EntityType =
   // S7-05. 저장한 견적 비교표. **금액·업체명을 memo 에 넣지 않는다**(§7.3) —
   // 행이 스냅샷을 이미 갖고 있고 옮겨 적으면 두 곳이 갈린다.
   | "estimate_comparison"
+  // S7-11. 멤버십 구독. **금액을 memo 에 넣지 않는다**(§7.3) —
+  // `subscription_payments` 가 이미 갖고 있다. 남길 사실은 **어느 어댑터로 열렸는가**다:
+  // 스텁으로 열린 구독과 실결제로 열린 구독은 나중에 반드시 구분해야 한다(D-28).
+  | "membership"
   | "profile"
   | "data_deletion_request";
 

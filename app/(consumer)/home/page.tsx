@@ -510,6 +510,10 @@ async function HomeSection() {
       </section>
 
       {/* ── 8) 아직 채울 수 없는 자리 ────────────────────────────────────── */}
+      {/* **목록이 비면 절을 그리지 않는다**(S7-11). 담당 태스크가 끝날 때마다 항목이
+          빠지고 지금은 하나도 남지 않았다 — 빈 제목만 남기면 화면이 "준비 중인 것이
+          있는데 못 세고 있다" 고 읽힌다. */}
+      {HOME_PENDING_SECTIONS.length > 0 ? (
       <section className="space-y-2">
         <h2 className="text-base font-semibold text-foreground">준비 중인 기능</h2>
         <p className="text-caption text-muted-foreground">
@@ -526,6 +530,7 @@ async function HomeSection() {
           ))}
         </div>
       </section>
+      ) : null}
 
       {/* 참가격은 로그인 없이도 보는 화면이라 링크만 둔다. */}
       {couple?.region_code ? (
