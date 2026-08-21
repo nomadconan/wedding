@@ -10,6 +10,7 @@ import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { Progress } from "@/components/ui/progress";
 import { loadCarts } from "@/lib/cart/loader";
 import { loadRooms } from "@/lib/chat/loader";
 import { unreadBadge } from "@/lib/core/chat/chat";
@@ -24,6 +25,7 @@ import {
 import { ANALYSIS_STATUS_LABEL } from "@/lib/core/report/pipeline";
 import { measured } from "@/lib/core/stats/metric";
 import { latestReport } from "@/lib/reports/loader";
+import { loadBudgetGauge } from "@/lib/budget/loader";
 import { loadNextTasks } from "@/lib/tasks/loader";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
@@ -152,6 +154,15 @@ async function HomeSection() {
       }).catch(() => [])
     : [];
 
+  // 예산 게이지(F-C-05 · S7-07). **`/budget` 과 같은 함수를 부른다** — 두 화면이 다른
+  // 총액을 말하면 사용자는 어느 쪽이 맞는지 묻게 된다('다음 할 일' 과 같은 규칙 · §6.2).
+  // 총예산은 `couples.total_budget` 하나이며 장바구니 기준선(D-77)도 그 값을 쓴다.
+  const budgetGauge = membership
+    ? await loadBudgetGauge(supabase, createPublicClient(), {
+        coupleId: membership.coupleId,
+      }).catch(() => null)
+    : null;
+
   // 최근 검토 리포트(F-C-07 · S7-03). 커플이 없으면 문서도 없다 — 조회를 건너뛴다.
   // RLS 가 자기 커플의 문서만 보여주므로 여기서 couple_id 로 다시 거르지 않는다.
   const recentReport = membership ? await latestReport(supabase).catch(() => null) : null;
@@ -229,6 +240,50 @@ async function HomeSection() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      {/* ── 2-b) 예산 게이지 (S7-07 — F-C-05) ────────────────────────────── */}
+      {/* §6.2 가 홈의 요소로 적어 둔 자리다. **하단 탭을 늘리지 않고**(D-55) 여기가
+          `/budget` 의 1차 진입이 된다. 총예산이 미정이면 **게이지를 그리지 않는다** —
+          0을 기준으로 삼으면 담는 즉시 '초과' 가 뜨는데 그건 사실이 아니다. */}
+      <section className="space-y-2" data-testid="home-budget">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-foreground">예산</h2>
+          <Link href="/budget" className="text-caption font-medium text-brand-600">
+            자세히
+          </Link>
+        </div>
+
+        {budgetGauge === null || budgetGauge.totalBudget === null ? (
+          <p className="text-sm text-muted-foreground" data-testid="home-budget-none">
+            총예산을 정하면 얼마나 남았는지 알려드려요.{" "}
+            <Link href="/budget" className="font-medium text-brand-600">
+              예산 정하기
+            </Link>
+          </p>
+        ) : (
+          <Link
+            href="/budget"
+            className="block space-y-2 rounded-lg border border-border p-4"
+            data-testid="home-budget-gauge"
+            data-state={(budgetGauge.overBy ?? 0) > 0 ? "over" : "under"}
+          >
+            <Progress
+              value={Math.min(100, (budgetGauge.usedBp ?? 0) / 100)}
+              aria-label="예산 소진율"
+            />
+            <p className="text-sm text-foreground">
+              {formatKrw(budgetGauge.committed)}원 / {formatKrw(budgetGauge.totalBudget)}원
+            </p>
+            <p
+              className={`text-caption ${(budgetGauge.overBy ?? 0) > 0 ? "text-warning" : "text-success"}`}
+            >
+              {(budgetGauge.overBy ?? 0) > 0
+                ? `예산 초과 ${formatKrw(budgetGauge.overBy as number)}원`
+                : `남은 예산 ${formatKrw(budgetGauge.remaining as number)}원`}
+            </p>
+          </Link>
         )}
       </section>
 
