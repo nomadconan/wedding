@@ -53,6 +53,15 @@ export default defineConfig({
     coverage: {
       include: ["lib/core/**/*.ts", "components/**/*.tsx"],
       exclude: ["lib/core/**/*.test.ts", "lib/core/**/*.spec.ts", "components/**/*.test.tsx"],
+      // 명세서 §7.5 가 요구하는 기준이다(가정치 80%).
+      //
+      // **`@vitest/coverage-v8` 가 아직 설치돼 있지 않다.** 새 npm 의존성이라 이 태스크의
+      // 보고 대상이고(S8-05 제약), 그래서 `npm run test:coverage` 는 지금 provider 없음으로
+      // 실패한다. 기준선을 여기 미리 적어 두는 이유는 **설치가 결정되는 날 기준을 다시
+      // 협상하지 않기 위해서**다 — 그때 측정해 보고 80이 높아 보이면 낮추고 싶어지고,
+      // 그러면 §7.5 가 조용히 내려간다. 숫자는 지금 박아 둔다.
+      thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
+      reporter: ["text-summary", "lcov"],
     },
   },
 });

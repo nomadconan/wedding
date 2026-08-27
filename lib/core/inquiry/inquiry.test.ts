@@ -386,14 +386,17 @@ describe("API 입력 스키마 — 없는 필드가 요점이다", () => {
 
 describe("문의게시판 스키마 (S4-05)", () => {
   it("작성은 공개가 기본이다 — 공개 질문이 다음 사람을 돕는다", () => {
-    expect(
-      QnaActionSchema.parse({
-        action: "create",
-        vendorId: UUID_A,
-        title: "주차",
-        body: "가능한가요",
-      }).isPublic,
-    ).toBe(true);
+    // 판별 유니온을 좁힌 뒤에 읽는다(FIX-19 · cart.test.ts 와 같은 이유).
+    const parsed = QnaActionSchema.parse({
+      action: "create",
+      vendorId: UUID_A,
+      title: "주차",
+      body: "가능한가요",
+    });
+
+    expect(parsed.action).toBe("create");
+    if (parsed.action !== "create") throw new Error("create 로 좁혀지지 않았다");
+    expect(parsed.isPublic).toBe(true);
   });
 
   it("업체 API 에는 질문 작성·수정이 없다", () => {

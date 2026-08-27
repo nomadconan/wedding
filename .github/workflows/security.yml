@@ -1,0 +1,45 @@
+# 주간 의존성 감시 (S8-05)
+#
+# **왜 CI 와 따로인가.** `npm audit` 의 결과는 **우리가 아무것도 안 해도 바뀐다** —
+# 새 권고가 공개되면 어제 초록이던 것이 오늘 빨간다. CI 는 커밋이 있을 때만 도니까,
+# 코드가 조용한 주에는 새 취약점을 아무도 못 본다.
+#
+# 명령은 CI 와 **같은 것**을 쓴다(`npm run check:audit`). 트리거만 다르다 —
+# 검사를 두 벌 만들면 두 진실이 생긴다.
+
+name: security
+
+on:
+  schedule:
+    # 매주 월요일 00:00 UTC (한국 시간 월요일 09:00). 한 주를 이 결과로 시작한다.
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: weekly dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # 목록에 없는 high/critical 이 나오면 실패한다. 실패는 곧 "이번 주에 볼 것이
+      # 생겼다" 는 뜻이며, 고치거나 사유를 적어 allowlist 에 넣는 것이 답이다.
+      - name: npm audit (new high/critical fails)
+        run: npm run check:audit
+
+      # 실패했든 아니든 전체 목록을 로그에 남긴다. moderate 가 쌓이는 추세는
+      # 게이트가 막지 않지만 봐야 하는 값이다.
+      - name: full advisory list
+        if: always()
+        run: node scripts/check-audit.mjs --list

@@ -1,6 +1,8 @@
 import { createServerClient, type SetAllCookies } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { shouldBlockDevRoute } from "@/lib/core/routes/dev-routes";
+
 /**
  * 세션 갱신 + 최소 라우트 가드 (S2-01)
  *
@@ -35,6 +37,23 @@ const PROTECTED_PREFIXES = [
 ];
 
 export async function middleware(request: NextRequest) {
+  /**
+   * `(dev)` 그룹 차단 (S8-05).
+   *
+   * **세션 조회보다 먼저 한다.** 이 판정은 쿠키와 무관하고, 앞에 두면 차단된 요청이
+   * 인증 왕복을 하지 않는다. `rewrite` 가 아니라 **404 를 그대로 돌려준다** —
+   * 로그인 화면으로 보내면 "로그인하면 볼 수 있는 화면" 이라고 알려 주는 셈이고,
+   * 이 카탈로그는 누구에게도 열지 않는 화면이다.
+   */
+  if (
+    shouldBlockDevRoute(request.nextUrl.pathname, {
+      isProduction: process.env.NODE_ENV === "production",
+      enableFlag: process.env.ENABLE_DEV_ROUTES,
+    })
+  ) {
+    return new NextResponse(null, { status: 404 });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
