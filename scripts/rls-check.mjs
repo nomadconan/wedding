@@ -796,9 +796,15 @@ check(
   asUser(outsider, `select count(*) from public.entity_events where id = '${EV}';`,
     evidenceFixture) === "0",
 );
+// **S8-02 가 이 검사를 더 강하게 만들었다.** 예전에는 정책이 0행을 돌려주는 것으로
+// 통과했는데, 0053 이 `anon` 의 SELECT 권한 자체를 걷어 이제 **권한 오류로 끊긴다.**
+// 둘 다 "비로그인은 못 본다" 이지만 뒤쪽이 낫다 — 정책을 누가 잘못 고쳐도 권한이 없으면
+// 여전히 막힌다(방어선이 둘이다).
 check(
-  "비로그인은 이벤트를 못 본다",
-  asAnon(`select count(*) from public.entity_events where id = '${EV}';`, evidenceFixture) === "0",
+  "비로그인은 이벤트를 못 본다 (권한 자체가 없다)",
+  rejectedWith(/permission denied/, () =>
+    asAnon(`select count(*) from public.entity_events where id = '${EV}';`, evidenceFixture),
+  ),
 );
 // insert-only — 어떤 역할에도 쓰기 정책이 없다. 권한 자체가 없어 오류로 끊긴다.
 check(
@@ -849,14 +855,17 @@ check(
       evidenceFixture)),
 );
 
-// audit_logs — 정책 없음(서비스롤 전용).
+// audit_logs — **S8-02 가 운영자 SELECT 정책을 하나 더했다**(0053). 당사자·비로그인은
+// 여전히 못 본다. 비로그인은 이제 정책이 아니라 **권한**에서 끊긴다(방어선이 둘이다).
 check(
   "당사자도 감사 로그를 못 본다",
   asUser(owner, `select count(*) from public.audit_logs;`, evidenceFixture) === "0",
 );
 check(
-  "비로그인도 감사 로그를 못 본다",
-  asAnon(`select count(*) from public.audit_logs;`, evidenceFixture) === "0",
+  "비로그인도 감사 로그를 못 본다 (권한 자체가 없다)",
+  rejectedWith(/permission denied/, () =>
+    asAnon(`select count(*) from public.audit_logs;`, evidenceFixture),
+  ),
 );
 
 // 발송·도달·열람 순서를 DB 가 지킨다.
@@ -7065,6 +7074,168 @@ if (!vendorStaff || !adminUser) {
       ["(admin)", "(vendor)", "(planner)", "(consumer)"].some((group) =>
         existsSync(`app/${group}${route}/page.tsx`),
       ),
+    ),
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-02 — 감사 로그·증적 타임라인 (F-A-09 · 0053)
+//
+// **여기서 확인하는 것은 두 가지다.**
+//  (가) 운영자만 읽는가 — 경계가 RLS 정책인지(SECURITY DEFINER 가 아니다).
+//  (나) **아무도 고치거나 지울 수 없는가** — 감사 콘솔의 값어치는 전부 여기 달렸다.
+//       고칠 수 있는 기록을 보여 주는 화면은 콘솔이 아니라 거짓말이다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // ── 읽기 경계 ──────────────────────────────────────────────────────────────
+  check(
+    "운영자(admin)는 감사 로그를 읽는다",
+    Number(asUser(adminUser, `select count(*) from public.audit_logs;`)) > 0,
+    `rows=${asUser(adminUser, `select count(*) from public.audit_logs;`)}`,
+  );
+  check(
+    "운영자(ops)도 읽는다",
+    Number(asUser(opsUser, `select count(*) from public.audit_logs;`)) > 0,
+  );
+  check(
+    "**커플 당사자에게는 한 줄도 보이지 않는다**",
+    asUser(owner, `select count(*) from public.audit_logs;`) === "0",
+  );
+  check(
+    "**업체에게도 보이지 않는다** — 자기 심사 기록도 예외가 아니다",
+    asUser(outsider, `select count(*) from public.audit_logs;`) === "0",
+  );
+  check(
+    "**플래너에게도 보이지 않는다**",
+    asUser(plannerAccount, `select count(*) from public.audit_logs;`) === "0",
+  );
+  check(
+    "**비로그인에게는 SELECT 권한 자체가 없다**",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.audit_logs;`)),
+  );
+
+  // ── 추가 전용 (0053 의 핵심) ───────────────────────────────────────────────
+  //
+  // **이 태스크가 발견한 구멍이 여기 있었다.** Supabase 기본 셋업의
+  // `grant all on all tables ... to anon, authenticated` 때문에 **아무 로그인
+  // 사용자나 증적 표를 TRUNCATE** 할 수 있었다. RLS 는 TRUNCATE 에 적용되지 않는다.
+  check(
+    "**로그인 사용자가 entity_events 를 비울 수 없다** (RLS 는 TRUNCATE 를 막지 못한다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `truncate table public.entity_events;`),
+    ),
+  );
+  check(
+    "**로그인 사용자가 audit_logs 를 비울 수 없다**",
+    rejectedWith(/permission denied/, () => asUser(owner, `truncate table public.audit_logs;`)),
+  );
+  check(
+    "**비로그인도 비울 수 없다**",
+    rejectedWith(/permission denied/, () => asAnon(`truncate table public.entity_events;`)),
+  );
+  check(
+    "**public 스키마 어느 표에도 TRUNCATE 가 열려 있지 않다** (106개 전부였다)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  check(
+    "**당사자는 감사 로그를 넣을 수도 없다** — 증적은 서버가 쓴다",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `insert into public.audit_logs(action, target_type) values ('forged', 'vendor');`),
+    ),
+  );
+
+  // 트리거는 **서비스롤에도** 적용된다. 권한으로는 막을 수 없는 자리다 —
+  // 서비스롤은 증적을 써야 하므로 INSERT 권한을 가질 수밖에 없다.
+  check(
+    "**서비스롤도 증적을 고칠 수 없다** (트리거가 막는다)",
+    rejectedWith(/EVIDENCE_APPEND_ONLY/, () =>
+      sql(`begin; set local role service_role;
+           update public.audit_logs set action = 'rewritten' where true;
+           rollback;`),
+    ),
+  );
+  check(
+    "**서비스롤도 증적을 지울 수 없다**",
+    rejectedWith(/EVIDENCE_APPEND_ONLY/, () =>
+      sql(`begin; set local role service_role;
+           delete from public.entity_events where true;
+           rollback;`),
+    ),
+  );
+
+  // ── 행위자 이름은 좁게만 열린다 ────────────────────────────────────────────
+  check(
+    "운영자는 행위자 이름을 조회한다",
+    asUser(adminUser, `select display_name from public.admin_actor_labels(array['${adminUser}']::uuid[]);`)
+      .length > 0,
+  );
+  check(
+    "**당사자는 행위자 이름 함수를 부를 수 없다**",
+    rejectedWith(/ADMIN_ACTORS_FORBIDDEN/, () =>
+      asUser(owner, `select * from public.admin_actor_labels(array['${adminUser}']::uuid[]);`),
+    ),
+  );
+  check(
+    "**함수가 연락처 해시를 돌려주지 않는다** — 이름 하나 때문에 프로필을 통째로 열지 않았다",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public'
+             and table_name = 'admin_actor_labels'
+             and column_name = 'phone_hash';`) === "0",
+  );
+  check(
+    "`profiles` 에는 여전히 운영자 정책이 없다 — 이름은 함수로만 나간다",
+    sql(`select count(*) from pg_policies
+           where tablename = 'profiles' and qual like '%is_operator%';`) === "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check(
+    "`/admin/audit` 화면이 실재한다",
+    existsSync("app/(admin)/admin/audit/page.tsx"),
+  );
+  check(
+    "**운영자 콘솔 내비가 `/admin/audit` 을 가리킨다** — URL 을 직접 쳐야 열리는 화면을 만들지 않는다",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/audit"'),
+  );
+  check(
+    "감사 로그 화면이 캐시되지 않는다 (권한 회수 뒤에도 나가면 안 된다)",
+    readFileSync("app/(admin)/admin/audit/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "감사 로그 API 도 캐시되지 않는다",
+    readFileSync("app/api/admin/audit-logs/route.ts", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**증적 타임라인 API 는 읽기 전용이다** — POST·PATCH·DELETE 를 두지 않았다(§4.3)",
+    !/export async function (POST|PATCH|PUT|DELETE)/.test(
+      readFileSync("app/api/admin/entity-events/route.ts", "utf8"),
+    ),
+  );
+
+  // ── 픽스처가 붙어 있는가 ──────────────────────────────────────────────────
+  // 값이 전부 0이면 위 격리 검사가 "안 보인다" 가 아니라 "없다" 라서 통과한다.
+  check(
+    "감사 픽스처가 있다",
+    Number(sql(`select count(*) from public.audit_logs;`)) >= 4,
+    `rows=${sql(`select count(*) from public.audit_logs;`)}`,
+  );
+  check(
+    "**근거 이벤트를 단 결정이 하나 있다** — 근거 표시 경로가 실제로 그려진다",
+    Number(sql(`select count(*) from public.audit_logs where resolution_basis is not null;`)) >= 1,
+  );
+  check(
+    "**빈 근거는 저장되지 않는다** — '아무것도 안 보고 정했다' 는 상태가 없다",
+    rejectedWith(/resolution_basis/, () =>
+      sql(`insert into public.audit_logs(action, target_type, resolution_basis)
+             values ('probe', 'vendor', '{}');`),
     ),
   );
 }
