@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Star,
   Store,
   Tag,
   Users,
@@ -70,6 +71,10 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/consultations", label: "상담 일정", icon: CalendarClock },
   { href: "/vendor/availability", label: "상담 가능 시간", icon: Clock },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
+  // S8-11. **예약 바로 아래다** — 후기는 확정·이행된 예약에만 달리므로 그 목록의
+  // 다음 화면이 자연스럽다. 커뮤니티 태그와 다르다: 그쪽은 미검증 경험담이고
+  // 이쪽은 **거래가 확인된 평가**이며, 할 수 있는 일도 답변과 신고로 다르다(F-V-11).
+  { href: "/vendor/reviews", label: "후기·평판", icon: Star },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },
   { href: "/vendor/members", label: "멤버 관리", icon: Users },
@@ -88,6 +93,10 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin/quality", label: "AI 품질·비용", icon: BarChart3 },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
   { href: "/admin/tickets", label: "CS·신고", icon: Flag },
+  // S8-11 이 이 화면을 세웠다. **커뮤니티 신고 바로 위**에 둔다 — 둘 다 '내리는' 큐지만
+  // 이쪽은 **거래가 확인된 평가**라 판단 기준이 다르고(§7.7), 후기를 내리는 일은
+  // 업체의 평판을 직접 움직인다.
+  { href: "/admin/reviews", label: "후기 관리", icon: Star },
   // S7-17. **CS·신고와 다른 큐다** — 이쪽은 커뮤니티 게시물이고 조치가 비공개·복구이며
   // 사유가 기록에 남는다. 한 큐에 섞으면 처리 절차가 서로 다른 건이 같은 목록에 놓인다.
   { href: "/admin/community-reports", label: "커뮤니티 신고", icon: Flag },

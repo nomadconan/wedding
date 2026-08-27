@@ -201,7 +201,14 @@ export default async function VendorStatsPage() {
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2">
               <MetricTile label="이번 달 정산 예정액" metric={stats.settlement.thisMonthNet} unit="원" />
-              <MetricTile label="평균 평점" metric={stats.reviews.ratingAvg} />
+              {/* S8-11. **평균과 건수를 나란히 둔다** — 한 건짜리 5.0 을
+                  백 건짜리 4.6 보다 위에 놓는 화면을 만들지 않는다. */}
+              <MetricTile
+                label="평균 평점"
+                metric={stats.reviews.ratingAvg}
+                hint="산정 기준과 항목별 점수는 '후기·평판' 에서 보실 수 있습니다."
+              />
+              <MetricTile label="검증 후기" metric={stats.reviews.reviewCount} unit="건" />
             </div>
           </CardContent>
         </Card>
