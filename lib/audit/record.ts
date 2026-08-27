@@ -132,7 +132,11 @@ export type EntityType =
   | "guest"
   | "seating_plan"
   | "profile"
-  | "data_deletion_request";
+  | "data_deletion_request"
+  // S8-03. 예약 분쟁 조율. **사유 본문을 memo 에 넣지 않는다**(§7.3) — 행이 이미 갖고
+  // 있고 옮겨 적으면 두 곳이 갈린다. 남길 사실은 **전이와 양측 동의 상태**이며,
+  // 조율은 기록을 근거로 하는 일이라 그 연결(`audit_logs.resolution_basis`)이 특히 중요하다.
+  | "dispute";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 
