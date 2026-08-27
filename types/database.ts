@@ -1917,36 +1917,54 @@ export type Database = {
       disputes: {
         Row: {
           booking_id: string
+          couple_agreed: boolean
           created_at: string
           evidence_paths: string[]
           id: string
+          proposal_note: string | null
           raised_by: string | null
           reason_code: string
           resolution_json: Json | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
           status: string
           updated_at: string
+          vendor_agreed: boolean
         }
         Insert: {
           booking_id: string
+          couple_agreed?: boolean
           created_at?: string
           evidence_paths?: string[]
           id?: string
+          proposal_note?: string | null
           raised_by?: string | null
           reason_code: string
           resolution_json?: Json | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           updated_at?: string
+          vendor_agreed?: boolean
         }
         Update: {
           booking_id?: string
+          couple_agreed?: boolean
           created_at?: string
           evidence_paths?: string[]
           id?: string
+          proposal_note?: string | null
           raised_by?: string | null
           reason_code?: string
           resolution_json?: Json | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           updated_at?: string
+          vendor_agreed?: boolean
         }
         Relationships: [
           {

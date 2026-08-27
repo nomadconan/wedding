@@ -898,6 +898,99 @@ async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
   return "created";
 }
 
+
+// ── dispute console fixture (S8-03) ─────────────────────────────────────────
+const DISPUTE_BOOKING_ID = "00000000-0000-0000-0000-00000000f001";
+const DISPUTE_ESCROW_ID = "00000000-0000-0000-0000-00000000f002";
+
+/**
+ * Dispute console fixture (F-A-12 / F-A-16).
+ *
+ * WHY THIS EXISTS: the queue merges four sources. With an empty database every
+ * tile reads 0 and the screen cannot tell you whether a source is *attached* to
+ * the queue at all - which is exactly how FIX-15 (escrow disputes had no screen)
+ * stayed unnoticed for months. Seeding two of the four sources proves the merge
+ * works AND leaves two at zero so the "0건도 줄을 남긴다" rule is visible.
+ *
+ * WHAT IS SEEDED:
+ *   - one booking dispute in `open` (the console mediates this one)
+ *   - one escrow hold in `disputed` (the source that had no screen - FIX-15)
+ *
+ * The other two (consultation deposit / contract cancellation) stay at 0 on
+ * purpose: their rows require a full consultation or contract chain, and a
+ * fixture that fakes those would make the queue look healthier than the data is.
+ * Their tiles must still render - that is the point of queueSummary().
+ */
+async function seedDisputeFixture(coupleMemberUser, vendorId, coupleId) {
+  if (!coupleMemberUser || !coupleId) return "skipped";
+
+  const existing = await rest(`disputes?id=eq.${DISPUTE_BOOKING_ID}&select=id`);
+  if (existing.length > 0) return "existing";
+
+  const hoursAgo = (n) => new Date(Date.now() - n * 3600 * 1000).toISOString();
+
+  // The metrics fixture (S8-01) already created a confirmed booking - reuse it.
+  const bookings = await rest(`bookings?select=id,vendor_id&limit=1`);
+  const bookingId = bookings[0]?.id;
+  if (!bookingId) return "skipped (no booking)";
+
+  // Booking dispute. The service role can write `status` - the party cannot
+  // (0055 column privileges), which is the whole point of that migration.
+  await rest("disputes?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      id: DISPUTE_BOOKING_ID,
+      booking_id: bookingId,
+      raised_by: coupleMemberUser.id,
+      reason_code: "quality",
+      status: "open",
+      evidence_paths: [],
+      created_at: hoursAgo(30),
+    }),
+  });
+
+  // Escrow hold in dispute - the source FIX-15 said had nowhere to be handled.
+  // escrow_holds requires a payment_id and nothing else seeds a payment yet, so
+  // create the minimum one here (balance payment against the seeded booking).
+  let payments = await rest(`payments?select=id&limit=1`);
+  if (payments.length === 0) {
+    payments = await rest("payments", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        booking_id: bookingId,
+        purpose: "balance",
+        amount: 9600000,
+        status: "paid",
+        paid_at: hoursAgo(60),
+        provider: "stub",
+      }),
+    });
+  }
+
+  if (payments[0]?.id) {
+    await rest("escrow_holds?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        id: DISPUTE_ESCROW_ID,
+        payment_id: payments[0].id,
+        booking_id: bookingId,
+        held_amount: 9600000,
+        status: "disputed",
+        held_at: hoursAgo(60),
+        disputed_at: hoursAgo(12),
+        hold_reason: "local demo",
+      }),
+    });
+  }
+
+  void vendorId;
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -939,6 +1032,12 @@ async function main() {
   // AFTER the metrics fixture on purpose: the dispute row needs real
   // entity_events ids for its resolution_basis, and those events are written
   // by seedMetricsFixture. Run it first and the basis silently comes out empty.
+  const disputeSeed = await seedDisputeFixture(
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+    vendor.id,
+    linkedCouple,
+  );
+
   const privacySeed = await seedPrivacyFixture(
     results.find((row) => row.email === "admin@local.test"),
     linkedCouple,
@@ -1011,6 +1110,14 @@ async function main() {
   console.log("    -> /admin/privacy shows real alerts instead of a silent 'all zero' screen.");
   console.log("    -> the overdue doc is past PURGE_CRITICAL_HOURS on purpose: the console");
   console.log("       must render it as critical, not as a warning.");
+  console.log("");
+  console.log("  dispute console fixture (S8-03)");
+  console.log(`    status      : ${disputeSeed}`);
+  console.log("    rows        : 1 booking dispute (open), 1 escrow hold (disputed)");
+  console.log("    -> /admin/disputes merges four sources into one queue.");
+  console.log("    -> the other two sources stay at 0 ON PURPOSE: their tiles must still");
+  console.log("       render, because '0 disputes' and 'not wired to the queue' must not");
+  console.log("       look the same (that is how FIX-15 stayed unnoticed).");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);

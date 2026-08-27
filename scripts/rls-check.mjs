@@ -3002,11 +3002,12 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "커플 소유자는 자기 결제를 본다",
-    asUser(owner, `select count(*) from public.payments;`, paidSetup) === "1",
+    // 픽스처가 만든 행으로 좁힌다 — 시드에 결제가 늘어도 이 검사의 뜻은 그대로다.
+    asUser(owner, `select count(*) from public.payments where id = '${PAY1}';`, paidSetup) === "1",
   );
   check(
     "배우자는 결제를 못 본다 (결제 열람은 owner · §3.9)",
-    asUser(partner, `select count(*) from public.payments;`, paidSetup) === "0",
+    asUser(partner, `select count(*) from public.payments where id = '${PAY1}';`, paidSetup) === "0",
   );
   check(
     "타 커플·타 업체는 남의 결제를 못 본다",
@@ -3120,17 +3121,24 @@ if (!vendorStaff || !adminUser) {
     "비로그인은 해지 절차를 못 본다",
     asAnon(`select count(*) from public.contract_cancellations;`, cancelSetup) === "0",
   );
+  // 접수 자체는 당사자가 한다(S5-06). 0055 는 **판정 칸만** 못 쓰게 좁혔으므로
+  // 이 INSERT 는 여전히 RLS 정책에서 끊긴다 — 남의 계약이기 때문이다.
   check(
     "해지 절차는 당사자가 쓸 수 없다 (자기 귀책을 스스로 적을 수 없다)",
-    rejectedWith(/row-level security/i, () =>
+    rejectedWith(/row-level security|permission denied/i, () =>
       asUser(owner, `insert into public.contract_cancellations
          (contract_id, booking_id, requester_side, reason_code)
          values ('${PC}', '${PB}', 'couple', 'budget');`, cancelSetup)),
   );
+  // **S8-03 이 이 검사를 더 강하게 만들었다.** 예전에는 정책이 0행을 돌려주는 것으로
+  // 통과했는데, 0055 가 `authenticated` 의 UPDATE 권한 자체를 걷어 이제 **권한 오류로
+  // 끊긴다.** 둘 다 "당사자는 귀책을 못 고친다" 이지만 뒤쪽이 낫다 — 정책을 누가
+  // 잘못 고쳐도 권한이 없으면 여전히 막힌다(FIX-30·35·36 이 가르친 것).
   check(
-    "당사자가 귀책을 고쳐 쓸 수 없다",
-    asUser(owner, `with u as (update public.contract_cancellations set fault = 'vendor' returning id)
-       select count(*) from u;`, cancelSetup) === "0",
+    "당사자가 귀책을 고쳐 쓸 수 없다 (권한 자체가 없다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.contract_cancellations set fault = 'vendor';`, cancelSetup),
+    ),
   );
 
   // ── 예약 자리 (S2-05 가 남긴 자리) ────────────────────────────────────────
@@ -3920,34 +3928,37 @@ if (!vendorStaff || !adminUser) {
   // ── 열람·쓰기 경계 ────────────────────────────────────────────────────────
   check(
     "커플 소유자는 자기 안전거래를 본다",
-    asUser(owner, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+    asUser(owner, `select count(*) from public.escrow_holds where id = '${ESC}';`, escrowFixture) === "1",
   );
   check(
     "업체 멤버도 안전거래를 본다 (이행 확인의 당사자다)",
-    asUser(vendorStaff, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+    asUser(vendorStaff, `select count(*) from public.escrow_holds where id = '${ESC}';`, escrowFixture) === "1",
   );
   check(
     "배우자는 안전거래를 못 본다 (결제·서명과 같은 owner 조건)",
-    asUser(partner, `select count(*) from public.escrow_holds;`, escrowFixture) === "0",
+    asUser(partner, `select count(*) from public.escrow_holds where id = '${ESC}';`, escrowFixture) === "0",
   );
   check(
     "운영자는 조율을 위해 안전거래를 본다",
-    asUser(adminUser, `select count(*) from public.escrow_holds;`, escrowFixture) === "1",
+    asUser(adminUser, `select count(*) from public.escrow_holds where id = '${ESC}';`, escrowFixture) === "1",
   );
   check(
     "비로그인은 안전거래를 못 본다",
     asAnon(`select count(*) from public.escrow_holds;`, escrowFixture) === "0",
   );
+  // **S8-03 이 둘을 더 강하게 만들었다** — 0055 가 `authenticated` 의 INSERT·UPDATE
+  // 권한을 걷어 이제 정책이 아니라 **권한**에서 끊긴다. 방어선이 둘이 됐다.
   check(
-    "안전거래는 당사자가 쓸 수 없다 (스스로 이행을 확인하고 릴리즈할 수 있다)",
-    rejectedWith(/row-level security/i, () =>
+    "안전거래는 당사자가 쓸 수 없다 (권한 자체가 없다)",
+    rejectedWith(/permission denied/, () =>
       asUser(owner, `insert into public.escrow_holds (payment_id, booking_id, held_amount)
          values ('${PAY1}', '${PB}', 1);`, escrowFixture)),
   );
   check(
-    "당사자가 이행 확인을 고쳐 쓸 수 없다",
-    asUser(owner, `with u as (update public.escrow_holds set status = 'released' returning id)
-       select count(*) from u;`, escrowFixture) === "0",
+    "당사자가 이행 확인을 고쳐 쓸 수 없다 (권한 자체가 없다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.escrow_holds set status = 'released';`, escrowFixture),
+    ),
   );
   check(
     "실예치 활성 여부는 O-03 대기로 남아 있다 — 코드가 켜지 않았다",
@@ -7468,6 +7479,246 @@ if (!vendorStaff || !adminUser) {
 
       return remove > 0 && write > 0 && remove < write;
     })(),
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-03 — 분쟁 조율 콘솔 (F-A-12 · F-A-16 · 0055)
+//
+// **네 가지를 본다.**
+//  (가) 당사자가 **플랫폼의 조율 결론을 위조**할 수 있는가 (함정 6 · 네 번째)
+//  (나) 옆 표들의 쓰기 권한이 열려 있는가
+//  (다) 운영자가 네 출처를 다 읽는가
+//  (라) 합의가 **양측 동의 없이** 기록될 수 있는가 (D-24)
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const disputeBooking = sql(`select booking_id from public.disputes limit 1;`);
+  const coupleMember = sql(
+    `select m.user_id from public.couple_members m
+       join public.bookings b on b.couple_id = m.couple_id limit 1;`,
+  );
+
+  // ── 함정 6: 결론 위조 ─────────────────────────────────────────────────────
+  //
+  // **앞선 셋(FIX-30·35·36)보다 나쁘다.** 그것들은 기록을 감추거나 지우는 것이었지만
+  // 이것은 **없던 결론을 만들어 낸다** — 플랫폼이 전액 환불을 결정하고 업체에 귀책을
+  // 물었다는 기록이 증적에 남는다. D-24 는 플랫폼을 조율자로 규정하는데, 위조된
+  // `resolution_json` 은 **플랫폼이 취한 적 없는 입장**이다.
+  check(
+    "**당사자가 분쟁을 '합의됨' 으로 접수할 수 없다** (컬럼 권한)",
+    rejectedWith(/permission denied/, () =>
+      asUser(coupleMember, `insert into public.disputes(booking_id, raised_by, reason_code, status)
+        values ('${disputeBooking}', '${coupleMember}', 'quality', 'agreed');`),
+    ),
+  );
+  check(
+    "**당사자가 조율 결론(resolution_json)을 써 넣을 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(coupleMember, `insert into public.disputes(booking_id, raised_by, reason_code, resolution_json)
+        values ('${disputeBooking}', '${coupleMember}', 'quality', '{"decision":"full_refund"}');`),
+    ),
+  );
+  check(
+    "**당사자가 양측 동의 플래그를 켤 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(coupleMember, `insert into public.disputes(booking_id, raised_by, reason_code, couple_agreed, vendor_agreed)
+        values ('${disputeBooking}', '${coupleMember}', 'quality', true, true);`),
+    ),
+  );
+  check(
+    "정상 접수는 되고 **open 으로 들어온다**",
+    asUser(
+      coupleMember,
+      `insert into public.disputes(booking_id, raised_by, reason_code)
+         values ('${disputeBooking}', '${coupleMember}', 'quality');
+       select status from public.disputes where raised_by = '${coupleMember}'
+         order by created_at desc limit 1;`,
+    ) === "open",
+  );
+  check(
+    "**접수 뒤에는 당사자가 고칠 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(coupleMember, `update public.disputes set status = 'agreed';`),
+    ),
+  );
+  check(
+    "**당사자가 분쟁을 지울 수 없다** — 접수 기록이 사라지면 조율이 뜻을 잃는다",
+    rejectedWith(/permission denied/, () =>
+      asUser(coupleMember, `delete from public.disputes;`),
+    ),
+  );
+
+  // ── 옆 표들도 같은 구멍이 있었다 ──────────────────────────────────────────
+  check(
+    "**당사자가 안전거래 홀드를 고칠 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.escrow_holds set status = 'released';`),
+    ),
+  );
+  check(
+    "**당사자가 보증금 상태를 고칠 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.consultation_deposits set status = 'refunded';`),
+    ),
+  );
+  check(
+    "**당사자가 해지 판정을 고칠 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.contract_cancellations set admin_decision = 'vendor';`),
+    ),
+  );
+  check(
+    "**당사자가 해지 판정을 접수에 끼워 넣을 수 없다** (컬럼 권한)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `insert into public.contract_cancellations
+        (contract_id, booking_id, requester_side, reason_code, admin_decision, fault)
+        values (gen_random_uuid(), '${disputeBooking}', 'couple', 'change_of_plan', 'vendor', 'vendor');`),
+    ),
+  );
+
+  // ── 어휘 CHECK (없었다) ───────────────────────────────────────────────────
+  check(
+    "**모르는 상태는 저장되지 않는다** — 오타가 큐에서 영영 사라지는 행을 만든다",
+    // `mediating` 처럼 종결이 아닌 값으로 시험한다 — 종결 값을 쓰면 사유·처리자
+    // CHECK 이 **먼저** 걸려 어휘 CHECK 이 도는지 확인할 수 없다(처음 그렇게 썼다가 물렸다).
+    rejectedWith(/disputes_status_vocab/, () =>
+      sql(`insert into public.disputes(booking_id, raised_by, reason_code, status)
+             values ('${disputeBooking}', '${coupleMember}', 'quality', 'in_review');`),
+    ),
+  );
+  check(
+    "모르는 사유 코드도 저장되지 않는다",
+    rejectedWith(/disputes_reason_vocab/, () =>
+      sql(`insert into public.disputes(booking_id, raised_by, reason_code)
+             values ('${disputeBooking}', '${coupleMember}', 'made_up');`),
+    ),
+  );
+
+  // ── D-24: 합의는 양측이 다 해야 합의다 ────────────────────────────────────
+  check(
+    "**한쪽만 동의한 것을 '합의' 로 적을 수 없다** (DB CHECK · 화면·라우트와 같은 말)",
+    rejectedWith(/disputes_agreed_chk/, () =>
+      sql(`insert into public.disputes
+             (booking_id, raised_by, reason_code, status, couple_agreed, vendor_agreed,
+              resolution_note, resolved_by, resolved_at)
+           values ('${disputeBooking}', '${coupleMember}', 'quality', 'agreed', true, false,
+                   'note', '${adminUser}', now());`),
+    ),
+  );
+  check(
+    "**사유 없이 종결할 수 없다** — '접수 거둠' 도 설명해야 한다",
+    rejectedWith(/disputes_resolution_chk/, () =>
+      sql(`insert into public.disputes
+             (booking_id, raised_by, reason_code, status, resolved_by, resolved_at)
+           values ('${disputeBooking}', '${coupleMember}', 'quality', 'withdrawn',
+                   '${adminUser}', now());`),
+    ),
+  );
+  check(
+    "**처리자 없이 종결할 수 없다** — 누가 닫았는지 남아야 한다",
+    rejectedWith(/disputes_resolution_chk/, () =>
+      sql(`insert into public.disputes
+             (booking_id, raised_by, reason_code, status, resolution_note, resolved_at)
+           values ('${disputeBooking}', '${coupleMember}', 'quality', 'unresolved', 'note', now());`),
+    ),
+  );
+  check(
+    "양측이 다 동의하면 합의로 적을 수 있다",
+    sql(`begin;
+         insert into public.disputes
+           (booking_id, raised_by, reason_code, status, couple_agreed, vendor_agreed,
+            resolution_note, resolved_by, resolved_at)
+         values ('${disputeBooking}', '${coupleMember}', 'quality', 'agreed', true, true,
+                 'both agreed', '${adminUser}', now());
+         select 'ok';
+         rollback;`) === "ok",
+  );
+
+  // ── 운영자가 네 출처를 읽는가 ─────────────────────────────────────────────
+  check(
+    "운영자가 예약 분쟁을 읽는다",
+    Number(asUser(adminUser, `select count(*) from public.disputes;`)) > 0,
+  );
+  check(
+    "운영자가 **안전거래 이의**를 읽는다 (FIX-15 가 없다고 한 자리)",
+    Number(asUser(adminUser, `select count(*) from public.escrow_holds where status = 'disputed';`)) > 0,
+  );
+  check(
+    "운영자가 보증금 표를 읽는다 (0055 가 정책을 더했다)",
+    asUser(adminUser, `select count(*) >= 0 from public.consultation_deposits;`) === "t",
+  );
+  check(
+    "운영자가 해지 표를 읽는다",
+    asUser(adminUser, `select count(*) >= 0 from public.contract_cancellations;`) === "t",
+  );
+  // **`outsider`(업체 대표)를 쓰지 않는다** — 이 분쟁은 그 업체의 예약에 걸려 있어
+  // `is_vendor_member` 로 **정당하게 보인다**(업체는 분쟁의 당사자다). 진짜 남은 플래너다.
+  check(
+    "**제3자에게는 분쟁이 보이지 않는다** (업체는 당사자라 보인다 — 그것이 맞다)",
+    asUser(plannerAccount, `select count(*) from public.disputes;`) === "0",
+  );
+  check(
+    "업체는 자기 예약의 분쟁을 본다 — 응대해야 한다",
+    Number(asUser(outsider, `select count(*) from public.disputes;`)) > 0,
+  );
+  check(
+    "**비로그인에게는 분쟁이 보이지 않는다**",
+    asAnon(`select count(*) from public.disputes;`) === "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/disputes` 화면이 실재한다", existsSync("app/(admin)/admin/disputes/page.tsx"));
+  check(
+    "`/admin/consultation-disputes` 도 살아 있다 (같은 큐의 다른 입구)",
+    existsSync("app/(admin)/admin/consultation-disputes/page.tsx"),
+  );
+  check(
+    "**내비의 `/admin/disputes` 가 이제 살아 있다** (FIX-23 죽은 링크 하나가 줄었다)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/disputes"'),
+  );
+  check(
+    "**내비가 `/admin/penalties` 를 가리킨다** — URL 을 직접 쳐야 열리던 화면이었다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/penalties"'),
+  );
+  check(
+    "분쟁 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/disputes/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "조율 API 도 캐시되지 않는다",
+    readFileSync("app/api/admin/disputes/[id]/route.ts", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**큐가 증적 타임라인을 새로 만들지 않고 S8-02 의 것을 가리킨다**",
+    readFileSync("app/(admin)/admin/disputes/page.tsx", "utf8").includes("/admin/audit?targetType="),
+  );
+  check(
+    "**조율 콘솔이 위약금을 다시 산정하지 않는다** — 계약 시점 규칙으로 이미 박힌 값을 읽는다",
+    // 주석에는 그 파일 이름이 나온다(왜 안 부르는지 적어 두었다). **import 를 본다.**
+    !/^\s*import[^;]*lib\/core\/pricing/m.test(readFileSync("lib/dispute/loader.ts", "utf8")),
+  );
+  check(
+    "**노쇼 판정을 다시 구현하지 않고 applyVerdict 를 부른다** — 무응답 기본값이 두 벌이 되면 안 된다",
+    readFileSync("app/api/admin/consultation-disputes/route.ts", "utf8").includes("applyVerdict"),
+  );
+
+  // ── 픽스처 ────────────────────────────────────────────────────────────────
+  check(
+    "**두 출처에 픽스처가 있다** — 전부 0이면 큐 병합이 도는지 아무도 못 본다",
+    Number(sql(`select count(*) from public.disputes;`)) > 0 &&
+      Number(sql(`select count(*) from public.escrow_holds where status = 'disputed';`)) > 0,
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0055 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
   );
 }
 
