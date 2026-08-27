@@ -23,6 +23,7 @@ import {
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
 import { findMyCouple } from "@/lib/couple/membership";
 import { loadMembership } from "@/lib/membership/actions";
+import { loadReviewableBookings } from "@/lib/reviews/read";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -113,6 +114,9 @@ async function MeSection() {
     requested_at: string;
   }[];
 
+  // 후기 진입점(S8-11). 커플이 없으면 거래도 없다.
+  const reviewable = membership ? await loadReviewableBookings(membership.coupleId) : [];
+
   const openRequest = allRequests.find(
     (row) => row.status === "pending" || row.status === "in_progress",
   );
@@ -201,6 +205,34 @@ async function MeSection() {
       </section>
 
       <Separator />
+
+      {/* ── 후기 쓸 수 있는 거래 (F-C-17 · S8-11) ────────────────
+          **여기가 `/reviews/new/[bookingId]` 의 진입점이다.** §6.2 가 진입점으로
+          삼을 만한 `/bookings/[id]`(예약 상세)는 아직 만들어지지 않았고(S5-06 잔여),
+          화면을 만들고 가리키는 곳을 두지 않는 것이 이 리포에서 반복된 실수다(FIX-25).
+          예약 상세가 생기면 거기서도 들어오게 하고 이 자리는 남겨 둔다. */}
+      {reviewable.length > 0 ? (
+        <section className="space-y-2" data-testid="me-reviewable">
+          <h2 className="text-base font-semibold text-foreground">후기 쓸 수 있는 거래</h2>
+          <p className="text-caption text-muted-foreground">
+            계약이 확정된 거래에만 쓸 수 있는 <strong>검증 후기</strong>입니다. 실지출
+            금액 공개는 선택이며 기본은 비공개입니다.
+          </p>
+          <ul className="space-y-2">
+            {reviewable.map((row) => (
+              <li key={row.bookingId} className="rounded-lg border border-border p-3">
+                <p className="text-sm font-medium text-foreground">{row.vendorName}</p>
+                <Link
+                  href={`/reviews/new/${row.bookingId}`}
+                  className="text-caption font-medium text-brand-600"
+                >
+                  후기 쓰기
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {/* ── 동의 이력 ──────────────────────────────────────────────────── */}
       <section className="space-y-2" data-testid="me-consents">

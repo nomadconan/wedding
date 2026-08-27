@@ -1,5 +1,7 @@
+import { rateVendor } from "@/lib/core/review/rating";
 import {
   measured,
+  noBasis,
   notYet,
   pricePositionBp,
   profileGaps,
@@ -79,6 +81,8 @@ export type VendorStats = {
   };
   reviews: {
     ratingAvg: MetricValue;
+    /** 분모. **평균과 항상 함께 나간다** — 한 건짜리 5.0 을 백 건짜리 4.6 위에 놓지 않는다. */
+    reviewCount: MetricValue;
   };
 };
 
@@ -109,6 +113,29 @@ export async function loadVendorStats(
         .eq("vendor_id", vendor.id)
         .maybeSingle(),
     ]);
+
+  // 검증 후기(S8-11). RLS 가 자기 업체 후기를 전부 보여주므로
+  // (`reviews_select_author`) **보이지 않는 후기를 여기서 걸러낸다** —
+  // 내려간 후기가 평점에 남아 있으면 업체 화면과 고객 화면의 숫자가 갈린다.
+  const { data: reviewRows } = await table(supabase, "reviews")
+    .select("score_price, score_response, score_fulfillment, status, retracted_at")
+    .eq("vendor_id", vendor.id);
+
+  const rating = rateVendor(
+    ((reviewRows ?? []) as {
+      score_price: number | null;
+      score_response: number | null;
+      score_fulfillment: number | null;
+      status: string;
+      retracted_at: string | null;
+    }[])
+      .filter((row) => row.status === "published" && row.retracted_at === null)
+      .map((row) => ({
+        scorePrice: row.score_price,
+        scoreResponse: row.score_response,
+        scoreFulfillment: row.score_fulfillment,
+      })),
+  );
 
   const productRows = (products ?? []) as {
     status: string;
@@ -210,7 +237,17 @@ export async function loadVendorStats(
     },
 
     reviews: {
-      ratingAvg: notYet("검증 후기 기능이 아직 없습니다.", "S8-11"),
+      // S8-11 이 채웠다. **`notYet` 을 남기지 않는다** — 만들어 둔 기능을
+      // 화면이 "아직 없다" 고 말하면 없는 것과 같아진다(FIX-29).
+      //
+      // **후기가 0건이면 0점이 아니라 분모가 없는 것이다.** 0.0 으로 적으면
+      // 화면이 "평가가 최악이다" 라고 말한 것이 된다(D-96 · D-108 과 같은 규칙이며
+      // `planners.rating_avg` 를 쓰지 않기로 한 이유이기도 하다).
+      ratingAvg:
+        rating.overall === null
+          ? noBasis("아직 검증 후기가 없어 평균을 낼 수 없습니다.", "검증 후기 0건")
+          : measured(rating.overall),
+      reviewCount: measured(rating.reviewCount),
     },
   };
 }

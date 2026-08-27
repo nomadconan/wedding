@@ -7971,5 +7971,412 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-11 — 검증 후기 (F-C-17 · F-V-11 · F-A-13 · 0058)
+//
+// **'검증' 은 이 서비스가 광고를 받지 않는 대신 내놓는 신뢰의 형식이다**(D-03).
+// 거래하지 않은 업체를 평가할 수 있으면 그 말이 거짓이 된다. 그래서 여기서 보는 것의
+// 절반은 **작성 자격이 UPDATE 로 우회되지 않는가**(FIX-39)다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const reviewA = "00000000-0000-0000-0000-00000000e003";
+  const reportId = "00000000-0000-0000-0000-00000000e006";
+  const otherVendor = sql(
+    `select id from public.vendors
+       where id <> (select vendor_id from public.reviews where id = '${reviewA}') limit 1;`,
+  );
+
+  // ── FIX-39: 작성 자격을 UPDATE 로 우회할 수 있는가 ────────────────────────
+  //
+  // `reviews_insert` 는 확정·이행된 예약을 요구하는데 `reviews_update` 의 with check 는
+  // `couple_id` 만 본다. 전 컬럼 UPDATE 권한이 열려 있으면 그 둘 사이가 곧 통로다.
+  check(
+    "**작성자가 후기의 대상 업체를 바꿀 수 없다** (FIX-39 — 거래 없는 업체에 검증 후기가 붙는다)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.reviews set vendor_id = '${otherVendor}' where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**작성자가 후기가 매달린 예약을 바꿀 수 없다** (FIX-39)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.reviews set booking_id = booking_id where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**작성자가 운영자의 비공개를 되돌릴 수 없다** (FIX-39 — 조치가 조치로 남아야 한다)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.reviews set status = 'published' where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**작성자가 업체 답변을 대신 쓸 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.reviews set vendor_reply = 'x' where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "작성자는 자기 후기의 점수·본문은 고칠 수 있다 (막을 것만 막는다)",
+    asUser(owner, `update public.reviews set score_price = 3 where id = '${reviewA}' returning 1;`) === "1",
+  );
+
+  // ── D-23: 후기는 지워지지 않는다 ──────────────────────────────────────────
+  //
+  // `review_reports.review_id` 는 on delete cascade 다. 후기를 지울 수 있으면
+  // **신고당한 후기를 지우는 것으로 신고를 지울 수 있다.**
+  check(
+    "**작성자가 후기를 지울 수 없다** (신고 기록이 cascade 로 함께 사라진다 · D-23)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `delete from public.reviews where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**업체도 후기를 지울 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `delete from public.reviews where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**운영자도 후기를 지울 수 없다** — 내리는 것과 지우는 것은 다르다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `delete from public.reviews where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "authenticated·anon 어디에도 reviews DELETE 권한이 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'reviews'
+             and privilege_type = 'DELETE' and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  // ── 철회는 묘비다 ─────────────────────────────────────────────────────────
+  check(
+    "작성자는 후기를 거둘 수 있다",
+    asUser(
+      owner,
+      `update public.reviews set retracted_at = now(), retracted_by = '${owner}'
+         where id = '${reviewA}' returning 1;`,
+    ) === "1",
+  );
+  check(
+    "**남의 이름으로 거둘 수 없다**",
+    rejectedWith(/row-level security/, () =>
+      asUser(
+        owner,
+        `update public.reviews set retracted_at = now(), retracted_by = '${vendorOwner}'
+           where id = '${reviewA}';`,
+      ),
+    ),
+  );
+  check(
+    "**거둔 후기는 되살릴 수 없다** — 지울 수 있는 묘비는 묘비가 아니다(D-23)",
+    asUser(
+      owner,
+      `update public.reviews set retracted_at = null where id = '${reviewA}' returning 1;`,
+      `update public.reviews set retracted_at = now(), retracted_by = '${owner}' where id = '${reviewA}';`,
+    ) === "",
+  );
+
+  // ── 신고: 접수자가 자기 신고를 닫을 수 있는가 (FIX-36 과 같은 모양) ───────
+  check(
+    "**신고자가 처리 완료 상태로 접수할 수 없다** — 그러면 운영자 큐에 뜨지 않는다",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.review_reports(review_id, reporter_id, reason_code, status)
+           values ('${reviewA}', '${vendorOwner}', 'defamation', 'rejected');`,
+      ),
+    ),
+  );
+  check(
+    "**신고자가 처리자 칸을 직접 쓸 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.review_reports(review_id, reporter_id, reason_code, resolved_by)
+           values ('${reviewA}', '${vendorOwner}', 'defamation', '${vendorOwner}');`,
+      ),
+    ),
+  );
+  check(
+    "**접수된 신고를 아무도 고칠 수 없다** (처리는 서비스롤 경유 · D-62)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `update public.review_reports set status = 'rejected' where id = '${reportId}';`),
+    ),
+  );
+  check(
+    "**운영자 세션으로도 신고를 고칠 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `update public.review_reports set status = 'upheld' where id = '${reportId}';`),
+    ),
+  );
+  check(
+    "**신고를 지울 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `delete from public.review_reports where id = '${reportId}';`),
+    ),
+  );
+  check(
+    "업체는 신고를 접수할 수 있다 (F-V-11 — 막을 것만 막는다)",
+    asUser(
+      vendorOwner,
+      `insert into public.review_reports(review_id, reporter_id, reason_code)
+         values ('${reviewA}', '${vendorOwner}', 'privacy') returning 1;`,
+    ) === "1",
+  );
+
+  // ── 어휘를 DB 가 강제한다 (FIX-33 과 같은 모양) ───────────────────────────
+  check(
+    "**reviews.status 어휘가 CHECK 으로 잠겨 있다** — 오타 상태가 저장되지 않는다",
+    sql(`select count(*) from pg_constraint where conname = 'reviews_status_vocab';`) === "1" &&
+      // 둘 중 어느 쪽이 먼저 울리든 거절되면 된다 — `reviews_hidden_chk` 도 열거된
+      // 두 상태만 허용하므로 오타 상태를 같이 막는다.
+      rejectedWith(/reviews_status_vocab|reviews_hidden_chk/, () =>
+        sql(`update public.reviews set status = 'hiden' where id = '${reviewA}';`),
+      ),
+  );
+  check(
+    "**신고 사유 어휘가 CHECK 으로 잠겨 있다**",
+    rejectedWith(/review_reports_reason_vocab/, () =>
+      sql(`update public.review_reports set reason_code = 'spam' where id = '${reportId}';`),
+    ),
+  );
+  check(
+    "**비공개에는 사유와 처리자가 필수다** (F-A-13 — 왜 내렸는지 답할 수 있어야 한다)",
+    rejectedWith(/reviews_hidden_chk/, () =>
+      sql(`update public.reviews set status = 'hidden' where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**빈 문자열은 비공개 사유가 아니다**",
+    rejectedWith(/reviews_hidden_chk/, () =>
+      sql(`update public.reviews set status = 'hidden', hidden_reason = '   ',
+             hidden_by = '${adminUser}', hidden_at = now() where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**복구하면 사유 칸이 비어야 한다** — 내려간 적 없는 후기에 사유가 남지 않는다",
+    rejectedWith(/reviews_hidden_chk/, () =>
+      sql(`update public.reviews set status = 'published', hidden_reason = 'x',
+             hidden_by = '${adminUser}', hidden_at = now() where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**답변은 본문·시각·작성자가 함께 있어야 한다**",
+    rejectedWith(/reviews_vendor_reply_chk/, () =>
+      sql(`update public.reviews set vendor_reply = 'reply' where id = '${reviewA}';`),
+    ),
+  );
+  check(
+    "**'내리지 않음' 도 사유를 요구한다** (거절이 무시로 보이지 않게)",
+    rejectedWith(/review_reports_status_chk/, () =>
+      sql(`update public.review_reports set status = 'rejected', resolved_by = '${adminUser}',
+             resolved_at = now() where id = '${reportId}';`),
+    ),
+  );
+
+  // ── 코드↔DB 어휘 대조 (사본이 벌어져도 화면에는 아무 일도 안 생긴다) ──────
+  {
+    const codeReasons = [
+      ...readFileSync("lib/core/review/report.ts", "utf8").matchAll(/^  "([a-z_]+)",$/gm),
+    ].map((match) => match[1]);
+    const dbReasons = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+         where conname = 'review_reports_reason_vocab';`,
+    );
+
+    check(
+      "신고 사유 어휘가 코드와 DB 에서 같다",
+      codeReasons.length === 6 && codeReasons.every((code) => dbReasons.includes(`'${code}'`)),
+      `code=${codeReasons.join(",")}`,
+    );
+  }
+  {
+    const codeStatuses = readFileSync("lib/core/review/write.ts", "utf8").match(
+      /REVIEWABLE_BOOKING_STATUSES = \[([^\]]+)\]/,
+    )?.[1];
+    const policy = sql(
+      `select with_check from pg_policies
+         where schemaname = 'public' and tablename = 'reviews' and policyname = 'reviews_insert';`,
+    );
+
+    check(
+      "**후기를 쓸 수 있는 예약 상태가 코드와 정책에서 같다** — 갈리면 폼은 열리는데 저장이 거절된다",
+      ["confirmed", "fulfilled"].every(
+        (status) => Boolean(codeStatuses?.includes(status)) && policy.includes(status),
+      ),
+    );
+  }
+
+  // ── 작성 자격 자체 ────────────────────────────────────────────────────────
+  check(
+    "**거래가 없는 사람은 후기를 쓸 수 없다** — '검증' 이라는 말의 근거다",
+    rejectedWith(/row-level security/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.reviews(booking_id, couple_id, vendor_id, score_price)
+           select id, couple_id, vendor_id, 5 from public.bookings
+             where id = '00000000-0000-0000-0000-0000000000fe';`,
+        // **새 예약을 만들어 둔다.** 기존 예약은 전부 후기가 붙어 있어 `not in` 으로
+        // 고르면 **0행이 선택돼 INSERT 가 조용히 성공한다** — 거절되는지 보려는 검사가
+        // 아무것도 묻지 않게 된다.
+        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount)
+           select '00000000-0000-0000-0000-0000000000fe', couple_id, vendor_id, 'confirmed', 1
+             from public.bookings limit 1;`,
+      ),
+    ),
+  );
+  check(
+    "**확정 전 예약에는 후기를 쓸 수 없다**",
+    rejectedWith(/row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.reviews(booking_id, couple_id, vendor_id, score_price)
+           select id, couple_id, vendor_id, 5 from public.bookings
+             where id = '00000000-0000-0000-0000-0000000000ff';`,
+        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount)
+           select '00000000-0000-0000-0000-0000000000ff', couple_id, vendor_id, 'hold', 1
+             from public.bookings limit 1;`,
+      ),
+    ),
+  );
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "공개 후기는 비로그인도 읽는다 (업체 상세에 실린다)",
+    Number(asAnon(`select count(*) from public.reviews;`)) > 0,
+  );
+  check(
+    "**거둔 후기는 비로그인에게 보이지 않는다**",
+    asAnon(
+      `select count(*) from public.reviews where id = '${reviewA}';`,
+      `update public.reviews set retracted_at = now(), retracted_by = '${owner}' where id = '${reviewA}';`,
+    ) === "0",
+  );
+  check(
+    "**내려간 후기는 비로그인에게 보이지 않는다**",
+    asAnon(
+      `select count(*) from public.reviews where id = '${reviewA}';`,
+      `update public.reviews set status = 'hidden', hidden_reason = 'demo',
+         hidden_by = '${adminUser}', hidden_at = now() where id = '${reviewA}';`,
+    ) === "0",
+  );
+  check(
+    "운영자는 내려간 후기도 읽는다 — 다시 찾을 수 없으면 복구할 수 없다 (F-A-13)",
+    asUser(
+      adminUser,
+      `select count(*) from public.reviews where id = '${reviewA}';`,
+      `update public.reviews set status = 'hidden', hidden_reason = 'demo',
+         hidden_by = '${adminUser}', hidden_at = now() where id = '${reviewA}';`,
+    ) === "1",
+  );
+  check(
+    "업체는 자기 후기를 전부 본다 (평판 기록을 당사자에게 감추지 않는다)",
+    Number(asUser(vendorOwner, `select count(*) from public.reviews;`)) >= 3,
+  );
+  check(
+    "**신고 내용은 비로그인에게 보이지 않는다**",
+    asAnon(`select count(*) from public.review_reports;`) === "0",
+  );
+  check(
+    "**남의 신고는 커플 당사자에게 보이지 않는다**",
+    asUser(owner, `select count(*) from public.review_reports where id = '${reportId}';`) === "0",
+  );
+  check(
+    "운영자는 신고 전부를 읽는다 (F-A-13 은 행을 읽는 것이 목적이다 · D-115)",
+    Number(asUser(adminUser, `select count(*) from public.review_reports;`)) > 0,
+  );
+
+  // ── 기준이 없는 신호는 세지 않는다 (O-20) ─────────────────────────────────
+  check(
+    "**몰아쓰기 임계가 미결로 비어 있다** (O-20 — 코드가 숫자를 고르지 않는다)",
+    sql(`select count(*) from public.app_settings
+           where key in ('reviews.burst_window_hours', 'reviews.burst_min_count')
+             and value_json->>'value' is null;`) === "2",
+  );
+  check(
+    "미결 파라미터가 오픈 이슈 번호를 달고 있다",
+    sql(`select count(*) from public.app_settings
+           where key like 'reviews.burst_%' and value_json->>'openIssue' = 'O-20';`) === "2",
+  );
+  check(
+    "**기준이 없을 때 빈 목록이 아니라 blocked 를 낸다** (함정 2)",
+    readFileSync("lib/core/review/abuse.ts", "utf8").includes('status: "blocked"'),
+  );
+
+  // ── 저장하지 않는 것 ──────────────────────────────────────────────────────
+  check(
+    "**어뷰징 큐를 표로 저장하지 않는다** — 계산 가능한 값을 저장하면 낡는다(D-124)",
+    sql(`select count(*) from information_schema.tables
+           where table_schema = 'public' and table_name like '%review_flag%';`) === "0",
+  );
+  check(
+    "**평점 캐시 컬럼을 만들지 않았다** — 두 곳이 갈리면 어느 쪽이 맞는지 화면으로는 모른다",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'vendors'
+             and column_name in ('rating_avg', 'review_count');`) === "0",
+  );
+
+  // ── 픽스처: 화면이 실제 값을 보이는가 ─────────────────────────────────────
+  check(
+    "공개 후기 픽스처가 붙어 있다 (0건이면 격리 검사가 엉뚱한 이유로 통과한다)",
+    Number(sql(`select count(*) from public.reviews
+                  where status = 'published' and retracted_at is null;`)) >= 3,
+  );
+  check(
+    "처리 대기 신고 픽스처가 붙어 있다 (reported 신호가 실제로 뜬다)",
+    Number(sql(`select count(*) from public.review_reports where status = 'open';`)) >= 1,
+  );
+  check(
+    "본문 없는 극단 점수 픽스처가 있다 (no_body_extreme 이 임계 없이 도는 것을 보인다)",
+    Number(sql(`select count(*) from public.reviews
+                  where coalesce(btrim(body), '') = ''
+                    and score_price = 1 and score_response = 1 and score_fulfillment = 1;`)) >= 1,
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/reviews` 화면이 실재한다", existsSync("app/(admin)/admin/reviews/page.tsx"));
+  check("`/vendor/reviews` 화면이 실재한다", existsSync("app/(vendor)/vendor/reviews/page.tsx"));
+  check(
+    "`/reviews/new/[bookingId]` 화면이 실재한다",
+    existsSync("app/(consumer)/reviews/new/[bookingId]/page.tsx"),
+  );
+  {
+    const shell = readFileSync("components/layout/AdminShell.tsx", "utf8");
+
+    check("내비가 `/admin/reviews` 를 가리킨다", shell.includes('href: "/admin/reviews"'));
+    check("내비가 `/vendor/reviews` 를 가리킨다", shell.includes('href: "/vendor/reviews"'));
+  }
+  check(
+    "**후기 작성 화면에 들어갈 길이 있다** — 만들고 가리키지 않으면 도달 불가다(FIX-25)",
+    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes("/reviews/new/"),
+  );
+  check(
+    "업체 상세가 검증 후기를 싣는다 (커뮤니티 언급과 실선/점선으로 갈린다 · §6.2)",
+    readFileSync("app/(consumer)/explore/[vendorId]/page.tsx", "utf8").includes("VendorReviews"),
+  );
+  check(
+    "후기 관리 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/reviews/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**S2-08 의 '평균 평점' 이 실측으로 바뀌었다** — 만든 기능을 화면이 '없다' 고 말하지 않는다(FIX-29)",
+    !readFileSync("lib/vendor/stats.ts", "utf8").includes("검증 후기 기능이 아직 없습니다"),
+  );
+  check(
+    "**후기 0건을 0점으로 적지 않는다** (0점은 '평가가 최악' 으로 읽힌다 · D-96)",
+    readFileSync("lib/vendor/stats.ts", "utf8").includes("noBasis("),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0058 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

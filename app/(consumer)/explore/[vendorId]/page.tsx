@@ -19,6 +19,7 @@ import { BookConsultation } from "./BookConsultation";
 import { CommunityMentions } from "./CommunityMentions";
 import { StartChatButton } from "./StartChatButton";
 import { VendorProducts } from "./VendorProducts";
+import { VendorReviews } from "./VendorReviews";
 
 export const metadata: Metadata = {
   title: "업체 상세 — 웨딩클리어",
@@ -117,6 +118,12 @@ export default async function VendorDetailPage({ params }: { params: { vendorId:
 
         {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
         <StartChatButton vendorId={vendor.id} />
+
+        {/* 검증 후기(F-C-17 · S8-11). **커뮤니티 언급 바로 위**에 둔다 —
+            거래로 확인된 평가가 먼저 오고, 모양도 실선 카드로 갈라놓는다(§6.2). */}
+        <Suspense fallback={null}>
+          <VendorReviews vendorId={vendor.id} />
+        </Suspense>
 
         {/* 커뮤니티 언급(F-C-33 · S7-15). **검증 후기와 시각적으로 분리**하고
             '미검증 경험담' 라벨을 붙인다. 커뮤니티가 닫혀 있으면 그리지 않는다. */}

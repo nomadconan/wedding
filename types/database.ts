@@ -4099,6 +4099,9 @@ export type Database = {
           id: string
           reason_code: string
           reporter_id: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
           review_id: string
           status: string
           updated_at: string
@@ -4108,6 +4111,9 @@ export type Database = {
           id?: string
           reason_code: string
           reporter_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           review_id: string
           status?: string
           updated_at?: string
@@ -4117,6 +4123,9 @@ export type Database = {
           id?: string
           reason_code?: string
           reporter_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           review_id?: string
           status?: string
           updated_at?: string
@@ -4138,13 +4147,21 @@ export type Database = {
           couple_id: string
           created_at: string
           disclosed_amount: number | null
+          hidden_at: string | null
+          hidden_by: string | null
+          hidden_reason: string | null
           id: string
+          retracted_at: string | null
+          retracted_by: string | null
           score_fulfillment: number | null
           score_price: number | null
           score_response: number | null
           status: string
           updated_at: string
           vendor_id: string
+          vendor_replied_at: string | null
+          vendor_replied_by: string | null
+          vendor_reply: string | null
         }
         Insert: {
           body?: string | null
@@ -4152,13 +4169,21 @@ export type Database = {
           couple_id: string
           created_at?: string
           disclosed_amount?: number | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
+          retracted_at?: string | null
+          retracted_by?: string | null
           score_fulfillment?: number | null
           score_price?: number | null
           score_response?: number | null
           status?: string
           updated_at?: string
           vendor_id: string
+          vendor_replied_at?: string | null
+          vendor_replied_by?: string | null
+          vendor_reply?: string | null
         }
         Update: {
           body?: string | null
@@ -4166,13 +4191,21 @@ export type Database = {
           couple_id?: string
           created_at?: string
           disclosed_amount?: number | null
+          hidden_at?: string | null
+          hidden_by?: string | null
+          hidden_reason?: string | null
           id?: string
+          retracted_at?: string | null
+          retracted_by?: string | null
           score_fulfillment?: number | null
           score_price?: number | null
           score_response?: number | null
           status?: string
           updated_at?: string
           vendor_id?: string
+          vendor_replied_at?: string | null
+          vendor_replied_by?: string | null
+          vendor_reply?: string | null
         }
         Relationships: [
           {

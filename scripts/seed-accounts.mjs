@@ -992,6 +992,133 @@ async function seedDisputeFixture(coupleMemberUser, vendorId, coupleId) {
 }
 
 
+// ── review fixture (S8-11) ──────────────────────────────────
+const REVIEW_BOOKING_B = "00000000-0000-0000-0000-00000000e001";
+const REVIEW_BOOKING_C = "00000000-0000-0000-0000-00000000e002";
+const REVIEW_A_ID = "00000000-0000-0000-0000-00000000e003";
+const REVIEW_B_ID = "00000000-0000-0000-0000-00000000e004";
+const REVIEW_C_ID = "00000000-0000-0000-0000-00000000e005";
+const REVIEW_REPORT_ID = "00000000-0000-0000-0000-00000000e006";
+
+/**
+ * Verified review fixture (F-C-17 / F-V-11 / F-A-13).
+ *
+ * WHY THIS EXISTS: three screens read this table and all three degrade to the
+ * same blank page on an empty database - and a blank /admin/reviews is
+ * indistinguishable from "the abuse queue is broken". db:rls has the same
+ * problem: an isolation check against zero rows passes for the wrong reason
+ * (S8-01 fixture note).
+ *
+ * WHAT IS SEEDED, and what each row is there to prove:
+ *   A  healthy visible review (scores + body + disclosed amount)
+ *      -> rating is a real number, not null; the disclosed-amount badge renders
+ *   B  no body, every score at the floor
+ *      -> the `no_body_extreme` signal fires WITHOUT any threshold (D-123 line:
+ *         the two threshold-free signals must be demonstrably live while the
+ *         burst signal is blocked on O-20)
+ *   C  visible review carrying one OPEN report
+ *      -> the `reported` signal fires and the moderation panel has something to
+ *         act on
+ *
+ * NOT SEEDED: a hidden review. Hiding requires an operator reason and processor
+ * (0058 CHECK), and a fixture that writes one would show the console a decision
+ * nobody made. The restore path is reached by hiding C from the screen.
+ *
+ * NOT SEEDED EITHER: burst thresholds. They are O-20 undecided - seeding a value
+ * would make the queue show a burst count that silently picks a threshold.
+ */
+async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
+  if (!vendorId || !coupleId || !ownerUser) return "skipped";
+
+  const upsert = (table, row) =>
+    rest(`${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(row),
+    });
+
+  const daysAgo = (n) => new Date(Date.now() - n * 86400 * 1000).toISOString();
+
+  // reviews.booking_id is UNIQUE - one review per booking - so extra reviews
+  // need extra bookings. 'fulfilled' and 'confirmed' are both reviewable
+  // (REVIEWABLE_BOOKING_STATUSES); seed one of each so the form context reads
+  // both branches.
+  await upsert("bookings", {
+    id: REVIEW_BOOKING_B,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    product_id: METRIC_PRODUCT_ID,
+    status: "fulfilled",
+    total_amount: 9800000,
+    deposit_amount: 1960000,
+  });
+  await upsert("bookings", {
+    id: REVIEW_BOOKING_C,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    product_id: METRIC_PRODUCT_ID,
+    status: "confirmed",
+    total_amount: 11200000,
+    deposit_amount: 2240000,
+  });
+
+  await upsert("reviews", {
+    id: REVIEW_A_ID,
+    booking_id: METRIC_BOOKING_ID,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    score_price: 5,
+    score_response: 4,
+    score_fulfillment: 4,
+    body: "견적서에 없던 금액이 나중에 붙지 않았습니다. 응대는 주말에 조금 느렸어요.",
+    disclosed_amount: 12000000,
+    created_at: daysAgo(20),
+  });
+
+  await upsert("reviews", {
+    id: REVIEW_B_ID,
+    booking_id: REVIEW_BOOKING_B,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    score_price: 1,
+    score_response: 1,
+    score_fulfillment: 1,
+    body: null,
+    disclosed_amount: null,
+    created_at: daysAgo(6),
+  });
+
+  await upsert("reviews", {
+    id: REVIEW_C_ID,
+    booking_id: REVIEW_BOOKING_C,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    score_price: 3,
+    score_response: 2,
+    score_fulfillment: null,
+    body: "상담 때 들은 설명과 달랐습니다.",
+    disclosed_amount: null,
+    created_at: daysAgo(3),
+  });
+
+  // The vendor reports C. status stays 'open' - the column privileges in 0058
+  // stop a reporter from filing a closed report, and the fixture obeys the same
+  // rule it is meant to demonstrate.
+  if (vendorUser) {
+    await upsert("review_reports", {
+      id: REVIEW_REPORT_ID,
+      review_id: REVIEW_C_ID,
+      reporter_id: vendorUser.id,
+      reason_code: "false_statement",
+      status: "open",
+      created_at: daysAgo(2),
+    });
+  }
+
+  return "created";
+}
+
+
 // ── price curation fixture (S8-10) ──────────────────────────────────────────
 /**
  * Price curation fixture (F-A-02 / F-A-14).
@@ -1173,6 +1300,14 @@ async function main() {
     linkedCouple,
   );
 
+  // AFTER the metrics fixture: review A hangs off the booking it created.
+  const reviewSeed = await seedReviewFixture(
+    vendor.id,
+    linkedCouple,
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+    vendorUser,
+  );
+
   const privacySeed = await seedPrivacyFixture(
     results.find((row) => row.email === "admin@local.test"),
     linkedCouple,
@@ -1262,6 +1397,16 @@ async function main() {
   console.log("       exclusion drops the cell back below the floor.");
   console.log("    -> anomaly thresholds stay UNDECIDED (O-19) on purpose: the queue must");
   console.log("       say 기준 미확정, not 0건. Seeding them would fake a working detector.");
+  console.log("");
+  console.log("  review fixture (S8-11)");
+  console.log(`    status      : ${reviewSeed}`);
+  console.log("    rows        : 2 extra bookings + 3 reviews + 1 open report");
+  console.log("    -> A: scores + body + disclosed amount (rating is a real number)");
+  console.log("    -> B: no body, all scores at the floor (no_body_extreme fires)");
+  console.log("    -> C: carries an open report (reported fires)");
+  console.log("    -> burst thresholds stay UNDECIDED (O-20) on purpose: that tile must");
+  console.log("       say 기준 미결, not 0건. A wedding couple signing hall+studio+photo in");
+  console.log("       one week is NORMAL, so a made-up threshold flags real customers.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);
