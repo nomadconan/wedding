@@ -1066,6 +1066,61 @@ async function seedPriceFixture(vendorId) {
     });
   }
 
+  // The index cell + source rows, written the way price-index-refresh writes them.
+  //
+  // WHY THE FIXTURE BUILDS THESE ITSELF: db:rls checks that operators can read
+  // price_sources and that vendors cannot forge them. Those checks need rows to
+  // exist. Locally the batch had been run by hand, so they passed - in CI nothing
+  // runs it and three checks failed. A fixture that depends on a separate process
+  // having run is not a fixture. (Caught by CI on the S8-10 PR.)
+  //
+  // The quartiles below are what buildPriceIndex produces for these 5 prices
+  // (nearest-rank, no interpolation): rank = ceil(p * n / 10000), n = 5.
+  //   p25 -> rank 2 -> 11,000,000
+  //   p50 -> rank 3 -> 13,000,000
+  //   p75 -> rank 4 -> 16,000,000
+  const indexId = `${PRICE_VENDOR_PREFIX}90`;
+
+  await rest("price_index?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      id: indexId,
+      region_code: regionCode,
+      category,
+      // Registered prices carry neither a wedding date nor a guest count, so the
+      // buckets stay `all` (PRICE_INDEX_ALL). Splitting them would invent a
+      // distinction that the data does not have.
+      guest_bucket: "all",
+      season: "all",
+      p25: 11000000,
+      p50: 13000000,
+      p75: 16000000,
+      sample_size: prices.length,
+      source_type: "registered_price",
+      collected_at: new Date().toISOString(),
+      version: new Date().toISOString().slice(0, 10),
+    }),
+  });
+
+  const existingSources = await rest(`price_sources?index_id=eq.${indexId}&select=id&limit=1`);
+  if (existingSources.length === 0) {
+    await rest("price_sources", {
+      method: "POST",
+      body: JSON.stringify(
+        prices.map((value, i) => ({
+          index_id: indexId,
+          source_name: "등록 판매가",
+          // vendor:/product: is the convention loadSources() and recalculateIndex()
+          // read - it keeps "one sample per vendor" working without a PostgREST
+          // embed that could silently drop rows (함정 1).
+          source_url: `vendor:${PRICE_VENDOR_PREFIX}${String(i + 1).padStart(2, "0")}/product:${PRICE_VENDOR_PREFIX}${String(i + 51).padStart(2, "0")}`,
+          raw_value: value,
+        })),
+      ),
+    });
+  }
+
   return "created";
 }
 
