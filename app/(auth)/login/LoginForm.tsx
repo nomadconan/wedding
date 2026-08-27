@@ -7,6 +7,12 @@ import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { landingForRole } from "@/lib/core/auth/landing";
+import {
+  type LoginErrorView,
+  classifyLoginError,
+  withLoginTimeout,
+} from "@/lib/core/auth/login-error";
 import { createClient } from "@/lib/supabase/client";
 
 /**
@@ -49,15 +55,29 @@ async function landingFor(supabase: ReturnType<typeof createClient>): Promise<st
     .eq("user_id", auth.user.id)
     .maybeSingle();
 
-  switch (profile?.role) {
-    case "admin":
-    case "ops":
-      return "/admin/vendors";
-    case "vendor_owner":
-    case "vendor_staff":
-      return "/vendor";
-    default:
-      return "/home";
+  return landingForRole(profile?.role ?? null);
+}
+
+/**
+ * 세션 쿠키가 **실제로 보일 때까지** 기다린다.
+ *
+ * `signInWithPassword` 가 resolve 해도 `@supabase/ssr` 브라우저 클라이언트가
+ * `document.cookie` 를 쓰는 것은 그 다음 tick 이다. 그 사이에 `router.push` 를 하면
+ * RSC 요청이 **쿠키 없이** 나가고 미들웨어가 미인증으로 보아 `/login` 으로 되돌린다 —
+ * 사용자에게는 "로그인했는데 로그인 화면으로 튕긴다" 로 보인다(FIX-24 계열).
+ *
+ * 못 기다려도 이동은 막지 않는다. 여기서 멈추면 고칠 수 있는 상황까지 못 넘어간다.
+ */
+async function waitForSessionCookie(
+  supabase: ReturnType<typeof createClient>,
+  attempts = 20,
+): Promise<void> {
+  for (let i = 0; i < attempts; i += 1) {
+    const { data } = await supabase.auth.getSession();
+    // 쿠키 이름은 URL 에서 파생돼 환경마다 다르다. 이름 대신 `sb-` 접두어만 본다.
+    if (data.session && document.cookie.includes("sb-")) return;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
@@ -77,7 +97,7 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginErrorView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -110,20 +130,26 @@ export function LoginForm() {
             { onConflict: "user_id" },
           );
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        // 제한 시간을 건다. 이것이 없으면 인증 서버가 죽었을 때 auth-js 가 30초 동안
+        // 조용히 재시도하고 화면은 "처리 중…" 에 멈춘 채 아무 문구도 내지 않는다 —
+        // FIX-24 를 진단 불가로 만든 구간이다.
+        const { error: signInError } = await withLoginTimeout(
+          supabase.auth.signInWithPassword({ email, password }),
+        );
         if (signInError) throw signInError;
       }
+
+      // 세션이 **쿠키로 실제로 보이는지** 확인한 뒤에 이동한다. 브라우저 클라이언트가
+      // 쿠키를 쓰기 전에 이동하면 미들웨어가 그 요청을 미인증으로 보고 /login 으로
+      // 되돌린다 — 로그인은 됐는데 로그인 화면으로 튕기는 것처럼 보인다.
+      await waitForSessionCookie(supabase);
 
       router.push(nextPath ?? (await landingFor(supabase)));
       router.refresh();
     } catch (caught) {
       // 서버 예외 메시지를 그대로 보여주지 않는다(CLAUDE.md §5.3).
-      const message =
-        caught instanceof Error && caught.message.includes("Invalid login credentials")
-          ? "이메일 또는 비밀번호가 올바르지 않습니다."
-          : "로그인에 실패했어요. 잠시 후 다시 시도해 주세요.";
-
-      setError(message);
+      // 대신 실패한 **계층**을 고른다 — 자격증명 문제와 인프라 문제는 할 일이 다르다.
+      setError(classifyLoginError(caught));
     } finally {
       setPending(false);
     }
@@ -182,9 +208,15 @@ export function LoginForm() {
         </div>
 
         {error ? (
-          <p role="alert" className="text-sm text-danger">
-            {error}
-          </p>
+          <div role="alert" className="space-y-1">
+            <p className="text-sm text-danger">{error.message}</p>
+            {/*
+              환경 문제일 때 힌트를 함께 낸다. "비밀번호가 틀렸나" 를 30분 더
+              들여다보게 만드는 것이 FIX-24 의 실제 비용이었다.
+            */}
+            <p className="text-caption text-muted-foreground">{error.hint}</p>
+            <p className="text-caption text-muted-foreground">코드: {error.code}</p>
+          </div>
         ) : null}
 
         {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}

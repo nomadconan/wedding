@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { isMeasured, type MetricValue } from "@/lib/core/stats/metric";
+import { METRIC_STATUS_LABEL, isMeasured, type MetricValue } from "@/lib/core/stats/metric";
 import { cn } from "@/lib/utils";
 
 /**
@@ -73,14 +73,36 @@ export function MetricTile({
         </>
       ) : (
         <div className="mt-1 space-y-1">
-          {/* 숫자 자리에 숫자를 넣지 않는다. */}
-          <Badge variant={metric.status === "restricted" ? "outline" : "secondary"}>
-            {metric.status === "restricted" ? "권한 없음" : "집계 대상 없음"}
+          {/*
+            숫자 자리에 숫자를 넣지 않는다. 네 가지 '숫자 아님' 은 **서로 다른 사실**이라
+            배지 문구도 다르다 — 하나로 뭉치면 "권한이 없다" 와 "기준이 미결이다" 가
+            같은 얼굴이 되고, 운영자는 고칠 수 있는 것과 없는 것을 구분하지 못한다.
+          */}
+          <Badge
+            variant={
+              // 손댈 수 없는 것(권한·미결 이슈)과 아직 안 온 것(기능·모수)을 가른다.
+              metric.status === "restricted" || metric.status === "undecided"
+                ? "outline"
+                : "secondary"
+            }
+          >
+            {METRIC_STATUS_LABEL[metric.status]}
           </Badge>
           <p className="text-caption text-muted-foreground">{metric.reason}</p>
           {metric.status === "not_yet" ? (
             <p className="text-caption text-muted-foreground">
               연결 예정 · <span className="font-medium">{metric.filledBy}</span>
+            </p>
+          ) : null}
+          {metric.status === "undecided" ? (
+            <p className="text-caption text-muted-foreground">
+              미결 이슈 · <span className="font-medium">{metric.openIssue}</span> — 값이 정해지면
+              그대로 계산됩니다.
+            </p>
+          ) : null}
+          {metric.status === "no_basis" ? (
+            <p className="text-caption text-muted-foreground">
+              분모 · <span className="font-medium">{metric.basisLabel}</span>
             </p>
           ) : null}
         </div>
