@@ -6910,5 +6910,164 @@ if (!vendorStaff || !adminUser) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-01 — 운영자 지표 (F-A-07 · admin_metrics · 0052)
+//
+// **여기서 무엇을 확인하는가.** `admin_metrics()` 는 SECURITY DEFINER 라 RLS 를
+// 지나간다. 그래서 이 함수에 대해서는 "정책이 막는가" 가 아니라 **"함수 안의 검사가
+// 막는가"** 를 봐야 한다 — 경계가 옮겨 갔으면 검사도 옮겨 가야 한다.
+//
+// 그리고 **집계가 실제로 0이 아닌지**도 본다. 값이 전부 0이면 격리 검사가 통과해도
+// 그것은 "아무것도 안 보인다" 가 아니라 "아무것도 없다" 라서 통과한 것이고, 정작
+// 값이 새는 날 알아채지 못한다(S8-01 이 픽스처를 붙인 이유).
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const WINDOW = `now() - interval '30 days', now()`;
+
+  // ── 경계: 누가 부를 수 있나 ────────────────────────────────────────────────
+  check(
+    "운영자(admin)는 지표를 집계한다",
+    // `boolean::text` 는 't' 가 아니라 'true' 다. 다른 검사들이 쓰는 `= 't'` 를
+    // 그대로 베끼면 통과할 수 없는 검사가 된다.
+    asUser(adminUser, `select (public.admin_metrics(${WINDOW}) ? 'signups')::text;`) === "true",
+  );
+  check(
+    "운영자(ops)도 집계한다 — 두 역할 다 §1.4 의 운영자다",
+    asUser(opsUser, `select (public.admin_metrics(${WINDOW}) ? 'signups')::text;`) === "true",
+  );
+  check(
+    "**커플 당사자는 막힌다** — DEFINER 함수의 경계는 함수 안의 is_operator() 다",
+    rejectedWith(/ADMIN_METRICS_FORBIDDEN/, () =>
+      asUser(owner, `select public.admin_metrics(${WINDOW});`),
+    ),
+  );
+  check(
+    "**업체도 막힌다** — 플랫폼 전체 거래액은 업체가 볼 값이 아니다",
+    rejectedWith(/ADMIN_METRICS_FORBIDDEN/, () =>
+      asUser(outsider, `select public.admin_metrics(${WINDOW});`),
+    ),
+  );
+  check(
+    "**플래너도 막힌다** — 위임은 담당 커플까지이지 플랫폼 지표가 아니다",
+    rejectedWith(/ADMIN_METRICS_FORBIDDEN/, () =>
+      asUser(plannerAccount, `select public.admin_metrics(${WINDOW});`),
+    ),
+  );
+  check(
+    "**비로그인은 실행 권한 자체가 없다** — anon 에 grant 하지 않았다",
+    rejectedWith(/permission denied|ADMIN_METRICS_FORBIDDEN/, () =>
+      asAnon(`select public.admin_metrics(${WINDOW});`),
+    ),
+  );
+
+  // `revoke ... from public` 은 service_role 이 물려받은 몫까지 걷어간다. 명시 grant 가
+  // 살아 있는지 본다 — 없으면 "권한 부족" 이 "경계가 막았다" 로 잘못 읽힌다.
+  check(
+    "service_role 은 실행할 수 있으나 auth.uid() 가 없어 막힌다 (실행 권한 ≠ 통과)",
+    rejectedWith(/ADMIN_METRICS_FORBIDDEN/, () =>
+      sql(`begin; set local role service_role; select public.admin_metrics(${WINDOW}); rollback;`),
+    ),
+  );
+
+  // ── 인자 검증 ──────────────────────────────────────────────────────────────
+  check(
+    "뒤집힌 기간은 거절한다 — 조용히 빈 결과를 주지 않는다",
+    rejectedWith(/ADMIN_METRICS_BAD_PERIOD/, () =>
+      asUser(adminUser, `select public.admin_metrics(now(), now() - interval '30 days');`),
+    ),
+  );
+  check(
+    "null 기간도 거절한다",
+    rejectedWith(/ADMIN_METRICS_BAD_PERIOD/, () =>
+      asUser(adminUser, `select public.admin_metrics(null, now());`),
+    ),
+  );
+
+  // ── 집계가 실제 값을 낸다 (픽스처가 붙어 있어야 뜻이 있다) ────────────────
+  const metrics = JSON.parse(asUser(adminUser, `select public.admin_metrics(${WINDOW})::text;`));
+
+  check("가입을 센다", Number(metrics.signups) > 0, `signups=${metrics.signups}`);
+  check(
+    "**소비자 가입을 따로 센다** — 퍼널 첫 칸과 멤버십 전환율의 분모다",
+    Number(metrics.consumerSignups) > 0 &&
+      Number(metrics.consumerSignups) < Number(metrics.signups),
+    `consumer=${metrics.consumerSignups} / total=${metrics.signups}`,
+  );
+  check(
+    "**커플 데이터를 센다** — 운영자에게 couples SELECT 정책이 없어도 집계는 나온다",
+    Number(metrics.onboardedCouples) > 0,
+    `onboardedCouples=${metrics.onboardedCouples}`,
+  );
+  check(
+    "**장바구니를 센다** — 담긴 것이 있는 커플만",
+    Number(metrics.couplesWithCart) > 0,
+    `couplesWithCart=${metrics.couplesWithCart}`,
+  );
+  check("문의를 센다", Number(metrics.inquiries) > 0, `inquiries=${metrics.inquiries}`);
+  check("예약을 센다", Number(metrics.bookings) > 0, `bookings=${metrics.bookings}`);
+  check("GMV 를 센다", Number(metrics.gmvAmount) > 0, `gmv=${metrics.gmvAmount}`);
+  check(
+    "**리포트를 'done' 으로 센다** — 'succeeded' 로 세면 오류 없이 늘 0이다",
+    Number(metrics.reportsSucceeded) > 0,
+    `reportsSucceeded=${metrics.reportsSucceeded}`,
+  );
+  check(
+    "멤버십 전환을 센다",
+    Number(metrics.membershipsStarted) > 0,
+    `started=${metrics.membershipsStarted}`,
+  );
+  check(
+    "멤버십 이탈을 센다",
+    Number(metrics.membershipsCanceled) > 0,
+    `canceled=${metrics.membershipsCanceled}`,
+  );
+  check("MAU 를 센다", Number(metrics.mau) > 0, `mau=${metrics.mau}`);
+
+  // ── 새어 나가면 안 되는 것 ────────────────────────────────────────────────
+  check(
+    "**행도 id 도 내보내지 않는다** — 개수와 합계뿐이다(§7.3)",
+    Object.values(metrics).every((value) => typeof value === "number"),
+  );
+  check(
+    "**uuid 문자열이 응답에 없다**",
+    !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(JSON.stringify(metrics)),
+  );
+
+  // ── 수수료 기준은 여전히 미결이다 (O-15) ──────────────────────────────────
+  check(
+    "**settlement.fee_basis 는 미결이다** — 시드가 값을 채워 확정시키지 않았다",
+    sql(
+      `select coalesce((value_json->>'basis'), 'NULL') from public.app_settings where key = 'settlement.fee_basis';`,
+    ) === "NULL",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check(
+    "운영자 콘솔 내비의 `/admin` 이 실재한다 (FIX-23 죽은 링크 여덟 중 하나)",
+    existsSync("app/(admin)/admin/page.tsx"),
+  );
+  check(
+    "대시보드가 캐시되지 않는다 — 굳으면 권한 회수 뒤에도 지표가 나간다(FIX-22 계열)",
+    readFileSync("app/(admin)/admin/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "지표 API 도 캐시되지 않는다",
+    readFileSync("app/api/admin/metrics/route.ts", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**로그인 착지 경로가 실재한다**(FIX-24) — 로그인은 됐는데 없는 화면에 떨어지지 않는다",
+    ["/admin", "/vendor", "/pro", "/home"].every((route) =>
+      ["(admin)", "(vendor)", "(planner)", "(consumer)"].some((group) =>
+        existsSync(`app/${group}${route}/page.tsx`),
+      ),
+    ),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

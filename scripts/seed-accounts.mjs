@@ -535,6 +535,167 @@ async function seedPlanner(plannerUser, coupleId) {
   return "created";
 }
 
+// ── metrics fixture (S8-01) ─────────────────────────────────────────────────
+// Fixed ids so re-runs are idempotent and rls-check can find them.
+const METRIC_PRODUCT_ID = "00000000-0000-0000-0000-00000000d001";
+const METRIC_CART_ID = "00000000-0000-0000-0000-00000000d002";
+const METRIC_INQUIRY_ID = "00000000-0000-0000-0000-00000000d003";
+const METRIC_BOOKING_ID = "00000000-0000-0000-0000-00000000d004";
+const METRIC_DOCUMENT_ID = "00000000-0000-0000-0000-00000000d005";
+const METRIC_ANALYSIS_ID = "00000000-0000-0000-0000-00000000d006";
+
+/**
+ * Operator dashboard fixture (S8-01, F-A-07).
+ *
+ * WHY THIS EXISTS: /admin aggregates couple- and vendor-side rows. With an empty
+ * database every tile reads a measured zero, which is indistinguishable at a
+ * glance from "the aggregate is broken". Nobody can tell the dashboard works.
+ * db:rls has the same problem - a count that is 0 for everyone passes an
+ * isolation check for the wrong reason.
+ *
+ * ONE ROW PER FUNNEL STEP, all dated NOW so the default 30-day window sees them.
+ * Amounts are round demo numbers; they are not derived from any real vendor.
+ *
+ * NOT SEEDED: settlements. Fee amounts depend on settlement.fee_basis, which is
+ * O-15 undecided - seeding one would make the dashboard show a fee figure that
+ * silently picks a basis. The dashboard is supposed to say "기준 미확정" there.
+ */
+async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
+  if (!vendorId || !coupleId || !ownerUser) return "skipped";
+
+  const upsert = (table, row) =>
+    rest(`${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(row),
+    });
+
+  await upsert("products", {
+    id: METRIC_PRODUCT_ID,
+    vendor_id: vendorId,
+    category: "hall",
+    name: "로컬 데모 홀 패키지",
+    base_price_total: 12000000,
+    // products_publish_requirements_chk: a published product must have a price,
+    // at least one included item, and a declared add-on state (S2-04 - "추가금
+    // 없음" has to be an explicit declaration, never an empty column).
+    included_items_json: [{ label: "예식장 대관", included: true }],
+    add_ons_declared_at: new Date().toISOString(),
+    status: "published",
+    published_at: new Date().toISOString(),
+  });
+
+  await upsert("carts", { id: METRIC_CART_ID, couple_id: coupleId, status: "active" });
+
+  // cart_items has no id conflict target we control on re-run, so check first.
+  const items = await rest(`cart_items?cart_id=eq.${METRIC_CART_ID}&select=id`);
+  if (items.length === 0) {
+    await rest("cart_items", {
+      method: "POST",
+      body: JSON.stringify({
+        cart_id: METRIC_CART_ID,
+        vendor_id: vendorId,
+        product_id: METRIC_PRODUCT_ID,
+        added_by: ownerUser.id,
+        price_at_add: 12000000,
+      }),
+    });
+  }
+
+  await upsert("inquiries", {
+    id: METRIC_INQUIRY_ID,
+    couple_id: coupleId,
+    status: "open",
+    request_json: { note: "local demo inquiry" },
+    region_code: "서울 강남",
+    guest_count: 150,
+  });
+
+  await upsert("bookings", {
+    id: METRIC_BOOKING_ID,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    product_id: METRIC_PRODUCT_ID,
+    status: "confirmed",
+    total_amount: 12000000,
+    deposit_amount: 2400000,
+  });
+
+  // purge_scheduled_at is REQUIRED (CLAUDE.md 5.1) - a documents row without it
+  // is exactly the state the rule forbids, seed or not.
+  await upsert("documents", {
+    id: METRIC_DOCUMENT_ID,
+    couple_id: coupleId,
+    doc_type: "contract",
+    storage_path: "local-demo/never-uploaded.pdf",
+    purge_scheduled_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+  });
+
+  await upsert("document_analyses", {
+    id: METRIC_ANALYSIS_ID,
+    document_id: METRIC_DOCUMENT_ID,
+    // 'done', not 'succeeded' - ANALYSIS_STATUSES in lib/core/report/pipeline.ts.
+    status: "done",
+    risk_score: 42,
+  });
+
+  // Membership: one active (conversion) + one canceled (churn). Both are needed
+  // or the churn-rate denominator has nothing in it and reads as "모수 없음".
+  const memberships = [
+    { user: ownerUser, status: "active" },
+    { user: partnerUser, status: "canceled" },
+  ].filter((row) => row.user);
+
+  for (const row of memberships) {
+    const existing = await rest(`memberships?user_id=eq.${row.user.id}&select=id`);
+    const body = {
+      user_id: row.user.id,
+      plan: "premium",
+      status: row.status,
+      started_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+      source: "local_demo",
+    };
+
+    if (existing.length === 0) {
+      await rest("memberships", { method: "POST", body: JSON.stringify(body) });
+    } else {
+      await rest(`memberships?id=eq.${existing[0].id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    }
+  }
+
+  // MAU counts distinct actors in entity_events. The fixture actions above really
+  // did happen, so recording them is not an invention - it is the same row the
+  // app would have written. Without them MAU is 0 while everything else is not,
+  // which looks like a bug in the MAU query rather than an empty event log.
+  const actors = [ownerUser, partnerUser].filter(Boolean);
+  for (const actor of actors) {
+    const seen = await rest(
+      `entity_events?actor_id=eq.${actor.id}&event_type=eq.seed_fixture_created&select=id`,
+    );
+
+    if (seen.length === 0) {
+      await rest("entity_events", {
+        method: "POST",
+        body: JSON.stringify({
+          entity_type: "couple",
+          entity_id: coupleId,
+          event_type: "seed_fixture_created",
+          actor_id: actor.id,
+          actor_role: "consumer",
+          source: "system",
+          memo: "local demo fixture (S8-01)",
+        }),
+      });
+    }
+  }
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -564,6 +725,13 @@ async function main() {
   const plannerSeed = await seedPlanner(
     results.find((row) => row.email === "planner@local.test"),
     linkedCouple,
+  );
+
+  const metricsSeed = await seedMetricsFixture(
+    vendor.id,
+    linkedCouple,
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+    results.find((row) => row.email === "couple-linked-b@local.test"),
   );
 
   console.log("  accounts");
@@ -603,6 +771,14 @@ async function main() {
   console.log("    onboarding  : complete (6 answers, stage=active)");
   console.log("    -> npm run db:rls now runs straight after db:reset + this script.");
   console.log("    -> couple-a / couple-b stay untouched so /onboarding is still demoable.");
+  console.log("");
+  console.log("  metrics fixture (S8-01)");
+  console.log(`    status      : ${metricsSeed}`);
+  console.log("    rows        : product, cart+item, inquiry, booking(confirmed),");
+  console.log("                  document+analysis(done), membership active/canceled, 2 events");
+  console.log("    -> /admin shows real numbers instead of a wall of zeros.");
+  console.log("    -> settlements are NOT seeded: fee basis is O-15 undecided and the");
+  console.log("       dashboard must keep saying 기준 미확정 there.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);

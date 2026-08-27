@@ -10,12 +10,28 @@
 //   measured    지금 실제로 센 값
 //   not_yet     아직 측정할 수단이 없다. 어느 단계에서 채워지는지 함께 적는다
 //   restricted  권한이 없어 가리는 값(정산 등, §3.9)
+//   undecided   **셀 수는 있지만 무엇을 셀지가 안 정해졌다**(S8-01 이 더했다)
+//   no_basis    **모수가 없어 비율을 만들 수 없다**(S8-01 이 더했다)
+//
+// ── S8-01 이 둘을 더한 이유 ─────────────────────────────────────────────────
+// 운영자 대시보드에서 **셋이 화면에서 같은 얼굴로 겹쳐 읽힌다**:
+//   (가) 실제로 0건이었다
+//   (나) 기준이 미결이라 계산 자체를 하지 않는다 (수수료 수익 · O-15 `settlement.fee_basis`)
+//   (다) 분모가 0이라 비율이 정의되지 않는다 (문의 0건일 때의 문의→예약 전환율)
+// (가)를 (나)로 읽으면 운영자는 멀쩡한 지표를 고장으로 본다. (나)를 (가)로 읽으면
+// **미결정이 조용히 확정된다** — "수수료 수익 0원" 은 요율 기준이 정해졌다는 뜻이 된다
+// (CLAUDE.md §7.6 · O-15). (다)를 0% 로 적으면 "아무도 예약 안 했다" 로 읽힌다.
+// `not_yet`(기능이 아직 없다)과도 다르다 — 여기는 **기능은 서 있다.**
 
 export type MetricValue<T = number> =
   | { status: "measured"; value: T }
   /** `filledBy` 는 이 지표가 채워지는 태스크 ID 다. 화면이 근거로 그대로 보여준다. */
   | { status: "not_yet"; reason: string; filledBy: string }
-  | { status: "restricted"; reason: string };
+  | { status: "restricted"; reason: string }
+  /** `openIssue` 는 O-번호다. 값이 정해지면 계산이 그대로 돈다. */
+  | { status: "undecided"; reason: string; openIssue: string }
+  /** `basisLabel` 은 없는 그 모수의 이름이다("문의" 등). */
+  | { status: "no_basis"; reason: string; basisLabel: string };
 
 export function measured<T>(value: T): MetricValue<T> {
   return { status: "measured", value };
@@ -29,9 +45,38 @@ export function restricted<T = number>(reason: string): MetricValue<T> {
   return { status: "restricted", reason };
 }
 
+/**
+ * 기준이 미결이라 계산하지 않는 값.
+ *
+ * **0 을 돌려주지 않는다.** 0 은 "정해진 기준으로 계산했더니 0" 이라는 뜻이고,
+ * 그렇게 적는 순간 미결정이 확정된 것처럼 보인다(CLAUDE.md §7.6).
+ */
+export function undecided<T = number>(reason: string, openIssue: string): MetricValue<T> {
+  return { status: "undecided", reason, openIssue };
+}
+
+/**
+ * 분모가 0이라 정의되지 않는 비율.
+ *
+ * **0% 로 적지 않는다.** "문의 0건 중 0건 예약" 을 0% 로 적으면 "문의는 왔는데 아무도
+ * 예약하지 않았다" 로 읽힌다 — 정반대의 판단을 부른다.
+ */
+export function noBasis<T = number>(reason: string, basisLabel: string): MetricValue<T> {
+  return { status: "no_basis", reason, basisLabel };
+}
+
 export function isMeasured<T>(metric: MetricValue<T>): metric is { status: "measured"; value: T } {
   return metric.status === "measured";
 }
+
+/** 화면이 붙일 배지 문구. 다섯 상태가 각각 다른 얼굴을 갖게 한다. */
+export const METRIC_STATUS_LABEL: Record<MetricValue["status"], string> = {
+  measured: "집계됨",
+  not_yet: "집계 대상 없음",
+  restricted: "권한 없음",
+  undecided: "기준 미확정",
+  no_basis: "모수 없음",
+};
 
 /**
  * 슬롯 소진율.
