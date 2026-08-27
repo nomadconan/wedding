@@ -12,6 +12,7 @@ import {
   purgeAlerts,
 } from "@/lib/core/privacy/purge";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
 
 /**
  * 개인정보 감사 로더 (S8-04 · F-A-08)
@@ -38,10 +39,20 @@ export type DeletionRow = {
   sla: SlaVerdict;
 };
 
+/**
+ * 배치 실행 한 줄.
+ *
+ * **`startedAt` 은 null 일 수 있다.** 예전에 이 타입이 `string` 이라고 적어 두는 바람에
+ * `/admin/privacy` 가 통째로 빈 화면이 됐다 —
+ * `Cannot read properties of null (reading 'replace')`.
+ * `types/database.ts` 는 처음부터 `started_at: string | null` 이라고 정확히 적고 있었는데,
+ * **손으로 다시 적은 타입이 그 사실을 덮어써서** tsc 가 막지 못했다.
+ * 그래서 아래 `RawRun` 은 생성된 타입에서 끌어다 쓴다. 손으로 적지 않는다.
+ */
 export type JobRunRow = {
   id: string;
   jobName: string;
-  startedAt: string;
+  startedAt: string | null;
   finishedAt: string | null;
   status: string;
   processedCount: number | null;
@@ -115,10 +126,12 @@ export async function loadPrivacyAudit(now: Date): Promise<PrivacyPayload> {
 
   const audit = toAudit(auditResult.data);
 
-  type RawRun = {
-    id: string; job_name: string; started_at: string; finished_at: string | null;
-    status: string; processed_count: number | null; error_summary: string | null;
-  };
+  // **손으로 적지 않는다.** 이 행 모양을 손으로 적었다가 `started_at` 의 nullable 을
+  // 흘려서 화면이 죽었다. 생성된 타입에서 끌어오면 스키마가 바뀔 때 tsc 가 먼저 운다.
+  type RawRun = Pick<
+    Database["public"]["Tables"]["job_runs"]["Row"],
+    "id" | "job_name" | "started_at" | "finished_at" | "status" | "processed_count" | "error_summary"
+  >;
   const runs: JobRunRow[] = ((runsResult.data ?? []) as RawRun[]).map((row) => ({
     id: row.id,
     jobName: row.job_name,

@@ -2703,7 +2703,7 @@ export type Database = {
           id: string
           job_name: string
           processed_count: number
-          started_at: string | null
+          started_at: string
           status: string
           updated_at: string
         }
@@ -2714,7 +2714,7 @@ export type Database = {
           id?: string
           job_name: string
           processed_count?: number
-          started_at?: string | null
+          started_at?: string
           status?: string
           updated_at?: string
         }
@@ -2725,7 +2725,7 @@ export type Database = {
           id?: string
           job_name?: string
           processed_count?: number
-          started_at?: string | null
+          started_at?: string
           status?: string
           updated_at?: string
         }

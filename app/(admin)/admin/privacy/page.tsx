@@ -11,6 +11,7 @@ import {
   DELETION_STATUS_LABEL,
   isTerminal,
 } from "@/lib/core/privacy/deletion";
+import { dateTimeAttr, formatTimestamp } from "@/lib/core/format/timestamp";
 import { measured, notYet, undecided } from "@/lib/core/stats/metric";
 import { loadPrivacyAudit } from "@/lib/privacy/audit";
 import { requireOperator } from "@/lib/supabase/auth";
@@ -220,8 +221,8 @@ export default async function AdminPrivacyPage() {
                             처리 {(run.processedCount ?? 0).toLocaleString("en-US")}건
                           </span>
                         </span>
-                        <time className="text-caption text-muted-foreground" dateTime={run.startedAt}>
-                          {run.startedAt.replace("T", " ").slice(0, 19)}
+                        <time className="text-caption text-muted-foreground" dateTime={dateTimeAttr(run.startedAt)}>
+                          {formatTimestamp(run.startedAt)}
                         </time>
                       </div>
                       {run.errorSummary ? (
@@ -294,7 +295,7 @@ export default async function AdminPrivacyPage() {
                           </span>
                         </span>
                         <time className="text-caption text-muted-foreground" dateTime={row.requestedAt}>
-                          {row.requestedAt.replace("T", " ").slice(0, 19)}
+                          {formatTimestamp(row.requestedAt)}
                         </time>
                       </div>
 
