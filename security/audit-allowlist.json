@@ -1,0 +1,111 @@
+{
+  "$comment": [
+    "알려진(그리고 지금은 고칠 수 없는) high/critical 권고 목록이다. scripts/check-audit.mjs 가 읽는다.",
+    "여기 없는 high/critical 이 나오면 CI 가 막는다. 등급 전체를 끄는 --audit-level 낮추기와 다른 점이 이것이다.",
+    "**항목을 더할 때는 반드시 사유를 적는다.** 사유 없는 항목은 리뷰를 통과시키지 않는다.",
+    "고쳐진 항목은 지운다 — check-audit.mjs 가 STALE 로 알려 준다.",
+    "기준선 생성: 2026-08-27 (S8-05)."
+  ],
+  "baselinedAt": "2026-08-27",
+  "baselinedBy": "S8-05",
+  "accepted": [
+    {
+      "key": "glob:GHSA-5j98-mcp5-4vw2",
+      "severity": "high",
+      "package": "glob",
+      "title": "glob CLI: Command injection via -c/--cmd executes matches with shell:true",
+      "reason": "devDependency (eslint-config-next 전이). 린트에서만 돌고 런타임에 들어가지 않는다."
+    },
+    {
+      "key": "nanoid:GHSA-2v37-7h3g-55p8",
+      "severity": "high",
+      "package": "nanoid",
+      "title": "nanoid: custom generators can loop indefinitely when size is zero",
+      "reason": "postcss 가 끌고 온다. 위와 같은 사슬이다(FIX-34)."
+    },
+    {
+      "key": "next:GHSA-36qx-fr4f-26g5",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js has a Middleware / Proxy bypass in Pages Router applications using i18n",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-89xv-2m56-2m9x",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js: Server-Side Request Forgery in Server Actions on custom servers",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-8h8q-6873-q5fj",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js Vulnerable to Denial of Service with Server Components",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-c4j6-fc7j-m34r",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js vulnerable to server-side request forgery in applications using WebSocket upgrades",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-h25m-26qc-wcjf",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js HTTP request deserialization can lead to DoS when using insecure React Server Components",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-m99w-x7hq-7vfj",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js: Denial of Service in App Router using Server Actions",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-p9j2-gv94-2wf4",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js: Server-Side Request Forgery in rewrites via attacker-controlled destination hostname",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "next:GHSA-q4gf-8mx6-v5v3",
+      "severity": "high",
+      "package": "next",
+      "title": "Next.js has a Denial of Service with Server Components",
+      "reason": "프로덕션 프레임워크다. 고치려면 next@16 (메이저 업그레이드)이며 새 의존성 결정이라 이 태스크의 보고 대상이다 — FIX-34 로 올렸다. 감수한 것이 아니라 **결정을 기다리는 것**이다."
+    },
+    {
+      "key": "postcss:GHSA-6g55-p6wh-862q",
+      "severity": "high",
+      "package": "postcss",
+      "title": "PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments",
+      "reason": "빌드 시점에만 도는 CSS 파서다. next 가 8.4.31 을 고정해 끌고 오므로 next 업그레이드 없이는 못 고친다(FIX-34). 공격 벡터는 신뢰할 수 없는 CSS 를 빌드에 넣는 것이고, 이 리포의 CSS 는 전부 우리가 쓴다."
+    },
+    {
+      "key": "postcss:GHSA-r28c-9q8g-f849",
+      "severity": "high",
+      "package": "postcss",
+      "title": "PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure",
+      "reason": "빌드 시점에만 도는 CSS 파서다. next 가 8.4.31 을 고정해 끌고 오므로 next 업그레이드 없이는 못 고친다(FIX-34). 공격 벡터는 신뢰할 수 없는 CSS 를 빌드에 넣는 것이고, 이 리포의 CSS 는 전부 우리가 쓴다."
+    },
+    {
+      "key": "vite:GHSA-fx2h-pf6j-xcff",
+      "severity": "high",
+      "package": "vite",
+      "title": "vite: `server.fs.deny` bypass on Windows alternate paths",
+      "reason": "devDependency (vitest 전이). 취약한 표면은 **vite dev 서버**이며 이 리포는 vite dev 서버를 띄우지 않는다(Next 가 자기 dev 서버를 쓴다). 프로덕션 번들에 들어가지 않는다."
+    },
+    {
+      "key": "vitest:GHSA-5xrq-8626-4rwp",
+      "severity": "critical",
+      "package": "vitest",
+      "title": "When Vitest UI server is listening, arbitrary file can be read and executed",
+      "reason": "devDependency. 취약한 표면은 **Vitest UI 서버**이며 이 리포는 UI 를 켜지 않는다(`vitest run` 만 쓴다 — `--ui` 를 쓰는 스크립트가 없다). 프로덕션 번들에 들어가지 않는다."
+    }
+  ]
+}
