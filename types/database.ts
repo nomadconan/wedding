@@ -1836,6 +1836,8 @@ export type Database = {
           created_at: string
           id: string
           requested_at: string
+          resolution_reason: string | null
+          resolved_by: string | null
           scope: string
           status: string
           updated_at: string
@@ -1846,6 +1848,8 @@ export type Database = {
           created_at?: string
           id?: string
           requested_at?: string
+          resolution_reason?: string | null
+          resolved_by?: string | null
           scope: string
           status?: string
           updated_at?: string
@@ -1856,6 +1860,8 @@ export type Database = {
           created_at?: string
           id?: string
           requested_at?: string
+          resolution_reason?: string | null
+          resolved_by?: string | null
           scope?: string
           status?: string
           updated_at?: string
@@ -5371,6 +5377,7 @@ export type Database = {
         }[]
       }
       admin_metrics: { Args: { p_from: string; p_to: string }; Returns: Json }
+      admin_purge_audit: { Args: never; Returns: Json }
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
       booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }

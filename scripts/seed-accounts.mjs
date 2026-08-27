@@ -791,6 +791,113 @@ async function seedAuditFixture(adminUser, vendorId, coupleId) {
   return "created";
 }
 
+
+// ── privacy audit fixture (S8-04) ───────────────────────────────────────────
+const PRIVACY_OVERDUE_DOC_ID = "00000000-0000-0000-0000-00000000e001";
+const PRIVACY_PURGED_DOC_ID = "00000000-0000-0000-0000-00000000e002";
+const PRIVACY_REQUEST_PENDING = "00000000-0000-0000-0000-00000000e003";
+const PRIVACY_REQUEST_DONE = "00000000-0000-0000-0000-00000000e004";
+
+/**
+ * Operator privacy console fixture (F-A-08).
+ *
+ * WHY THIS EXISTS: on a fresh database /admin/privacy shows "0 overdue, 0 requests,
+ * no runs" - which is indistinguishable from "the aggregate is broken". The alert
+ * rules in particular cannot be seen at all: an operator would have to wait for a
+ * real purge failure to find out whether the console warns.
+ *
+ * WHAT IS SEEDED:
+ *   - one document whose purge_scheduled_at is 8 hours in the PAST and not purged
+ *     -> exercises the 잔존 alert AND crosses PURGE_CRITICAL_HOURS (6), so the
+ *        console must render it as critical rather than a warning.
+ *   - one already-purged document, so "파기 완료" is not 0 either.
+ *   - two deletion requests: one pending (SLA row, unknown because O-18) and one
+ *     already completed WITH a reason (the resolution path is visible).
+ *   - one failed job_run, so the 실행 이력 and the PURGE_RUN_FAILED alert both have
+ *     something to show.
+ *
+ * The failed run's error_summary deliberately carries ONLY reason:count - if a
+ * future change starts writing paths in there, this fixture is what a reviewer
+ * looks at first.
+ */
+async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
+  if (!coupleId || !consumerUser) return "skipped";
+
+  const existing = await rest(`documents?id=eq.${PRIVACY_OVERDUE_DOC_ID}&select=id`);
+  if (existing.length > 0) return "existing";
+
+  const hoursAgo = (n) => new Date(Date.now() - n * 3600 * 1000).toISOString();
+
+  const upsert = (table, row) =>
+    rest(`${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(row),
+    });
+
+  // Overdue: scheduled 8h ago, never purged. Past PURGE_CRITICAL_HOURS on purpose.
+  await upsert("documents", {
+    id: PRIVACY_OVERDUE_DOC_ID,
+    couple_id: coupleId,
+    doc_type: "contract",
+    storage_path: "contracts-raw/local-demo-overdue.pdf",
+    purge_scheduled_at: hoursAgo(8),
+    purged_at: null,
+  });
+
+  await upsert("documents", {
+    id: PRIVACY_PURGED_DOC_ID,
+    couple_id: coupleId,
+    doc_type: "estimate",
+    storage_path: "contracts-raw/local-demo-purged.pdf",
+    purge_scheduled_at: hoursAgo(30),
+    purged_at: hoursAgo(29),
+  });
+
+  // Deletion requests. The service role can set status/resolved_by - the requester
+  // cannot (0054 column privileges), which is the whole point of that migration.
+  await upsert("data_deletion_requests", {
+    id: PRIVACY_REQUEST_PENDING,
+    user_id: consumerUser.id,
+    scope: "service_data",
+    status: "pending",
+    requested_at: hoursAgo(20),
+    completed_at: null,
+    resolved_by: null,
+    resolution_reason: null,
+  });
+
+  if (adminUser) {
+    await upsert("data_deletion_requests", {
+      id: PRIVACY_REQUEST_DONE,
+      user_id: consumerUser.id,
+      scope: "account",
+      status: "completed",
+      requested_at: hoursAgo(72),
+      completed_at: hoursAgo(70),
+      resolved_by: adminUser.id,
+      // completed/rejected require a non-blank reason (0054 CHECK).
+      resolution_reason: "\ubcf8\uc778 \ud655\uc778 \ud6c4 \uacc4\uc815\uacfc \uc11c\ube44\uc2a4 \ub370\uc774\ud130\ub97c \ubaa8\ub450 \uc0ad\uc81c\ud588\uc2b5\ub2c8\ub2e4.",
+    });
+  }
+
+  // A failed run so the history and the PURGE_RUN_FAILED alert have something.
+  // error_summary carries reason:count ONLY - never a path, never an id.
+  await rest("job_runs", {
+    method: "POST",
+    body: JSON.stringify({
+      job_name: "purge-documents",
+      started_at: hoursAgo(1),
+      finished_at: hoursAgo(1),
+      status: "failed",
+      processed_count: 1,
+      error_summary: "storage_error:1",
+    }),
+  });
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -832,6 +939,12 @@ async function main() {
   // AFTER the metrics fixture on purpose: the dispute row needs real
   // entity_events ids for its resolution_basis, and those events are written
   // by seedMetricsFixture. Run it first and the basis silently comes out empty.
+  const privacySeed = await seedPrivacyFixture(
+    results.find((row) => row.email === "admin@local.test"),
+    linkedCouple,
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+  );
+
   const auditSeed = await seedAuditFixture(
     results.find((row) => row.email === "admin@local.test"),
     vendor.id,
@@ -890,6 +1003,14 @@ async function main() {
   console.log("    -> /admin/audit shows real records instead of an empty state.");
   console.log("    -> one row carries a phone field and an =FORMULA value on purpose:");
   console.log("       the console must redact the first, the CSV export must defuse the second.");
+  console.log("");
+  console.log("  privacy audit fixture (S8-04)");
+  console.log(`    status      : ${privacySeed}`);
+  console.log("    rows        : 1 overdue doc (8h past due -> CRITICAL), 1 purged doc,");
+  console.log("                  2 deletion requests (pending / completed+reason), 1 failed run");
+  console.log("    -> /admin/privacy shows real alerts instead of a silent 'all zero' screen.");
+  console.log("    -> the overdue doc is past PURGE_CRITICAL_HOURS on purpose: the console");
+  console.log("       must render it as critical, not as a warning.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);

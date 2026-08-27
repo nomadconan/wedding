@@ -15,6 +15,7 @@ import {
   Receipt,
   ScrollText,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Store,
   Tag,
@@ -94,6 +95,9 @@ const ADMIN_NAV: NavItem[] = [
   // 열리는 화면이었다(FIX-25 계열). 분쟁 중재 바로 아래에 둔다: 조율은 타임라인을
   // 읽는 데서 시작하고, 둘은 같은 사건을 다른 각도로 보는 화면이다.
   { href: "/admin/audit", label: "감사 로그", icon: ScrollText },
+  // S8-04. 감사 로그 바로 아래에 둔다 — 둘 다 "무엇이 남았고 무엇이 지워졌나" 를
+  // 보는 화면이고, 개인정보 감사는 그 중 **법적 의무가 걸린 쪽**이다(§5.1·§7.3).
+  { href: "/admin/privacy", label: "개인정보 감사", icon: ShieldAlert },
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];
 

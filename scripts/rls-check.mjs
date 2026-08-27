@@ -7240,5 +7240,236 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-04 — 개인정보 감사·파기 배치 (F-A-08 · 0054)
+//
+// **세 가지를 본다.**
+//  (가) 요청자가 **자기 삭제 요청을 처리 완료로 만들 수 없는가** (함정 6)
+//  (나) 문서 **행**이 운영자에게도 나가지 않는가 (§5.3 — storage_path)
+//  (다) 미결 기준(O-18)을 코드가 대신 답하지 않는가
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // ── 함정 6: 당사자가 심사를 우회할 수 있는가 ──────────────────────────────
+  //
+  // **이 태스크가 발견한 구멍이 여기 있었다.** INSERT 정책의 조건이 `user_id = auth.uid()`
+  // 하나뿐이라 요청자가 `status='completed'` 로 넣을 수 있었고, 그러면 그 요청은
+  // **운영자의 SLA 큐에 아예 뜨지 않는다.**
+  check(
+    "**요청자가 status 를 직접 넣을 수 없다** (컬럼 권한)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `insert into public.data_deletion_requests(user_id, scope, status)
+                       values ('${owner}', 'account', 'completed');`),
+    ),
+  );
+  check(
+    "**요청자가 처리 사유를 대신 적을 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `insert into public.data_deletion_requests(user_id, scope, resolution_reason)
+                       values ('${owner}', 'account', 'self written');`),
+    ),
+  );
+  check(
+    "**요청자가 처리자를 자기로 지정할 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `insert into public.data_deletion_requests(user_id, scope, resolved_by)
+                       values ('${owner}', 'account', '${owner}');`),
+    ),
+  );
+  // **`owner` 를 쓰지 않는다.** `uq_deletion_requests_open_per_user` 가 사용자당 열린
+  // 요청을 하나로 막는데, 픽스처가 이미 그에게 pending 을 하나 주었다. 접수가 되는지
+  // 보려면 열린 요청이 없는 사람이어야 한다.
+  check(
+    "정상 접수는 여전히 되고 **pending 으로 들어온다**",
+    asUser(
+      outsider,
+      `insert into public.data_deletion_requests(user_id, scope) values ('${outsider}', 'account');
+       select status from public.data_deletion_requests where user_id = '${outsider}' limit 1;`,
+    ) === "pending",
+  );
+  check(
+    "**요청자가 나중에 사유를 덧쓸 수도 없다** (UPDATE 컬럼 권한)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.data_deletion_requests set resolution_reason = 'x'
+                       where user_id = '${owner}';`),
+    ),
+  );
+  check(
+    "**접수 기록을 지울 수 없다** — 거두는 것은 cancelled 로 남기는 것이지 지우는 것이 아니다",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `delete from public.data_deletion_requests where user_id = '${owner}';`),
+    ),
+  );
+
+  // ── 사유 필수 (DB 층) ─────────────────────────────────────────────────────
+  check(
+    "**사유 없이 완료할 수 없다** (DB CHECK — 화면·라우트와 같은 말)",
+    rejectedWith(/resolution_reason/, () =>
+      sql(`insert into public.data_deletion_requests
+             (user_id, scope, status, completed_at, resolved_by)
+           values ('${owner}', 'account', 'completed', now(), '${adminUser}');`),
+    ),
+  );
+  check(
+    "**빈 문자열도 사유가 아니다**",
+    rejectedWith(/resolution_reason/, () =>
+      sql(`insert into public.data_deletion_requests
+             (user_id, scope, status, completed_at, resolved_by, resolution_reason)
+           values ('${owner}', 'account', 'rejected', now(), '${adminUser}', '   ');`),
+    ),
+  );
+  check(
+    "**처리자 없이 완료할 수 없다** — 누가 닫았는지 남아야 한다",
+    rejectedWith(/resolved_by/, () =>
+      sql(`insert into public.data_deletion_requests
+             (user_id, scope, status, completed_at, resolution_reason)
+           values ('${owner}', 'account', 'completed', now(), 'has reason');`),
+    ),
+  );
+  check(
+    "당사자 취소(cancelled)에는 사유를 요구하지 않는다 — 자기 요청을 거두는 일이다",
+    sql(`begin;
+         insert into public.data_deletion_requests(user_id, scope, status, completed_at)
+           values ('${owner}', 'account', 'cancelled', now());
+         select 'ok';
+         rollback;`) === "ok",
+  );
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "운영자는 삭제 요청 큐를 읽는다",
+    Number(asUser(adminUser, `select count(*) from public.data_deletion_requests;`)) > 0,
+  );
+  check(
+    "**당사자는 자기 것만 본다** — 큐 전체가 아니다",
+    asUser(outsider, `select count(*) from public.data_deletion_requests;`) === "0",
+  );
+  check(
+    "운영자는 배치 이력을 읽는다",
+    Number(asUser(adminUser, `select count(*) from public.job_runs;`)) > 0,
+  );
+  check(
+    "**당사자는 배치 이력을 못 본다**",
+    asUser(owner, `select count(*) from public.job_runs;`) === "0",
+  );
+  check(
+    "**비로그인은 배치 이력을 못 본다**",
+    asAnon(`select count(*) from public.job_runs;`) === "0",
+  );
+
+  // ── 문서는 집계로만 (§5.3) ────────────────────────────────────────────────
+  check(
+    "운영자가 파기 현황을 집계로 받는다",
+    asUser(adminUser, `select (public.admin_purge_audit() ? 'overdue')::text;`) === "true",
+  );
+  check(
+    "**운영자에게 documents 행은 보이지 않는다** — storage_path 는 어떤 화면에도 안 나간다",
+    asUser(adminUser, `select count(*) from public.documents;`) === "0",
+  );
+  check(
+    "**집계에 경로도 id 도 실리지 않는다** — 개수와 시간뿐이다",
+    Object.values(
+      JSON.parse(asUser(adminUser, `select public.admin_purge_audit()::text;`)),
+    ).every((value) => value === null || typeof value === "number"),
+  );
+  check(
+    "**당사자는 집계 함수를 부를 수 없다**",
+    rejectedWith(/ADMIN_PRIVACY_FORBIDDEN/, () =>
+      asUser(owner, `select public.admin_purge_audit();`),
+    ),
+  );
+  check(
+    "**업체도 부를 수 없다**",
+    rejectedWith(/ADMIN_PRIVACY_FORBIDDEN/, () =>
+      asUser(outsider, `select public.admin_purge_audit();`),
+    ),
+  );
+  check(
+    "service_role 은 실행할 수 있으나 auth.uid() 가 없어 막힌다 (실행 권한 ≠ 통과)",
+    rejectedWith(/ADMIN_PRIVACY_FORBIDDEN/, () =>
+      sql(`begin; set local role service_role; select public.admin_purge_audit(); rollback;`),
+    ),
+  );
+
+  // ── 미결 기준을 코드가 대신 답하지 않는다 (O-18) ──────────────────────────
+  check(
+    "**삭제 요청 처리 기한은 여전히 미결이다** — 시드가 값을 채워 확정시키지 않았다",
+    sql(`select coalesce((value_json->>'value'), 'NULL') from public.app_settings
+           where key = 'privacy.deletion_sla_hours';`) === "NULL",
+  );
+  check(
+    "미결 파라미터가 O-18 을 가리킨다",
+    sql(`select value_json->>'openIssue' from public.app_settings
+           where key = 'privacy.deletion_sla_hours';`) === "O-18",
+  );
+
+  // ── FIX-35 재확인 (새 표를 만들지 않았지만 매번 다시 센다) ────────────────
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0053 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  // ── 픽스처와 화면 ─────────────────────────────────────────────────────────
+  check(
+    "**잔존 건 픽스처가 붙어 있다** — 전부 0이면 경보 규칙을 아무도 못 본다",
+    Number(
+      JSON.parse(asUser(adminUser, `select public.admin_purge_audit()::text;`)).overdue,
+    ) > 0,
+  );
+  check(
+    "**잔존 건이 critical 기준을 넘겨 있다** — 경고와 즉시확인이 갈리는 것을 확인할 수 있다",
+    Number(
+      JSON.parse(asUser(adminUser, `select public.admin_purge_audit()::text;`)).oldestOverdueHours,
+    ) >= 6,
+  );
+  check(
+    "**배치 이력에 실패 건이 있다** — 실패 경보 경로가 실제로 그려진다",
+    Number(sql(`select count(*) from public.job_runs where status = 'failed';`)) > 0,
+  );
+  check(
+    "**오류 요약에 경로가 없다** — 파기 실패 로그가 잔존 원문의 위치 목록이 되면 안 된다",
+    sql(`select count(*) from public.job_runs
+           where error_summary like '%/%' or error_summary like '%contracts-raw%';`) === "0",
+  );
+
+  check("`/admin/privacy` 화면이 실재한다", existsSync("app/(admin)/admin/privacy/page.tsx"));
+  check(
+    "**운영자 콘솔 내비가 `/admin/privacy` 를 가리킨다**",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/privacy"'),
+  );
+  check(
+    "개인정보 감사 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/privacy/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "감사 API 도 캐시되지 않는다",
+    readFileSync("app/api/admin/privacy-audit/route.ts", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**파기 배치가 세션이 아니라 서비스롤 키로 열린다** — 아무나 파기를 돌릴 수 없다",
+    readFileSync("app/api/jobs/purge-documents/route.ts", "utf8").includes(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ),
+  );
+  check(
+    "**배치가 Storage 를 지운 뒤에 purged_at 을 찍는다**(D-58) — 뒤집으면 감사가 눈을 감는다",
+    (() => {
+      const src = readFileSync("lib/privacy/purge.ts", "utf8");
+      // **`purged_at` 을 그냥 찾으면 안 된다** — select 목록에도 그 이름이 있어
+      // 조회 문자열이 먼저 걸린다(처음 그렇게 썼다가 오탐이 났다). 실제 **쓰기**를 찾는다.
+      const remove = src.indexOf(".remove([parts.key])");
+      const write = src.indexOf("update({ purged_at:");
+
+      return remove > 0 && write > 0 && remove < write;
+    })(),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
