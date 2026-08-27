@@ -197,7 +197,9 @@ export async function loadAnomalies(): Promise<AnomalyPayload> {
 
   type RawProduct = {
     id: string; vendor_id: string; base_price_total: number;
-    vendors: { region_code: string; category: string } | null;
+    // **`region_code` 는 nullable 이다**(FIX-38 훑기에서 걸렸다). 아래 `?? ""` 가
+    // 이미 막고 있지만, 타입이 사실과 다르면 다음 사람이 그 방어를 지우고도 모른다.
+    vendors: { region_code: string | null; category: string } | null;
   };
 
   const products = ((productRows ?? []) as unknown as RawProduct[]).map((row) => ({

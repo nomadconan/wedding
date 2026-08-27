@@ -11,6 +11,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { loadAuditTimeline } from "@/lib/admin/audit";
 import { REDACTED_PLACEHOLDER, isNarrowed, parseAuditQuery } from "@/lib/core/audit/audit";
+import { formatTimestamp } from "@/lib/core/format/timestamp";
 import { requireOperator } from "@/lib/supabase/auth";
 
 import { AuditFilters } from "./AuditFilters";
@@ -144,7 +145,7 @@ export default async function AdminAuditPage({ searchParams }: PageProps) {
                           <span className="text-sm font-medium text-foreground">{entry.label}</span>
                         </span>
                         <time className="text-caption text-muted-foreground" dateTime={entry.at}>
-                          {entry.at.replace("T", " ").slice(0, 19)}
+                          {formatTimestamp(entry.at)}
                         </time>
                       </div>
 

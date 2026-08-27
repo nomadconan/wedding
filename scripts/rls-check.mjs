@@ -7410,6 +7410,31 @@ if (!vendorStaff || !adminUser) {
     ),
   );
 
+  // ── 화면을 죽인 nullable (FIX-38) ─────────────────────────────────────────
+  //
+  // **`job_runs.started_at` 이 nullable 이라 `/admin/privacy` 가 빈 화면이 됐다** —
+  // `Cannot read properties of null (reading 'replace')`. 화면 쪽은 `formatTimestamp`
+  // 로 견디게 고쳤고, 여기서는 **애초에 그런 행이 안 생긴다**는 것을 붙잡아 둔다.
+  // 이 제약이 조용히 풀리면 같은 자리를 다시 밟는다.
+  check(
+    "**job_runs.started_at 이 NOT NULL 이다** — 시작 시각 없는 실행 기록은 이력이 아니다 (FIX-38)",
+    sql(`select is_nullable from information_schema.columns
+           where table_schema = 'public' and table_name = 'job_runs'
+             and column_name = 'started_at';`) === "NO",
+  );
+  check(
+    "안 적어도 채워진다 — started_at 에 기본값이 있다",
+    (sql(`select coalesce(column_default, '') from information_schema.columns
+            where table_schema = 'public' and table_name = 'job_runs'
+              and column_name = 'started_at';`) || "").includes("now()"),
+  );
+  check(
+    "**finished_at 은 여전히 nullable 이다** — 안 끝난 실행을 표현하지 못하게 만들지 않았다",
+    sql(`select is_nullable from information_schema.columns
+           where table_schema = 'public' and table_name = 'job_runs'
+             and column_name = 'finished_at';`) === "YES",
+  );
+
   // ── 미결 기준을 코드가 대신 답하지 않는다 (O-18) ──────────────────────────
   check(
     "**삭제 요청 처리 기한은 여전히 미결이다** — 시드가 값을 채워 확정시키지 않았다",
