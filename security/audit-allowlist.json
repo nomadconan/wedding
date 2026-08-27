@@ -99,13 +99,6 @@
       "package": "vite",
       "title": "vite: `server.fs.deny` bypass on Windows alternate paths",
       "reason": "devDependency (vitest 전이). 취약한 표면은 **vite dev 서버**이며 이 리포는 vite dev 서버를 띄우지 않는다(Next 가 자기 dev 서버를 쓴다). 프로덕션 번들에 들어가지 않는다."
-    },
-    {
-      "key": "vitest:GHSA-5xrq-8626-4rwp",
-      "severity": "critical",
-      "package": "vitest",
-      "title": "When Vitest UI server is listening, arbitrary file can be read and executed",
-      "reason": "devDependency. 취약한 표면은 **Vitest UI 서버**이며 이 리포는 UI 를 켜지 않는다(`vitest run` 만 쓴다 — `--ui` 를 쓰는 스크립트가 없다). 프로덕션 번들에 들어가지 않는다."
     }
   ]
 }

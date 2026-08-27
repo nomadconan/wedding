@@ -20,11 +20,7 @@ describe("장바구니 쓰기 입력", () => {
     // 런타임은 통과하지만 `tsc --noEmit` 이 깨진다 — `options` 는 유니온의 일부 갈래에만
     // 있기 때문이다. `vitest` 도 `next lint` 도 타입을 보지 않아 CI 에 타입 검사가
     // 붙는 날까지 조용히 남아 있었다.
-    const parsed = CartMutationSchema.parse({ action: "add", productId: UUID_A });
-
-    expect(parsed.action).toBe("add");
-    if (parsed.action !== "add") throw new Error("add 로 좁혀지지 않았다");
-    expect(parsed.options).toEqual({});
+    expect(CartMutationSchema.parse({ action: "add", productId: UUID_A }).options).toEqual({});
 
     expect(() => CartMutationSchema.parse({ action: "add", productId: "x" })).toThrow();
   });
