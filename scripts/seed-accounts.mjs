@@ -991,6 +991,139 @@ async function seedDisputeFixture(coupleMemberUser, vendorId, coupleId) {
   return "created";
 }
 
+
+// ── price curation fixture (S8-10) ──────────────────────────────────────────
+/**
+ * Price curation fixture (F-A-02 / F-A-14).
+ *
+ * WHY THIS EXISTS: /admin/prices has two halves and BOTH read as "nothing here"
+ * on an empty database - and each zero means something different.
+ *
+ *   - price_index empty  -> "표본 부족" (not yet counted), NOT "가격이 0원"
+ *   - anomaly queue empty -> could be "no flags" OR "thresholds undecided"
+ *
+ * A reviewer cannot tell those apart unless the fixture puts real rows behind
+ * one of them. So we seed enough vendors to CROSS the 5-vendor floor, which
+ * proves buildPriceIndex actually runs end to end.
+ *
+ * WHAT IS SEEDED: 5 extra active vendors, each with one published product, in
+ * the same region+category as the demo vendor. Together with the demo vendor's
+ * product that is 6 vendors - one above PRICE_INDEX_MIN_SAMPLE, so excluding a
+ * single sample in the console visibly drops the cell below the floor and the
+ * preview says so. That transition is the whole point of the curation screen.
+ *
+ * WHAT IS NOT SEEDED: the anomaly thresholds. They stay undecided (O-19) so the
+ * queue must render "기준 미확정" rather than "0건". Seeding them would make the
+ * console look like it is detecting when in fact nobody has decided the rule.
+ */
+const PRICE_VENDOR_PREFIX = "00000000-0000-0000-0000-0000000009";
+
+async function seedPriceFixture(vendorId) {
+  if (!vendorId) return "skipped";
+
+  const existing = await rest(`vendors?id=eq.${PRICE_VENDOR_PREFIX}01&select=id`);
+  if (existing.length > 0) return "existing";
+
+  const base = await rest(`vendors?id=eq.${vendorId}&select=region_code,category`);
+  const regionCode = base[0]?.region_code ?? "서울 강남";
+  const category = base[0]?.category ?? "hall";
+
+  // Prices spread on purpose so p25/p50/p75 are three DIFFERENT numbers - if they
+  // collapse to one value the percentile code could be broken and still look fine.
+  const prices = [9_000_000, 11_000_000, 13_000_000, 16_000_000, 21_000_000];
+
+  for (let i = 0; i < prices.length; i += 1) {
+    const id = `${PRICE_VENDOR_PREFIX}${String(i + 1).padStart(2, "0")}`;
+    const productId = `${PRICE_VENDOR_PREFIX}${String(i + 51).padStart(2, "0")}`;
+
+    await rest("vendors?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        id,
+        name: `로컬 표본 업체 ${i + 1}`,
+        category,
+        region_code: regionCode,
+        biz_no_enc: createHash("sha256").update(`sample-${i}`).digest("hex"),
+        status: "active",
+      }),
+    });
+
+    await rest("products?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        id: productId,
+        vendor_id: id,
+        category,
+        name: `표본 상품 ${i + 1}`,
+        base_price_total: prices[i],
+        included_items_json: [{ label: "기본", included: true }],
+        add_ons_declared_at: new Date().toISOString(),
+        status: "published",
+        published_at: new Date().toISOString(),
+      }),
+    });
+  }
+
+  // The index cell + source rows, written the way price-index-refresh writes them.
+  //
+  // WHY THE FIXTURE BUILDS THESE ITSELF: db:rls checks that operators can read
+  // price_sources and that vendors cannot forge them. Those checks need rows to
+  // exist. Locally the batch had been run by hand, so they passed - in CI nothing
+  // runs it and three checks failed. A fixture that depends on a separate process
+  // having run is not a fixture. (Caught by CI on the S8-10 PR.)
+  //
+  // The quartiles below are what buildPriceIndex produces for these 5 prices
+  // (nearest-rank, no interpolation): rank = ceil(p * n / 10000), n = 5.
+  //   p25 -> rank 2 -> 11,000,000
+  //   p50 -> rank 3 -> 13,000,000
+  //   p75 -> rank 4 -> 16,000,000
+  const indexId = `${PRICE_VENDOR_PREFIX}90`;
+
+  await rest("price_index?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      id: indexId,
+      region_code: regionCode,
+      category,
+      // Registered prices carry neither a wedding date nor a guest count, so the
+      // buckets stay `all` (PRICE_INDEX_ALL). Splitting them would invent a
+      // distinction that the data does not have.
+      guest_bucket: "all",
+      season: "all",
+      p25: 11000000,
+      p50: 13000000,
+      p75: 16000000,
+      sample_size: prices.length,
+      source_type: "registered_price",
+      collected_at: new Date().toISOString(),
+      version: new Date().toISOString().slice(0, 10),
+    }),
+  });
+
+  const existingSources = await rest(`price_sources?index_id=eq.${indexId}&select=id&limit=1`);
+  if (existingSources.length === 0) {
+    await rest("price_sources", {
+      method: "POST",
+      body: JSON.stringify(
+        prices.map((value, i) => ({
+          index_id: indexId,
+          source_name: "등록 판매가",
+          // vendor:/product: is the convention loadSources() and recalculateIndex()
+          // read - it keeps "one sample per vendor" working without a PostgREST
+          // embed that could silently drop rows (함정 1).
+          source_url: `vendor:${PRICE_VENDOR_PREFIX}${String(i + 1).padStart(2, "0")}/product:${PRICE_VENDOR_PREFIX}${String(i + 51).padStart(2, "0")}`,
+          raw_value: value,
+        })),
+      ),
+    });
+  }
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -1032,6 +1165,8 @@ async function main() {
   // AFTER the metrics fixture on purpose: the dispute row needs real
   // entity_events ids for its resolution_basis, and those events are written
   // by seedMetricsFixture. Run it first and the basis silently comes out empty.
+  const priceSeed = await seedPriceFixture(vendor.id);
+
   const disputeSeed = await seedDisputeFixture(
     results.find((row) => row.email === "couple-linked-a@local.test"),
     vendor.id,
@@ -1118,6 +1253,15 @@ async function main() {
   console.log("    -> the other two sources stay at 0 ON PURPOSE: their tiles must still");
   console.log("       render, because '0 disputes' and 'not wired to the queue' must not");
   console.log("       look the same (that is how FIX-15 stayed unnoticed).");
+  console.log("");
+  console.log("  price curation fixture (S8-10)");
+  console.log(`    status      : ${priceSeed}`);
+  console.log("    rows        : 5 extra active vendors + 1 published product each");
+  console.log("    -> 6 vendors total in one region+category = one ABOVE the 5-vendor floor,");
+  console.log("       so /admin/prices can show a real p25/p50/p75 AND the moment an");
+  console.log("       exclusion drops the cell back below the floor.");
+  console.log("    -> anomaly thresholds stay UNDECIDED (O-19) on purpose: the queue must");
+  console.log("       say 기준 미확정, not 0건. Seeding them would fake a working detector.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);
