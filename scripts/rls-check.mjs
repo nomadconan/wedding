@@ -688,9 +688,15 @@ check(
   "비로그인은 참가격 지수를 읽는다 (공개 데이터)",
   asAnon(`select count(*) from public.price_index where id = '${IDX}';`, indexFixture) === "1",
 );
+// **S8-10 이 이 검사를 더 강하게 만들었다.** 예전에는 정책이 없어 0행이 나오는 것으로
+// 통과했는데, 0056 이 `anon` 의 SELECT 권한 자체를 걷어 이제 **권한 오류로 끊긴다.**
+// 둘 다 "비로그인은 못 본다" 이지만 뒤쪽이 낫다 — 이 태스크가 `price_sources` 에
+// 운영자 정책을 더했으므로, 정책만 믿었다면 그 순간 문이 열렸을 자리다.
 check(
-  "비로그인은 표본 추적을 읽을 수 없다",
-  asAnon(`select count(*) from public.price_sources where index_id = '${IDX}';`, indexFixture) === "0",
+  "비로그인은 표본 추적을 읽을 수 없다 (권한 자체가 없다)",
+  rejectedWith(/permission denied/, () =>
+    asAnon(`select count(*) from public.price_sources where index_id = '${IDX}';`, indexFixture),
+  ),
 );
 check(
   "로그인 사용자도 표본 추적은 못 본다 (운영 큐레이션 정보)",
@@ -7363,9 +7369,11 @@ if (!vendorStaff || !adminUser) {
     "**당사자는 배치 이력을 못 본다**",
     asUser(owner, `select count(*) from public.job_runs;`) === "0",
   );
+  // **S8-10 이 더 강하게 만들었다** — 0056 이 `anon` 의 SELECT 권한을 걷어 이제
+  // 정책이 아니라 **권한**에서 끊긴다.
   check(
-    "**비로그인은 배치 이력을 못 본다**",
-    asAnon(`select count(*) from public.job_runs;`) === "0",
+    "**비로그인은 배치 이력을 못 본다** (권한 자체가 없다)",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.job_runs;`)),
   );
 
   // ── 문서는 집계로만 (§5.3) ────────────────────────────────────────────────
@@ -7716,6 +7724,222 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0055 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-10 — 가격 큐레이션·이상 탐지 (F-A-02 · F-A-14 · 0056)
+//
+// **참가격은 이 서비스의 핵심 가치다**(D-03 — 광고를 받지 않는 대신 가격으로 신뢰를
+// 산다). 업체가 자기 손으로 지수를 밀어 올리거나 남의 표본을 지울 수 있으면 그 가치가
+// 통째로 무너진다. 그래서 여기서 보는 것은 **권한**이 절반이다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const cellId = sql(`select id from public.price_index limit 1;`);
+
+  // ── 업체가 지수를 만질 수 있는가 ──────────────────────────────────────────
+  check(
+    "**업체가 참가격 지수를 넣을 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `insert into public.price_index
+        (region_code, category, guest_bucket, season, p50, sample_size, source_type, version)
+        values ('서울 강남','hall','all','all', 1, 999, 'registered_price', 'v1');`),
+    ),
+  );
+  check(
+    "**업체가 지수를 고칠 수 없다** — 자기 쪽으로 중앙값을 밀 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `update public.price_index set p50 = 1;`),
+    ),
+  );
+  check(
+    "**업체가 지수를 지울 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `delete from public.price_index;`),
+    ),
+  );
+  check(
+    "**업체가 원천 표본을 넣을 수 없다** — 가짜 표본으로 분포를 흔들 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `insert into public.price_sources(index_id, source_name, raw_value)
+        values ('${cellId}', 'forged', 1);`),
+    ),
+  );
+  check(
+    "**업체가 남의 표본을 제외할 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `update public.price_sources set excluded_reason = 'x';`),
+    ),
+  );
+  check(
+    "**업체가 표본을 지울 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `delete from public.price_sources;`),
+    ),
+  );
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "참가격 지수는 공개다 — 비로그인도 본다(F-C-09)",
+    Number(asAnon(`select count(*) from public.price_index;`)) > 0,
+  );
+  check(
+    "**원천 표본은 비로그인에게 보이지 않는다** — 다섯 줄을 다 보면 개별 등록가를 역산할 수 있다",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.price_sources;`)),
+  );
+  check(
+    "**당사자에게도 원천 표본은 보이지 않는다**",
+    asUser(owner, `select count(*) from public.price_sources;`) === "0",
+  );
+  check(
+    "**업체에게도 보이지 않는다** — 자기 값이 섞여 있어도 남의 값이 함께 보인다",
+    asUser(vendorOwner, `select count(*) from public.price_sources;`) === "0",
+  );
+  check(
+    "운영자는 원천 표본을 읽는다 (F-A-02 는 한 줄씩 검증하는 일이다)",
+    Number(asUser(adminUser, `select count(*) from public.price_sources;`)) > 0,
+  );
+
+  // ── 지워진 값은 왜 지워졌는지 답할 수 있어야 한다 (F-A-02) ────────────────
+  check(
+    "**사유 없이 표본을 제외할 수 없다**",
+    rejectedWith(/price_sources_exclusion_chk/, () =>
+      sql(`update public.price_sources set excluded_reason = '   ', verified_by = '${adminUser}'
+             where id = (select id from public.price_sources limit 1);`),
+    ),
+  );
+  check(
+    "**누가 뺐는지 없이 제외할 수 없다**",
+    rejectedWith(/price_sources_exclusion_chk/, () =>
+      sql(`update public.price_sources set excluded_reason = '이상치'
+             where id = (select id from public.price_sources limit 1);`),
+    ),
+  );
+  check(
+    "사유와 검증자가 둘 다 있으면 제외된다",
+    sql(`begin;
+         update public.price_sources set excluded_reason = '중복 수집', verified_by = '${adminUser}'
+           where id = (select id from public.price_sources limit 1);
+         select 'ok';
+         rollback;`) === "ok",
+  );
+
+  // ── 어휘를 DB 가 강제한다 ─────────────────────────────────────────────────
+  check(
+    "**모르는 출처 유형은 저장되지 않는다** (오타는 화면이 출처를 못 읽게 만든다)",
+    rejectedWith(/price_index_source_type_vocab/, () =>
+      sql(`update public.price_index set source_type = 'survey';`),
+    ),
+  );
+  check(
+    "**모르는 배치 상태는 저장되지 않는다**",
+    rejectedWith(/job_runs_status_vocab/, () =>
+      sql(`insert into public.job_runs(job_name, status) values ('probe', 'done');`),
+    ),
+  );
+  check(
+    "**배치 이력을 당사자가 고칠 수 없다** — '언제 무엇이 돌았나' 가 증거여야 한다",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.job_runs set status = 'succeeded';`),
+    ),
+  );
+
+  // ── 임계값은 미결이다 (O-19) ──────────────────────────────────────────────
+  check(
+    "**미끼 임계값이 비어 있다** — 시드가 값을 채워 확정시키지 않았다",
+    sql(`select coalesce((value_json->>'value'), 'NULL') from public.app_settings
+           where key = 'pricing.bait_gap_bp';`) === "NULL",
+  );
+  check(
+    "**추가금 임계값도 비어 있다**",
+    sql(`select coalesce((value_json->>'value'), 'NULL') from public.app_settings
+           where key = 'pricing.addon_excess_bp';`) === "NULL",
+  );
+  check(
+    "두 임계값이 O-19 를 가리킨다",
+    sql(`select count(*) from public.app_settings
+           where key in ('pricing.bait_gap_bp', 'pricing.addon_excess_bp')
+             and value_json->>'openIssue' = 'O-19';`) === "2",
+  );
+  check(
+    "**§5.7 의 40%·25% 를 코드가 기본값으로 쓰지 않는다**",
+    (() => {
+      const src = readFileSync("lib/core/pricing/anomaly.ts", "utf8");
+
+      // 4000·2500 을 상수로 박아 두지 않았는지 본다(테스트 픽스처는 별도 파일이다).
+      return !/=\s*4_?000\b/.test(src) && !/=\s*2_?500\b/.test(src);
+    })(),
+  );
+
+  // ── 픽스처: 지수가 실제로 서는가 ──────────────────────────────────────────
+  check(
+    "**표본이 하한을 넘겨 사분위가 나왔다** — 전부 null 이면 산출이 도는지 아무도 못 본다",
+    sql(`select count(*) from public.price_index where p50 is not null;`) !== "0",
+  );
+  check(
+    "**p25·p50·p75 가 서로 다른 값이다** — 하나로 뭉치면 백분위가 고장나도 티가 안 난다",
+    sql(`select count(*) from public.price_index
+           where p50 is not null and p25 < p50 and p50 < p75;`) !== "0",
+  );
+  check(
+    "**업체당 한 건만 셌다** — 표본 수가 그 칸의 업체 수와 같다",
+    sql(`select (pi.sample_size = (select count(distinct v.id) from public.vendors v
+                                     join public.products p on p.vendor_id = v.id
+                                    where v.region_code = pi.region_code
+                                      and v.category = pi.category
+                                      and v.status = 'active'
+                                      and p.status = 'published'))::text
+           from public.price_index pi where pi.p50 is not null limit 1;`) === "true",
+  );
+  check(
+    "원천 표본이 지수 칸에 붙어 있다",
+    Number(sql(`select count(*) from public.price_sources;`)) > 0,
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/prices` 화면이 실재한다", existsSync("app/(admin)/admin/prices/page.tsx"));
+  check(
+    "**내비의 `/admin/prices` 가 이제 살아 있다** (FIX-23 죽은 링크 하나가 줄었다)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/prices"'),
+  );
+  check(
+    "가격 큐레이션 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/prices/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "이상 탐지 API 도 캐시되지 않는다",
+    readFileSync("app/api/admin/price-anomalies/route.ts", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**두 배치가 서비스롤 키로만 열린다** — 아무나 지수를 다시 셀 수 없다",
+    readFileSync("app/api/jobs/price-index-refresh/route.ts", "utf8").includes(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ) &&
+      readFileSync("app/api/jobs/price-anomaly-scan/route.ts", "utf8").includes(
+        "SUPABASE_SERVICE_ROLE_KEY",
+      ),
+  );
+  check(
+    "**사분위를 다시 구현하지 않고 S3-08 의 buildPriceIndex 를 부른다**",
+    readFileSync("lib/pricing/curation.ts", "utf8").includes("buildPriceIndex"),
+  );
+  check(
+    "**탐지 큐를 표로 저장하지 않는다** — 계산 가능한 값을 저장하지 않는다",
+    sql(`select count(*) from information_schema.tables
+           where table_schema = 'public' and table_name like '%anomal%';`) === "0",
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0056 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

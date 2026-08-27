@@ -83,6 +83,7 @@ const VENDOR_NAV: NavItem[] = [
 const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "대시보드", icon: LayoutDashboard },
   { href: "/admin/vendors", label: "입점 심사", icon: ShieldCheck },
+  // S8-10 이 이 링크를 살렸다 — 오래 죽어 있던 자리다(FIX-23).
   { href: "/admin/prices", label: "가격 큐레이션", icon: Tag },
   { href: "/admin/quality", label: "AI 품질·비용", icon: BarChart3 },
   { href: "/admin/content", label: "콘텐츠", icon: FileText },
