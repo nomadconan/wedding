@@ -696,6 +696,101 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
   return "created";
 }
 
+
+// ── audit console fixture (S8-02) ───────────────────────────────────────────
+/**
+ * Operator audit console fixture (F-A-09).
+ *
+ * WHY THIS EXISTS: audit_logs is empty on a fresh database - nothing writes to it
+ * until an operator actually approves a vendor or edits a rate. So /admin/audit
+ * would render an empty state and nobody could tell "the console works and there
+ * is nothing yet" from "the console is broken". db:rls has the same problem: a
+ * query that returns 0 rows for everyone passes an isolation check for the wrong
+ * reason.
+ *
+ * WHAT IS SEEDED: three audit_logs rows written the way real routes write them
+ * (actor + action + target + before/after json). One of them carries
+ * resolution_basis so the "근거 이벤트" path is exercised.
+ *
+ * ONE ROW CARRIES A DELIBERATE TRAP: a before/after pair containing `phone` and a
+ * value starting with `=`. The console must redact the first and the CSV export
+ * must neutralise the second (formula injection). A fixture that only contains
+ * well-behaved data proves nothing about the code that handles bad data.
+ */
+async function seedAuditFixture(adminUser, vendorId, coupleId) {
+  if (!adminUser || !vendorId) return "skipped";
+
+  const existing = await rest(`audit_logs?action=eq.seed_fixture_recorded&select=id&limit=1`);
+  if (existing.length > 0) return "existing";
+
+  const rows = [
+    {
+      actor_id: adminUser.id,
+      actor_role: "admin",
+      action: "vendor_review_approve",
+      target_type: "vendor",
+      target_id: vendorId,
+      before_json: { status: "pending" },
+      after_json: { status: "active" },
+      // PostgREST bulk insert requires every object to carry the same keys
+      // ("All object keys must match"), so nulls are spelled out rather than omitted.
+      resolution_basis: null,
+    },
+    {
+      actor_id: adminUser.id,
+      actor_role: "admin",
+      action: "seed_fixture_recorded",
+      target_type: "vendor",
+      target_id: vendorId,
+      // The trap. `phone` must be redacted; the `=` value must not become an
+      // Excel formula in the CSV export.
+      before_json: { phone: "010-1234-5678", label: "before" },
+      after_json: { phone: "010-0000-0000", label: "=HYPERLINK(\"http://evil.example\",\"click\")" },
+      resolution_basis: null,
+    },
+    {
+      actor_id: adminUser.id,
+      actor_role: "admin",
+      action: "moderation_applied",
+      target_type: "community_post",
+      target_id: coupleId ?? vendorId,
+      before_json: { status: "visible" },
+      after_json: { status: "hidden" },
+      // NOT [] - audit_logs_resolution_basis_not_empty_chk rejects an empty array.
+      // The schema already says what this file would otherwise have to remember:
+      // a basis is either real or absent. There is no "decided on nothing".
+      resolution_basis: null,
+    },
+  ];
+
+  await rest("audit_logs", { method: "POST", body: JSON.stringify(rows) });
+
+  // Point the last row's resolution_basis at real event ids so the console shows
+  // a decision whose grounds can actually be followed. Written as a second step
+  // because we need ids that already exist.
+  const events = await rest(`entity_events?select=id&limit=2`);
+  if (events.length > 0) {
+    // audit_logs is append-only (0053) - we cannot UPDATE the row we just wrote.
+    // So insert one more row that carries the basis, which is also how the real
+    // flow works: a decision is a new record, not an edit of an old one.
+    await rest("audit_logs", {
+      method: "POST",
+      body: JSON.stringify({
+        actor_id: adminUser.id,
+        actor_role: "admin",
+        action: "dispute_resolved",
+        target_type: "dispute",
+        target_id: vendorId,
+        before_json: { status: "open" },
+        after_json: { status: "resolved" },
+        resolution_basis: events.map((row) => row.id),
+      }),
+    });
+  }
+
+  return "created";
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 async function main() {
   assertLocal();
@@ -732,6 +827,15 @@ async function main() {
     linkedCouple,
     results.find((row) => row.email === "couple-linked-a@local.test"),
     results.find((row) => row.email === "couple-linked-b@local.test"),
+  );
+
+  // AFTER the metrics fixture on purpose: the dispute row needs real
+  // entity_events ids for its resolution_basis, and those events are written
+  // by seedMetricsFixture. Run it first and the basis silently comes out empty.
+  const auditSeed = await seedAuditFixture(
+    results.find((row) => row.email === "admin@local.test"),
+    vendor.id,
+    linkedCouple,
   );
 
   console.log("  accounts");
@@ -779,6 +883,13 @@ async function main() {
   console.log("    -> /admin shows real numbers instead of a wall of zeros.");
   console.log("    -> settlements are NOT seeded: fee basis is O-15 undecided and the");
   console.log("       dashboard must keep saying 기준 미확정 there.");
+  console.log("");
+  console.log("  audit console fixture (S8-02)");
+  console.log(`    status      : ${auditSeed}`);
+  console.log("    rows        : 4 audit_logs (approve / trap / moderation / dispute+basis)");
+  console.log("    -> /admin/audit shows real records instead of an empty state.");
+  console.log("    -> one row carries a phone field and an =FORMULA value on purpose:");
+  console.log("       the console must redact the first, the CSV export must defuse the second.");
   console.log("");
   console.log("  try it");
   console.log(`    1. ${APP_URL}/login          -> admin@local.test`);

@@ -13,6 +13,7 @@ import {
   MessagesSquare,
   Package,
   Receipt,
+  ScrollText,
   Settings,
   ShieldCheck,
   Store,
@@ -89,6 +90,10 @@ const ADMIN_NAV: NavItem[] = [
   // 사유가 기록에 남는다. 한 큐에 섞으면 처리 절차가 서로 다른 건이 같은 목록에 놓인다.
   { href: "/admin/community-reports", label: "커뮤니티 신고", icon: Flag },
   { href: "/admin/disputes", label: "분쟁 중재", icon: Users },
+  // S8-02. **화면은 §6.4 에 있었는데 내비가 가리키지 않았다** — URL 을 직접 쳐야
+  // 열리는 화면이었다(FIX-25 계열). 분쟁 중재 바로 아래에 둔다: 조율은 타임라인을
+  // 읽는 데서 시작하고, 둘은 같은 사건을 다른 각도로 보는 화면이다.
+  { href: "/admin/audit", label: "감사 로그", icon: ScrollText },
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];
 

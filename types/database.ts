@@ -5362,6 +5362,14 @@ export type Database = {
       }
     }
     Functions: {
+      admin_actor_labels: {
+        Args: { p_ids: string[] }
+        Returns: {
+          display_name: string
+          role: string
+          user_id: string
+        }[]
+      }
       admin_metrics: { Args: { p_from: string; p_to: string }; Returns: Json }
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
