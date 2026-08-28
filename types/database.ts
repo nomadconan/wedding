@@ -4963,6 +4963,8 @@ export type Database = {
           id: string
           reporter_id: string | null
           resolution: string | null
+          resolved_at: string | null
+          resolved_by: string | null
           status: string
           subject: string
           updated_at: string
@@ -4975,6 +4977,8 @@ export type Database = {
           id?: string
           reporter_id?: string | null
           resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           subject: string
           updated_at?: string
@@ -4987,6 +4991,8 @@ export type Database = {
           id?: string
           reporter_id?: string | null
           resolution?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
           status?: string
           subject?: string
           updated_at?: string

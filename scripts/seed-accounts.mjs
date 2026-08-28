@@ -1043,6 +1043,100 @@ async function seedDisputeFixture(coupleMemberUser, vendorId, coupleId) {
 }
 
 
+// ── CS ticket fixture (S8-09) ─────────────────────────────
+const TICKET_OPEN_ID = "00000000-0000-0000-0000-0000000000b1";
+const TICKET_ASSIGNED_ID = "00000000-0000-0000-0000-0000000000b2";
+const TICKET_CLOSED_ID = "00000000-0000-0000-0000-0000000000b3";
+
+/**
+ * CS console fixture (F-A-06).
+ *
+ * WHY THIS EXISTS: /admin/tickets has four state tiles and an "unassigned" count
+ * that is the FIRST thing an operator should look at. With an empty table every
+ * tile reads a measured zero and nobody can tell the queue works - and db:rls
+ * passes its isolation checks against zero rows for the wrong reason (the S8-01
+ * fixture note, hit again in S8-07).
+ *
+ * WHAT IS SEEDED, and what each row proves:
+ *   open, no assignee      -> the "담당자 없는 티켓" tile is non-zero; that tile is
+ *                             the one the screen tells operators to read first
+ *   assigned               -> assignee_id + the actor-label RPC path actually
+ *                             render a name (a null name here would be the
+ *                             profiles-embed trap, silently)
+ *   rejected (closed)      -> a terminal ticket with resolution/resolved_by/at.
+ *                             Proves the CHECK accepts a complete closure AND
+ *                             gives the screen a row whose action buttons must
+ *                             NOT appear (종결된 티켓은 다시 만지지 않는다)
+ *
+ * NOT SEEDED: a suspended vendor. Suspending the demo vendor would remove it
+ * from /explore and break every other fixture that expects it to be public.
+ * The sanction path is exercised by the flow check, which suspends and restores.
+ *
+ * status is written by the SERVICE ROLE here. A reporter cannot write it - that
+ * is the whole point of 0062's column privileges (FIX-43) - so the fixture uses
+ * the same door operators use, not the one it is meant to demonstrate is shut.
+ */
+async function seedTicketFixture(reporterUser, operatorUser) {
+  if (!reporterUser) return "skipped";
+
+  const existing = await rest(`tickets?id=eq.${TICKET_OPEN_ID}&select=id`);
+  if (existing.length > 0) return "existing";
+
+  const hoursAgo = (n) => new Date(Date.now() - n * 3600 * 1000).toISOString();
+
+  await rest("tickets?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify([
+      {
+        id: TICKET_OPEN_ID,
+        reporter_id: reporterUser.id,
+        category: "payment",
+        subject: "환불이 아직 안 들어왔습니다",
+        body: "로컬 데모 문의입니다.",
+        status: "open",
+        assignee_id: null,
+        resolution: null,
+        resolved_by: null,
+        resolved_at: null,
+        created_at: hoursAgo(30),
+      },
+      {
+        id: TICKET_ASSIGNED_ID,
+        reporter_id: reporterUser.id,
+        category: "vendor",
+        subject: "업체가 연락을 받지 않습니다",
+        body: "로컬 데모 문의입니다.",
+        status: operatorUser ? "assigned" : "open",
+        assignee_id: operatorUser?.id ?? null,
+        resolution: null,
+        resolved_by: null,
+        resolved_at: null,
+        created_at: hoursAgo(12),
+      },
+      {
+        id: TICKET_CLOSED_ID,
+        reporter_id: reporterUser.id,
+        category: "bug",
+        subject: "목록이 비어 보입니다",
+        body: null,
+        status: operatorUser ? "rejected" : "open",
+        assignee_id: operatorUser?.id ?? null,
+        // '조치하지 않음' 에도 사유가 필수다 - CHECK 이 같은 말을 한다.
+        resolution: operatorUser
+          ? "재현되지 않아 지금은 조치하지 않습니다. 재발 시 다시 보내 주세요."
+          : null,
+        resolved_by: operatorUser?.id ?? null,
+        resolved_at: operatorUser ? hoursAgo(2) : null,
+        created_at: hoursAgo(48),
+      },
+    ]),
+  });
+
+  return "created";
+}
+
+
 // ── AI quality fixture (S8-07) ─────────────────────────────
 const QUALITY_REPORT_ID = "00000000-0000-0000-0000-0000000000a1";
 
@@ -1503,6 +1597,11 @@ async function main() {
     results.find((row) => row.email === "couple-linked-a@local.test"),
   );
 
+  const ticketSeed = await seedTicketFixture(
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+    results.find((row) => row.email === "ops@local.test"),
+  );
+
   const privacySeed = await seedPrivacyFixture(
     results.find((row) => row.email === "admin@local.test"),
     linkedCouple,
@@ -1592,6 +1691,19 @@ async function main() {
   console.log("       exclusion drops the cell back below the floor.");
   console.log("    -> anomaly thresholds stay UNDECIDED (O-19) on purpose: the queue must");
   console.log("       say 기준 미확정, not 0건. Seeding them would fake a working detector.");
+  console.log("");
+  console.log("  cs ticket fixture (S8-09)");
+  console.log(`    status      : ${ticketSeed}`);
+  console.log("    rows        : 3 tickets (open+unassigned / assigned / rejected)");
+  console.log("    -> the 담당자 없는 티켓 tile is the first thing the screen tells");
+  console.log("       operators to read; a zero there is indistinguishable from a");
+  console.log("       broken queue, so one row has to be unassigned.");
+  console.log("    -> the assigned one exercises the actor-label RPC: a null name");
+  console.log("       there would be the profiles-embed trap, silently.");
+  console.log("    -> the rejected one carries resolution+resolved_by+resolved_at,");
+  console.log("       which the CHECK requires, and must show NO action buttons.");
+  console.log("    -> NOT seeded: a suspended vendor. It would vanish from /explore");
+  console.log("       and break every fixture that expects it public.");
   console.log("");
   console.log("  ai quality fixture (S8-07)");
   console.log(`    status      : ${qualitySeed}`);
