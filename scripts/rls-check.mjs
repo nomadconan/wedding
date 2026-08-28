@@ -6226,22 +6226,30 @@ if (!vendorStaff || !adminUser) {
       )),
   );
   check(
+    // **S8-08 이 0행에서 거절로 바꿨다.** 정책이 없어 UPDATE 가 조용히 0행을
+    // 돌려주던 것이 0060 의 권한 회수 뒤로는 문장 자체가 끊긴다. 0행은
+    // "아무것도 안 바뀌었다" 이고 거절은 "쓸 수 없다" 인데, 공개 콘텐츠에서
+    // 필요한 것은 뒤쪽이다.
     "**발행된 글을 고치지 못한다** — 공개 페이지의 내용은 로그인 사용자가 바꿀 것이 아니다",
-    asUser(
-      owner,
-      `update public.content_posts set title = '바뀐 제목' where slug = '${LIVE}';
-       select title from public.content_posts where slug = '${LIVE}';`,
-      contentFixture,
-    ) === "발행됨",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        owner,
+        `update public.content_posts set title = '바뀐 제목' where slug = '${LIVE}';`,
+        contentFixture,
+      ),
+    ),
   );
   check(
+    // S8-08 이 여기도 같은 이유로 바꿨다. 게다가 이제는 **누구에게도** DELETE 가
+    // 없다 — 지우는 대신 내린다(D-138 · 색인된 URL 이 죽으면 되돌릴 수 없다).
     "**글을 지우지 못한다**",
-    asUser(
-      owner,
-      `with d as (delete from public.content_posts where slug = '${LIVE}' returning id)
-       select count(*) from d;`,
-      contentFixture,
-    ) === "0",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        owner,
+        `delete from public.content_posts where slug = '${LIVE}';`,
+        contentFixture,
+      ),
+    ),
   );
 
   // ── 불변식 ────────────────────────────────────────────────────────────────
@@ -8765,6 +8773,247 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0059 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-08 — 콘텐츠 CMS (F-A-05 · 0060)
+//
+// `content_posts` 는 **anon 이 읽는 유일한 콘텐츠 표**이고 그 글은 우리 이름으로
+// 색인된다. 그래서 여기서 보는 것은 (가) 아무나 우리 이름으로 발행할 수 있는가
+// (나) 미발행 글이 새는가 (다) 공개 판정이 한 곳뿐인가 — 셋이다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const draftId = sql(`select id from public.content_posts where published_at is null limit 1;`);
+  const publishedId = sql(
+    `select id from public.content_posts where published_at <= now() limit 1;`,
+  );
+  const scheduledId = sql(
+    `select id from public.content_posts where published_at > now() limit 1;`,
+  );
+
+  // ── 아무나 우리 이름으로 글을 낼 수 있는가 ────────────────────────────────
+  check(
+    "**아무 로그인 사용자나 글을 만들 수 없다** — 우리 이름으로 색인되는 콘텐츠다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.content_posts (slug, type, title, body_md, seo_json, published_at)
+           values ('forged-guide', 'guide', '지어낸 글', '본문', '{}'::jsonb, now());`,
+      ),
+    ),
+  );
+  check(
+    "**업체도 글을 만들 수 없다** — 광고를 콘텐츠로 쓰는 경로를 두지 않는다(D-03)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.content_posts (slug, type, title, body_md, seo_json, published_at)
+           values ('vendor-ad', 'guide', '우리 업체 홍보', '본문', '{}'::jsonb, now());`,
+      ),
+    ),
+  );
+  check(
+    "**발행된 글의 본문을 아무나 고칠 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.content_posts set body_md = '조작' where id = '${publishedId}';`),
+    ),
+  );
+  check(
+    "**초안을 아무나 발행할 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.content_posts set published_at = now() where id = '${draftId}';`),
+    ),
+  );
+  check(
+    "**글을 지울 수 없다** — 색인된 URL 이 죽고 되돌릴 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `delete from public.content_posts where id = '${publishedId}';`),
+    ),
+  );
+  check(
+    "**운영자 세션으로도 쓸 수 없다** — CMS 쓰기는 전부 서비스롤 경유다(D-62)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `update public.content_posts set title = 'x' where id = '${draftId}';`),
+    ),
+  );
+  check(
+    "authenticated·anon 어디에도 content_posts 쓰기 권한이 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'content_posts'
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE')
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  // ── 미발행 글이 새는가 ────────────────────────────────────────────────────
+  check(
+    "**초안은 비로그인에게 보이지 않는다**",
+    asAnon(`select count(*) from public.content_posts where id = '${draftId}';`) === "0",
+  );
+  check(
+    "**예약 글도 비로그인에게 보이지 않는다** — 시각이 오기 전에는 없는 글이다",
+    asAnon(`select count(*) from public.content_posts where id = '${scheduledId}';`) === "0",
+  );
+  check(
+    "**로그인 사용자에게도 미발행 글은 보이지 않는다**",
+    asUser(owner, `select count(*) from public.content_posts where id = '${draftId}';`) === "0" &&
+      asUser(owner, `select count(*) from public.content_posts where id = '${scheduledId}';`) === "0",
+  );
+  check(
+    "발행된 글은 비로그인도 읽는다 (F-C-24 · 공개 데이터)",
+    Number(asAnon(`select count(*) from public.content_posts;`)) >= 7,
+  );
+  check(
+    "운영자는 미발행 글을 읽는다 — 안 보이면 자기 초안을 편집할 수 없다(D-115)",
+    asUser(adminUser, `select count(*) from public.content_posts where id = '${draftId}';`) === "1",
+  );
+
+  // ── 공개 판정이 한 곳뿐인가 ───────────────────────────────────────────────
+  check(
+    "**공개 판정 정책이 `published_at <= now()` 하나다** — 상태 컬럼을 만들지 않았다",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'content_posts'
+             and column_name in ('status', 'is_published', 'state');`) === "0",
+  );
+  check(
+    "**예약 발행에 배치가 없다** — 시각이 지나면 조회 조건이 스스로 참이 된다",
+    sql(`select count(*) from public.content_posts
+           where id = '${scheduledId}' and published_at > now();`) === "1" &&
+      // 같은 행을 과거로 옮기면 즉시 공개된다. 배치가 아니라 정책이 판정한다는 뜻이다.
+      asAnon(
+        `select count(*) from public.content_posts where id = '${scheduledId}';`,
+        `update public.content_posts set published_at = now() - interval '1 minute' where id = '${scheduledId}';`,
+      ) === "1",
+  );
+  {
+    // 코드↔DB 대조. 화면이 쓰는 상태 계산과 정책이 같은 방향을 봐야 한다.
+    const code = readFileSync("lib/core/content/cms.ts", "utf8");
+    const policy = sql(
+      `select qual from pg_policies
+         where schemaname = 'public' and tablename = 'content_posts'
+           and policyname = 'content_posts_select_public';`,
+    );
+
+    check(
+      "화면의 상태 계산과 공개 정책이 같은 경계를 쓴다 (<= now)",
+      code.includes("<= now.getTime()") && policy.includes("<= now()"),
+      `policy=${policy.slice(0, 60)}`,
+    );
+  }
+
+  // ── 제목은 언제나 비어 있으면 안 된다 ─────────────────────────────────────
+  check(
+    "**빈 제목으로 초안을 만들 수 없다** — 목록에서 그 글을 다시 찾을 수 없다",
+    rejectedWith(/content_posts_title_chk/, () =>
+      sql(`insert into public.content_posts (slug, type, title, seo_json)
+             values ('blank-title', 'guide', '   ', '{}'::jsonb);`),
+    ),
+  );
+  check(
+    "**발행에는 본문이 있어야 한다** (기존 CHECK 이 그대로 산다)",
+    rejectedWith(/content_posts_published_body_chk/, () =>
+      sql(`insert into public.content_posts (slug, type, title, seo_json, published_at)
+             values ('no-body', 'guide', '제목만', '{}'::jsonb, now());`),
+    ),
+  );
+  check(
+    "**슬러그 형식을 DB 가 강제한다** — URL 그 자체다",
+    rejectedWith(/content_posts_slug_format_chk/, () =>
+      sql(`insert into public.content_posts (slug, type, title, seo_json)
+             values ('Bad Slug', 'guide', '제목', '{}'::jsonb);`),
+    ),
+  );
+
+  // ── 리비전 ────────────────────────────────────────────────────────────────
+  check(
+    "**리비전에 사유가 필수다** — 없으면 판본 목록에서 서로 구분되지 않는다",
+    rejectedWith(/content_revisions_note_chk/, () =>
+      sql(`insert into public.content_revisions (post_id, revision, title, note)
+             values ('${publishedId}', 99, '제목', '   ');`),
+    ),
+  );
+  check(
+    "같은 글에 같은 판본 번호가 둘일 수 없다",
+    rejectedWith(/duplicate key|unique/, () =>
+      sql(`insert into public.content_revisions (post_id, revision, title, note)
+             values ('${publishedId}', 1, '제목', '중복');`),
+    ),
+  );
+  check(
+    "**리비전은 비로그인에게 보이지 않는다** — 발행 전 문안이 들어 있다",
+    rejectedWith(/permission denied/, () =>
+      asAnon(`select count(*) from public.content_revisions;`),
+    ),
+  );
+  check(
+    "**일반 로그인 사용자에게도 보이지 않는다**",
+    asUser(owner, `select count(*) from public.content_revisions;`) === "0",
+  );
+  check(
+    "운영자는 판본을 읽는다 (F-A-05 리비전 관리)",
+    Number(asUser(adminUser, `select count(*) from public.content_revisions;`)) >= 2,
+  );
+  check(
+    "**판본을 아무도 고치거나 지울 수 없다** (기록은 서비스롤 경유)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `update public.content_revisions set note = '조작';`),
+    ) &&
+      rejectedWith(/permission denied|row-level security/, () =>
+        asUser(adminUser, `delete from public.content_revisions;`),
+      ),
+  );
+
+  // ── 픽스처: 세 상태가 다 있는가 ───────────────────────────────────────────
+  check(
+    "**초안·예약·발행 셋이 다 있다** — 한 상태라도 없으면 그 경계를 확인할 수 없다",
+    sql(`select count(*) from public.content_posts where published_at is null;`) !== "0" &&
+      sql(`select count(*) from public.content_posts where published_at > now();`) !== "0" &&
+      Number(sql(`select count(*) from public.content_posts where published_at <= now();`)) >= 7,
+  );
+  check(
+    "판본 픽스처가 붙어 있다 (빈 목록은 '안 쌓인다' 와 '안 고쳤다' 를 구분 못 한다)",
+    Number(sql(`select count(*) from public.content_revisions;`)) >= 2,
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/cms` 화면이 실재한다", existsSync("app/(admin)/admin/cms/page.tsx"));
+  check(
+    "**내비가 명세 경로를 가리킨다** — `/admin/content` 는 §6.4 에 없는 경로였다(FIX-23)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/cms"') &&
+      !readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/content"'),
+  );
+  check(
+    "콘텐츠 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/cms/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**DELETE 라우트가 행을 지우지 않는다** — 공개만 거둔다",
+    readFileSync("app/api/admin/content/route.ts", "utf8").includes("unpublished: true") &&
+      readFileSync("lib/content/admin.ts", "utf8").includes("published_at: null"),
+  );
+  check(
+    "**CTA 키를 쓰기에서 막는다**(D-98) — 걸러진 값은 화면에 안 보여 잘못 적은 줄 모른다",
+    readFileSync("lib/core/content/cms.ts", "utf8").includes("KNOWN_TOOL_KEYS"),
+  );
+  check(
+    // **함정 4.** `/guides` 는 `revalidate = 300` 으로 굳는다(S7-10 · 그것이 목적이다).
+    // 무효화가 없으면 발행이 최대 5분 뒤에 보이고 — 더 나쁘게 — **내린 글이 5분 동안
+    // 계속 열린다.** 화면은 '내렸다' 고 말하는데 URL 은 살아 있는 상태다.
+    // S8-08 흐름 점검이 실제로 여기 걸렸다.
+    "**쓰기 뒤에 공개 화면 캐시를 무효화한다** — 안 그러면 내린 글이 5분 동안 열려 있다",
+    readFileSync("lib/content/admin.ts", "utf8").includes("revalidatePath") &&
+      readFileSync("lib/content/admin.ts", "utf8").includes('revalidatePath("/sitemap.xml")'),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0060 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

@@ -1298,6 +1298,53 @@ export type Database = {
         }
         Relationships: []
       }
+      content_revisions: {
+        Row: {
+          body_md: string | null
+          created_at: string
+          editor_id: string | null
+          id: string
+          note: string
+          post_id: string
+          published_at: string | null
+          revision: number
+          seo_json: Json
+          title: string
+        }
+        Insert: {
+          body_md?: string | null
+          created_at?: string
+          editor_id?: string | null
+          id?: string
+          note: string
+          post_id: string
+          published_at?: string | null
+          revision: number
+          seo_json?: Json
+          title: string
+        }
+        Update: {
+          body_md?: string | null
+          created_at?: string
+          editor_id?: string | null
+          id?: string
+          note?: string
+          post_id?: string
+          published_at?: string | null
+          revision?: number
+          seo_json?: Json
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_revisions_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "content_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contract_cancellations: {
         Row: {
           admin_decision: string | null

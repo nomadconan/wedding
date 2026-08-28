@@ -479,3 +479,43 @@ on conflict (slug) do update set
   body_md      = excluded.body_md,
   seo_json     = excluded.seo_json,
   published_at = excluded.published_at;
+
+-- =============================================================================
+-- CMS 픽스처 (S8-08 · F-A-05)
+-- =============================================================================
+-- **세 상태가 다 있어야 `/admin/cms` 를 볼 수 있다.** 위까지는 발행 7건과 예약 1건이고
+-- **초안이 없었다** — 초안은 `published_at is null` 이라 공개 정책이 가리는데, 그 상태의
+-- 글이 하나도 없으면 "운영자만 미발행 글을 본다" 는 경계를 확인할 수단이 없다.
+-- (`draft-not-published-example` 은 이름과 달리 **예약**이다 — 시각이 미래일 뿐 값이 있다.)
+insert into public.content_posts (slug, type, title, body_md, seo_json, published_at) values
+(
+  'cms-draft-example',
+  'guide',
+  '쓰다 만 초안',
+  $md$이 글은 **초안 상태**를 확인하기 위한 로컬 픽스처입니다.
+
+`published_at` 이 비어 있으므로 공개 정책(0005 [58])이 가려야 하고, `/admin/cms` 에서 운영자에게만 보여야 합니다.$md$,
+  '{"description": "초안 상태를 확인하는 로컬 픽스처입니다.", "keywords": [], "tools": []}'::jsonb,
+  null
+)
+on conflict (slug) do update set
+  type         = excluded.type,
+  title        = excluded.title,
+  body_md      = excluded.body_md,
+  seo_json     = excluded.seo_json,
+  published_at = excluded.published_at;
+
+-- 판본 둘. **판본이 없으면 '리비전 관리'(F-A-05)가 화면에서 빈 자리로만 보인다** —
+-- 빈 목록은 "판본이 안 쌓인다" 와 "아직 한 번도 안 고쳤다" 를 구분하지 못한다.
+--
+-- `editor_id` 는 비운다 — 운영자 계정이 로컬마다 다르고 화면이 id 를 그리지 않는다.
+-- 사유(`note`)는 CHECK 이 요구하므로 비울 수 없다(그것이 이 표의 요점이다).
+insert into public.content_revisions (post_id, revision, title, body_md, seo_json, published_at, note)
+select p.id, 1, p.title, '초판 본문', p.seo_json, null, '초판 작성'
+  from public.content_posts p where p.slug = 'hall-contract-checklist'
+on conflict (post_id, revision) do nothing;
+
+insert into public.content_revisions (post_id, revision, title, body_md, seo_json, published_at, note)
+select p.id, 2, p.title, p.body_md, p.seo_json, p.published_at, '본문 보강 후 발행'
+  from public.content_posts p where p.slug = 'hall-contract-checklist'
+on conflict (post_id, revision) do nothing;
