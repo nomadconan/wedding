@@ -202,8 +202,25 @@ let bundleFilesScanned = 0;
 if (WITH_BUNDLE) {
   const staticDir = path.join(ROOT, ".next", "static");
 
-  if (!existsSync(staticDir)) {
-    console.error("FAIL  .next/static not found. Run `npm run build` first.");
+  // **개발 산출물을 프로덕션 번들로 착각하지 않는다** (FIX-40).
+  //
+  // `next dev` 도 `.next/static` 을 채운다. 그래서 `existsSync(staticDir)` 만 보면
+  // **개발 서버가 남긴 청크를 스캔하고 통과**한다 — 프로덕션 번들은 본 적도 없이
+  // "서비스롤 키가 안 실렸다" 고 답하는 셈이다. §7.2 가 요구하는 검사가 **엉뚱한
+  // 파일에 대해 통과**하는 것이라, 키가 없는 빌드를 스캔한 통과가 아무것도 증명하지
+  // 않는다는 S8-05 의 판단과 같은 자리다.
+  //
+  // `.next/BUILD_ID` 는 **`next build` 만 쓴다** — 개발 모드는 만들지 않는다.
+  // 그래서 이 파일의 존재가 "프로덕션 빌드 산출물인가" 의 답이다.
+  const buildId = path.join(ROOT, ".next", "BUILD_ID");
+
+  if (!existsSync(staticDir) || !existsSync(buildId)) {
+    console.error(
+      existsSync(staticDir)
+        ? "FAIL  .next/BUILD_ID not found — .next holds dev output, not a production build.\n" +
+          "      Stop `npm run dev` (it locks .next) and run `npm run build` first."
+        : "FAIL  .next/static not found. Run `npm run build` first.",
+    );
     process.exit(1);
   }
 
