@@ -150,7 +150,11 @@ export type EntityType =
   // S8-07. 오탐 신고. **조항도 처리 문안도 memo 에 넣지 않는다**(§7.3) — 남길 사실은
   // **룰 코드와 사유 코드**다. 어떤 룰이 반복해서 잘못 걸리는지가 F-A-03 이 받아야 할
   // 신호이고, 원본 finding 은 재분석에 사라지므로 룰 코드가 유일하게 남는 단서다.
-  | "finding_report";
+  | "finding_report"
+  // S8-08. 콘텐츠 CMS. **본문도 사유 문안도 memo 에 넣지 않는다**(§7.3) — 행과
+  // 리비전이 이미 갖고 있다. 남길 사실은 "만들었다·고쳤다·공개 상태가 바뀌었다·
+  // 내렸다" 라는 전이이며, 슬러그 변경(= URL 변경)은 `audit_logs` 가 값으로 갖는다.
+  | "content_post";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 

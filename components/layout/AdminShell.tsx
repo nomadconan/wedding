@@ -95,7 +95,10 @@ const ADMIN_NAV: NavItem[] = [
   // 기록해 두었다). **명세를 따른다** — 그쪽이 진실이고(CLAUDE.md 머리글) 이미
   // 그 경로로 문서가 여러 곳에서 참조된다.
   { href: "/admin/ai-quality", label: "AI 품질·비용", icon: BarChart3 },
-  { href: "/admin/content", label: "콘텐츠", icon: FileText },
+  // S8-08 이 이 화면을 세웠다. **경로가 내비와 명세가 서로 달랐다** — 내비는
+  // `/admin/content` 를 가리켰고 §6.4 는 `/admin/cms` 를 적었다(FIX-23 가 기록해 둔 자리).
+  // S8-07 이 `/admin/quality` 에서 한 것처럼 **명세를 따른다**.
+  { href: "/admin/cms", label: "콘텐츠", icon: FileText },
   { href: "/admin/tickets", label: "CS·신고", icon: Flag },
   // S8-11 이 이 화면을 세웠다. **커뮤니티 신고 바로 위**에 둔다 — 둘 다 '내리는' 큐지만
   // 이쪽은 **거래가 확인된 평가**라 판단 기준이 다르고(§7.7), 후기를 내리는 일은
