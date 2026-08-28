@@ -4419,16 +4419,22 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "툴 호출 기록은 클라이언트가 쓸 수 없다 (감사 기록을 당사자가 만들지 않는다)",
-    rejectedWith(/row-level security/i, () =>
+    rejectedWith(/row-level security|permission denied/i, () =>
       asUser(owner, `insert into public.ai_tool_calls (message_id, tool_name, result_summary)
          values ('${MSG}', 'search_vendors', '지어낸 기록');`, aiFixture)),
   );
   check(
+    // **S8-07 이 0행에서 거절로 바꿨다.** 그전에는 정책이 없어 UPDATE 가 0행을
+    // 돌려줬고(조용한 무효), 0059 가 권한을 걷은 뒤로는 **문장 자체가 끊긴다.**
+    // 뜻이 더 강해진 것이라 검사도 그렇게 고친다 — 0행은 "아무것도 안 바뀌었다"
+    // 이지만 거절은 "쓸 수 없다" 이고, 우리가 보장하려던 것은 뒤쪽이다.
     "툴 호출 기록은 고칠 수도 지울 수도 없다 (감사는 append-only)",
-    asUser(owner, `with u as (update public.ai_tool_calls set result_summary = '조작' returning id)
-       select count(*) from u;`, aiFixture) === "0" &&
-      asUser(owner, `with d as (delete from public.ai_tool_calls returning id)
-         select count(*) from d;`, aiFixture) === "0",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(owner, `update public.ai_tool_calls set result_summary = '조작';`, aiFixture),
+    ) &&
+      rejectedWith(/row-level security|permission denied/i, () =>
+        asUser(owner, `delete from public.ai_tool_calls;`, aiFixture),
+      ),
   );
 
   // ── 커뮤니티 (S7-14 · §3.7 · D-26) ─────────────────────────────────────────
@@ -4876,18 +4882,25 @@ if (!vendorStaff || !adminUser) {
       asAnon(`select count(*) from public.findings;`, reportFixture) === "0",
     );
     check(
+      // **S8-07 이 정책 위에 권한까지 걷었다**(0059). 그전에는 정책이 없어 RLS 가
+      // 막았고, 이제는 그 앞의 권한에서 끊긴다 — 오류 문구가 바뀌므로 둘 다 받는다.
+      // 막히는 이유가 늘어난 것이지 약해진 것이 아니다.
       "분석·조항은 클라이언트가 쓸 수 없다 — 파이프라인(서비스롤)이 만든다",
-      rejectedWith(/row-level security/i, () =>
+      rejectedWith(/row-level security|permission denied/i, () =>
         asUser(owner, `insert into public.document_analyses (document_id, status)
            values ('${DOC}', 'done');`, reportFixture)) &&
-        rejectedWith(/row-level security/i, () =>
+        rejectedWith(/row-level security|permission denied/i, () =>
           asUser(owner, `insert into public.findings (analysis_id, rule_code, severity)
              values ('${ANA}', 'R-01', 'low'::public.finding_severity);`, reportFixture)),
     );
     check(
-      "**위험 점수를 당사자가 고칠 수 없다** (UPDATE 정책 없음)",
-      asUser(owner, `with u as (update public.document_analyses set risk_score = 0 returning id)
-         select count(*) from u;`, reportFixture) === "0",
+      // **S8-07 이 0행에서 거절로 바꿨다.** 정책이 없어 0행이 돌아오던 것이
+      // 0059 의 권한 회수 뒤로는 문장 자체가 끊긴다. 0행은 "아무것도 안 바뀌었다"
+      // 이고 거절은 "쓸 수 없다" 인데, 리포트가 협상 자료라 필요한 것은 뒤쪽이다.
+      "**위험 점수를 당사자가 고칠 수 없다** (권한 회수 · 0059)",
+      rejectedWith(/row-level security|permission denied/i, () =>
+        asUser(owner, `update public.document_analyses set risk_score = 0;`, reportFixture),
+      ),
     );
     check(
       "**남의 커플 id 로 문서를 만들 수 없다** (42501)",
@@ -8372,6 +8385,386 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0058 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-07 — AI 품질·비용 관리 (F-A-04 · §5.8 · 0059)
+//
+// **리포트는 업체와의 협상에 쓰이는 문서다.** 당사자가 자기 리포트의 위험 점수나
+// 인용 대조 결과를 스스로 고칠 수 있으면 그 문서는 증거가 못 된다. 여기서 보는 것의
+// 절반은 그 자리이며, 나머지 절반은 **지표가 지표 노릇을 하는가**다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const analysisId = sql(`select id from public.document_analyses limit 1;`);
+  const findingId = sql(`select id from public.findings limit 1;`);
+  const qualityReport = "00000000-0000-0000-0000-0000000000a1";
+
+  // ── 우리 산출물의 신뢰도를 당사자가 조작할 수 있는가 ──────────────────────
+  check(
+    "**당사자가 자기 분석의 위험 점수를 고칠 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.document_analyses set risk_score = 100 where id = '${analysisId}';`),
+    ),
+  );
+  check(
+    "**당사자가 인용 대조 결과를 뒤집을 수 없다** — 폐기됐어야 할 항목을 '검증됨' 으로 만들 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.findings set citation_verified = true where id = '${findingId}';`),
+    ),
+  );
+  check(
+    "**당사자가 finding 을 새로 만들 수 없다** — 근거 없는 high 판정을 스스로 만들 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.findings(analysis_id, rule_code, severity, citation_verified)
+           values ('${analysisId}', 'R-01', 'high', true);`,
+      ),
+    ),
+  );
+  check(
+    "**당사자가 finding 을 지울 수 없다** — 불리한 항목만 골라 지울 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `delete from public.findings where id = '${findingId}';`),
+    ),
+  );
+  check(
+    "**아무도 품질 로그를 넣거나 고칠 수 없다** (지표의 원천이다)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.ai_call_logs(feature, validation_result) values ('report', 'ok');`,
+      ),
+    ) &&
+      rejectedWith(/permission denied|row-level security/, () =>
+        asUser(vendorOwner, `update public.ai_call_logs set validation_result = 'ok';`),
+      ),
+  );
+  check(
+    "**운영자 세션으로도 품질 로그를 고칠 수 없다** (기록은 서비스롤 경유 · D-62)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `delete from public.ai_call_logs;`),
+    ),
+  );
+
+  // ── 어휘를 DB 가 강제한다 (FIX-33 해소) ───────────────────────────────────
+  check(
+    "**`document_analyses.status` 어휘가 CHECK 으로 잠겼다** (FIX-33 — 집계의 분모다)",
+    sql(`select count(*) from pg_constraint where conname = 'document_analyses_status_vocab';`) === "1" &&
+      rejectedWith(/document_analyses_status_vocab/, () =>
+        sql(`update public.document_analyses set status = 'succeeded' where id = '${analysisId}';`),
+      ),
+  );
+  check(
+    "**검증 결과 어휘가 CHECK 으로 잠겼다** — 오타가 실패율을 조용히 움직이지 못한다",
+    rejectedWith(/ai_call_logs_validation_vocab/, () =>
+      sql(`update public.ai_call_logs set validation_result = 'okay';`),
+    ),
+  );
+  {
+    // 코드↔DB 대조. 사본이 벌어져도 화면에는 아무 일도 안 생긴다(S7-01 이 세운 방식).
+    const codeStatuses = [
+      ...readFileSync("lib/core/report/pipeline.ts", "utf8")
+        .match(/ANALYSIS_STATUSES = \[([^\]]+)\]/)?.[1]
+        .matchAll(/"([a-z_]+)"/g) ?? [],
+    ].map((match) => match[1]);
+    const dbStatuses = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+         where conname = 'document_analyses_status_vocab';`,
+    );
+
+    check(
+      "분석 상태 어휘가 코드와 DB 에서 같다 (FIX-33 이 물린 자리)",
+      codeStatuses.length === 4 && codeStatuses.every((code) => dbStatuses.includes(`'${code}'`)),
+      `code=${codeStatuses.join(",")}`,
+    );
+  }
+  {
+    const codeResults = [
+      ...(readFileSync("lib/core/quality/metrics.ts", "utf8")
+        .match(/VALIDATION_RESULTS = \[([^\]]+)\]/)?.[1]
+        .matchAll(/"([a-z_]+)"/g) ?? []),
+    ].map((match) => match[1]);
+    const dbResults = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint
+         where conname = 'ai_call_logs_validation_vocab';`,
+    );
+
+    check(
+      "검증 결과 어휘가 코드와 DB 에서 같다",
+      codeResults.length === 7 && codeResults.every((code) => dbResults.includes(`'${code}'`)),
+      `code=${codeResults.join(",")}`,
+    );
+  }
+
+  // ── 오탐 신고: 접수자가 자기 신고를 닫을 수 있는가 (FIX-36 과 같은 모양) ──
+  check(
+    "**신고자가 처리 완료 상태로 접수할 수 없다** — 그러면 운영자 큐에 뜨지 않는다",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        owner,
+        `insert into public.finding_reports(finding_id, analysis_id, rule_code, reporter_id, reason_code, status)
+           values ('${findingId}', '${analysisId}', 'R-01', '${owner}', 'misread', 'rejected');`,
+      ),
+    ),
+  );
+  check(
+    "**신고자가 처리자 칸을 직접 쓸 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        owner,
+        `insert into public.finding_reports(finding_id, analysis_id, rule_code, reporter_id, reason_code, resolved_by)
+           values ('${findingId}', '${analysisId}', 'R-01', '${owner}', 'misread', '${owner}');`,
+      ),
+    ),
+  );
+  check(
+    "**접수된 신고를 아무도 고칠 수 없다** (처리는 서비스롤 경유)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.finding_reports set status = 'rejected' where id = '${qualityReport}';`),
+    ),
+  );
+  check(
+    "**남의 리포트 항목을 신고할 수 없다**",
+    rejectedWith(/row-level security/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.finding_reports(finding_id, analysis_id, rule_code, reporter_id, reason_code)
+           values ('${findingId}', '${analysisId}', 'R-01', '${vendorOwner}', 'misread');`,
+      ),
+    ),
+  );
+  check(
+    "당사자는 자기 리포트 항목을 신고할 수 있다 (막을 것만 막는다)",
+    asUser(
+      owner,
+      `insert into public.finding_reports(finding_id, analysis_id, rule_code, reporter_id, reason_code)
+         select id, analysis_id, rule_code, '${owner}', 'wrong_severity' from public.findings
+           where id = '${findingId}' returning 1;`,
+    ) === "1",
+  );
+  check(
+    "**룰 코드를 바꿔치기해 남의 룰에 신고를 쌓을 수 없다**",
+    rejectedWith(/row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.finding_reports(finding_id, analysis_id, rule_code, reporter_id, reason_code)
+           values ('${findingId}', '${analysisId}', 'R-99', '${owner}', 'misread');`,
+      ),
+    ),
+  );
+  check(
+    "**'받아들이지 않음' 도 사유를 요구한다**",
+    rejectedWith(/finding_reports_status_chk/, () =>
+      sql(`update public.finding_reports set status = 'rejected', resolved_by = '${adminUser}',
+             resolved_at = now() where id = '${qualityReport}';`),
+    ),
+  );
+  check(
+    "**정의되지 않은 신고 사유는 거절한다**",
+    rejectedWith(/finding_reports_reason_vocab/, () =>
+      sql(`update public.finding_reports set reason_code = 'spam' where id = '${qualityReport}';`),
+    ),
+  );
+
+  // ── cascade 가 기록을 지우는가 ────────────────────────────────────────────
+  //
+  // 재분석은 finding 을 통째로 지우고 다시 넣는다(`analyze.ts`). 문서 삭제 권한도
+  // 당사자에게 있다. 둘 중 어느 쪽으로도 **오탐 신고가 쓸려 나가면 안 된다.**
+  check(
+    "**재분석으로 finding 이 지워져도 오탐 신고는 남는다** (set null + rule_code 스냅샷)",
+    sql(
+      `begin;
+       delete from public.findings where id = '${findingId}';
+       select count(*) from public.finding_reports where id = '${qualityReport}';
+       rollback;`,
+    ) === "1",
+  );
+  check(
+    "**문서를 지워도 오탐 신고는 남는다** — 당사자가 신고 기록을 지울 수 없다",
+    sql(
+      `begin;
+       delete from public.documents;
+       select count(*) from public.finding_reports where id = '${qualityReport}';
+       rollback;`,
+    ) === "1",
+  );
+  check(
+    "그때 룰 코드는 그대로 남는다 — 무엇에 대한 신고였는지 답할 수 있다",
+    sql(
+      `begin;
+       delete from public.documents;
+       select rule_code from public.finding_reports where id = '${qualityReport}';
+       rollback;`,
+    ).length > 0,
+  );
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "**품질 로그는 비로그인에게 보이지 않는다**",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.ai_call_logs;`)),
+  );
+  check(
+    "**당사자에게도 품질 로그는 보이지 않는다**",
+    asUser(owner, `select count(*) from public.ai_call_logs;`) === "0",
+  );
+  check(
+    "운영자는 품질 로그를 읽는다 — 실패율이 올랐을 때 묻는 것은 '어떤 호출이 왜' 다(D-115)",
+    Number(asUser(adminUser, `select count(*) from public.ai_call_logs;`)) > 0,
+  );
+  check(
+    "운영자는 완료된 분석을 읽는다 (검수 큐가 행이다)",
+    Number(asUser(adminUser, `select count(*) from public.document_analyses;`)) > 0,
+  );
+  check(
+    "**운영자에게 findings 는 열지 않았다** — 마스킹본이라도 남의 계약 조항이다",
+    asUser(adminUser, `select count(*) from public.findings;`) === "0",
+  );
+  check(
+    "**검수 기록은 운영자만 읽는다**",
+    asUser(owner, `select count(*) from public.ai_report_reviews;`) === "0" &&
+      rejectedWith(/permission denied/, () =>
+        asAnon(`select count(*) from public.ai_report_reviews;`),
+      ),
+  );
+  check(
+    "**검수 기록을 운영자가 직접 쓸 수 없다** — reviewer_id 를 남의 것으로 적을 수 없다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        adminUser,
+        `insert into public.ai_report_reviews(analysis_id, reviewer_id, verdict, note)
+           values ('${analysisId}', '${owner}', 'accurate', 'x');`,
+      ),
+    ),
+  );
+  check(
+    "신고자는 자기 신고를 본다",
+    asUser(owner, `select count(*) from public.finding_reports where id = '${qualityReport}';`) === "1",
+  );
+  check(
+    "**남의 신고는 보이지 않는다**",
+    asUser(vendorOwner, `select count(*) from public.finding_reports;`) === "0",
+  );
+
+  // ── 검수 기록의 규칙 ──────────────────────────────────────────────────────
+  check(
+    "**'근거와 맞음' 에도 메모가 필수다**",
+    rejectedWith(/ai_report_reviews_note_chk/, () =>
+      sql(`insert into public.ai_report_reviews(analysis_id, reviewer_id, verdict, note)
+             values ('${analysisId}', '${adminUser}', 'accurate', '   ');`),
+    ),
+  );
+  check(
+    "**정의되지 않은 판단은 저장되지 않는다**",
+    rejectedWith(/ai_report_reviews_verdict_vocab/, () =>
+      sql(`insert into public.ai_report_reviews(analysis_id, reviewer_id, verdict, note)
+             values ('${analysisId}', '${adminUser}', 'wrong', 'x');`),
+    ),
+  );
+  check(
+    "한 사람이 같은 분석을 두 번 검수하지 않는다 (여러 사람은 볼 수 있다)",
+    rejectedWith(/duplicate key|unique/, () =>
+      sql(`begin;
+           insert into public.ai_report_reviews(analysis_id, reviewer_id, verdict, note)
+             values ('${analysisId}', '${adminUser}', 'accurate', 'first');
+           insert into public.ai_report_reviews(analysis_id, reviewer_id, verdict, note)
+             values ('${analysisId}', '${adminUser}', 'unclear', 'second');
+           rollback;`),
+    ),
+  );
+
+  // ── 기준이 없으면 만들지 않는다 (O-21) ────────────────────────────────────
+  check(
+    "**토큰 단가가 미결로 비어 있다** (O-21 — 코드가 숫자를 고르지 않는다)",
+    sql(`select count(*) from public.app_settings
+           where key in ('ai.input_price_per_mtok_krw', 'ai.output_price_per_mtok_krw')
+             and value_json->>'value' is null;`) === "2",
+  );
+  check(
+    "미결 파라미터가 오픈 이슈 번호를 달고 있다",
+    sql(`select count(*) from public.app_settings
+           where key like 'ai.%_price_per_mtok_krw' and value_json->>'openIssue' = 'O-21';`) === "2",
+  );
+  check(
+    "**단가가 없으면 빈 값이 아니라 blocked 를 낸다** (함정 2·3)",
+    readFileSync("lib/core/quality/metrics.ts", "utf8").includes('status: "blocked"') &&
+      readFileSync("app/api/admin/ai-quality/route.ts", "utf8").includes("costBlocked"),
+  );
+  check(
+    "**목표치가 '가정' 이라는 사실을 코드가 들고 다닌다** — 판정을 만들지 않는다",
+    readFileSync("lib/core/quality/metrics.ts", "utf8").includes("assumed: true"),
+  );
+
+  // ── 계측: 셀 수 없던 것을 세는가 ──────────────────────────────────────────
+  check(
+    "**플래너가 품질 로그를 남긴다** — 그전까지 리포트만 남겨 '플래너 0%' 가 떴다",
+    readFileSync("app/api/ai/planner/route.ts", "utf8").includes("logAiCall"),
+  );
+  check(
+    "**상한에 막힌 턴도 남는다** — 실패가 아니라 limit_reached 다",
+    readFileSync("app/api/ai/planner/route.ts", "utf8").includes('"limit_reached"'),
+  );
+  check(
+    "**리포트가 폐기 수를 칸에 남긴다** — memo 문자열 파싱으로 지표를 만들지 않는다",
+    readFileSync("lib/reports/analyze.ts", "utf8").includes("findingsDiscarded"),
+  );
+  check(
+    "품질 로그 픽스처가 붙어 있다 (0건이면 격리 검사가 엉뚱한 이유로 통과한다)",
+    Number(sql(`select count(*) from public.ai_call_logs;`)) >= 4,
+  );
+  check(
+    "**시도와 비시도가 둘 다 픽스처에 있다** — no_key 가 실패율을 움직이지 않는 것을 볼 수 있다",
+    sql(`select count(*) from public.ai_call_logs where validation_result = 'no_key';`) === "1" &&
+      sql(`select count(*) from public.ai_call_logs where validation_result = 'invalid_output';`) === "1",
+  );
+  check(
+    "폐기 수가 실제로 기록돼 있다 (폐기율의 분자·분모가 둘 다 있다)",
+    Number(sql(`select coalesce(sum(findings_discarded), 0) from public.ai_call_logs;`)) >= 1 &&
+      Number(sql(`select coalesce(sum(findings_generated), 0) from public.ai_call_logs;`)) >= 1,
+  );
+
+  // ── 저장하지 않는 것 ──────────────────────────────────────────────────────
+  check(
+    "**검수 큐를 표로 저장하지 않는다** — 완료 분석과 검수 기록의 차집합이다(D-124)",
+    sql(`select count(*) from information_schema.tables
+           where table_schema = 'public' and table_name like '%review_queue%';`) === "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check(
+    "`/admin/ai-quality` 화면이 실재한다",
+    existsSync("app/(admin)/admin/ai-quality/page.tsx"),
+  );
+  check(
+    "**내비가 명세 경로를 가리킨다** — `/admin/quality` 는 §6.4 에 없는 경로였다(FIX-23)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/ai-quality"') &&
+      !readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/quality"'),
+  );
+  check(
+    "**오탐 신고에 들어가는 자리가 있다** — 접수 경로 없는 큐는 영원히 비어 있다(FIX-25)",
+    readFileSync("app/(consumer)/reports/[id]/ReportDetailView.tsx", "utf8").includes(
+      "FindingReportButton",
+    ),
+  );
+  check(
+    "품질 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/ai-quality/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**S8-01 의 AI 비용 카드가 담당·사유를 바로잡았다** — 잘못 적힌 담당은 아무도 걷지 않는다",
+    !readFileSync("lib/core/metrics/admin.ts", "utf8").includes('"S8-04",'),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0059 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

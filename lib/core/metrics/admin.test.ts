@@ -273,12 +273,31 @@ describe("buildFunnel", () => {
 });
 
 describe("pendingCards — 못 세는 지표를 0으로 두지 않는다", () => {
-  it("전부 not_yet 이고 담당 태스크를 밝힌다", () => {
+  // **못 세는 이유가 둘이다**(D-108 · S8-07 이 갈랐다).
+  //
+  //   `not_yet`    기능이 아직 없다 → 담당 태스크를 밝힌다
+  //   `undecided`  기능은 있는데 **기준이 없다** → 오픈 이슈 번호를 밝힌다
+  //
+  // AI 비용이 뒤쪽으로 옮겨 갔다: 토큰은 실제로 쌓이고(0059) 단가만 비어 있다(O-21).
+  // 둘을 한 상태로 묶으면 "만들면 되는 것" 과 "정해야 하는 것" 이 같아 보인다.
+  it("전부 not_yet 이거나 undecided 이고, 각자 근거를 밝힌다", () => {
     for (const row of pendingCards()) {
-      expect(row.metric.status).toBe("not_yet");
-      expect(row.metric.status === "not_yet" && row.metric.filledBy).toMatch(/^S\d+-\d+$/);
-      expect(row.metric.status === "not_yet" && row.metric.reason.length).toBeGreaterThan(0);
+      expect(["not_yet", "undecided"]).toContain(row.metric.status);
+
+      if (row.metric.status === "not_yet") {
+        expect(row.metric.filledBy).toMatch(/^S\d+-\d+$/);
+        expect(row.metric.reason.length).toBeGreaterThan(0);
+      }
+
+      if (row.metric.status === "undecided") {
+        expect(row.metric.openIssue).toMatch(/^O-\d+$/);
+        expect(row.metric.reason.length).toBeGreaterThan(0);
+      }
     }
+  });
+
+  it("**0 으로 적힌 카드가 하나도 없다** — 0은 '측정했더니 0' 이라는 뜻이다", () => {
+    for (const row of pendingCards()) expect(row.metric.status).not.toBe("measured");
   });
 
   it("측정 카드와 키가 겹치지 않는다", () => {

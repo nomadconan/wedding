@@ -50,6 +50,14 @@ export type TurnOutcome = {
   audits: ToolCallAudit[];
   tokenIn: number;
   tokenOut: number;
+  /**
+   * 실제로 부른 모델. 룰만 쓴 턴은 `null` 이다(S8-07).
+   *
+   * **라우트가 `lib/ai/client` 를 정적 import 하지 않게** 하려고 여기서 돌려준다 —
+   * 그쪽은 SDK 를 끌어오므로 키가 없는 환경에서도 번들에 들어간다. 이 파일은 이미
+   * 동적 import 로 그것을 피하고 있고, 그 판단을 라우트가 깨뜨리면 안 된다.
+   */
+  model: string | null;
 };
 
 /** 툴 왕복 상한. 넘으면 그 턴은 지금까지 모은 것으로 답한다. */
@@ -76,7 +84,7 @@ export async function runPlannerTurn(input: {
   if (irreversible !== null) {
     input.emit("delta", { text: irreversible.notice });
 
-    return { mode, text: irreversible.notice, cards: [], audits: [], tokenIn: 0, tokenOut: 0 };
+    return { mode, text: irreversible.notice, cards: [], audits: [], tokenIn: 0, tokenOut: 0, model: null };
   }
 
   if (mode === "rules_only") return runWithoutModel(input);
@@ -103,7 +111,7 @@ async function runWithoutModel(input: {
     const text = `${FALLBACK_GUIDE_REPLY}\n${FALLBACK_MODE_NOTICE}`;
     input.emit("delta", { text });
 
-    return { mode: "rules_only", text, cards: [], audits: [], tokenIn: 0, tokenOut: 0 };
+    return { mode: "rules_only", text, cards: [], audits: [], tokenIn: 0, tokenOut: 0, model: null };
   }
 
   const run = await runTool("search_vendors", { query: plan.query }, input.ctx);
@@ -121,6 +129,7 @@ async function runWithoutModel(input: {
     audits: [run.audit],
     tokenIn: 0,
     tokenOut: 0,
+    model: null,
   };
 }
 
@@ -281,7 +290,7 @@ async function runWithModel(input: {
     });
   }
 
-  return { mode: "model", text: gate.emitted().trim(), cards, audits, tokenIn, tokenOut };
+  return { mode: "model", text: gate.emitted().trim(), cards, audits, tokenIn, tokenOut, model: AI_MODEL };
 }
 
 /**
@@ -361,6 +370,7 @@ async function regenerate(input: {
     audits: input.audits,
     tokenIn,
     tokenOut,
+    model: AI_MODEL,
   };
 }
 

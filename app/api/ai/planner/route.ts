@@ -13,7 +13,8 @@ import {
   sessionTokens,
   turnsUsedToday,
 } from "@/lib/ai/planner/conversation";
-import { plannerMode, runPlannerTurn, saveToolAudits } from "@/lib/ai/planner/run";
+import { PLANNER_PROMPT_VERSION, plannerMode, runPlannerTurn, saveToolAudits } from "@/lib/ai/planner/run";
+import { logAiCall } from "@/lib/quality/log";
 import { buildToolContext } from "@/lib/ai/tools/context";
 import { aiLimitSettings } from "@/lib/ai/tools/reference";
 import { findMyCouple } from "@/lib/couple/membership";
@@ -104,6 +105,17 @@ export async function POST(request: NextRequest) {
       memo: `limit:${gate.reason}`,
     });
 
+    // **막힌 턴도 품질 로그에 남긴다**(S8-07). 실패가 아니라 `limit_reached` 이며
+    // 실패율 분모에서 빠진다 — 그러나 "몇 번이나 상한에 막혔나" 는 비용·정책 판단의
+    // 근거라 세어야 한다.
+    await logAiCall({
+      feature: "planner",
+      model: null,
+      promptVersion: PLANNER_PROMPT_VERSION,
+      validationResult: "limit_reached",
+      retryCount: 0,
+    });
+
     return fail(429, "AI_TURN_LIMIT", gate.notice, { reason: gate.reason });
   }
 
@@ -160,6 +172,7 @@ export async function POST(request: NextRequest) {
 
         await appendMessage({ conversationId, role: "user", content: message });
 
+        const turnStartedAt = Date.now();
         const outcome = await runPlannerTurn({
           ctx,
           message,
@@ -177,6 +190,26 @@ export async function POST(request: NextRequest) {
         });
 
         await saveToolAudits(messageId, outcome.audits);
+
+        // 품질·비용 원천(F-A-04 · §5.8 · S8-07).
+        //
+        // **그전까지 플래너는 아무 데도 남기지 않았다.** 리포트만 남기고 있어서
+        // 품질 대시보드를 그대로 세우면 "플래너 실패율 0%" 가 뜬다 — 그것은 측정이
+        // 아니라 **측정하지 않았다는 사실이 0으로 보이는 것**이다(함정 2).
+        //
+        // `rules_only` 는 실패가 아니라 **부르지 않은 것**이다(키가 없다). 그것을
+        // 실패로 세면 로컬 개발 환경의 실패율이 100% 가 되고, 스키마가 실제로 깨진
+        // 날과 구분되지 않는다.
+        await logAiCall({
+          feature: "planner",
+          model: outcome.model,
+          promptVersion: PLANNER_PROMPT_VERSION,
+          validationResult: outcome.mode === "model" ? "ok" : "no_key",
+          retryCount: 0,
+          latencyMs: Date.now() - turnStartedAt,
+          tokenIn: outcome.tokenIn,
+          tokenOut: outcome.tokenOut,
+        });
 
         send("done", { conversationId });
       } catch {

@@ -146,7 +146,11 @@ export type EntityType =
   // 답변했다·내렸다·복구했다" 라는 전이와 **사유 코드**다. 특히 비공개·복구는
   // 업체의 평판을 움직이는 조치라 처리 이력이 곧 설명의 근거가 된다(F-A-13 · D-23).
   | "review"
-  | "review_report";
+  | "review_report"
+  // S8-07. 오탐 신고. **조항도 처리 문안도 memo 에 넣지 않는다**(§7.3) — 남길 사실은
+  // **룰 코드와 사유 코드**다. 어떤 룰이 반복해서 잘못 걸리는지가 F-A-03 이 받아야 할
+  // 신호이고, 원본 finding 은 재분석에 사라지므로 룰 코드가 유일하게 남는 단서다.
+  | "finding_report";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 

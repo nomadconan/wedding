@@ -10,6 +10,7 @@ import {
 } from "@/lib/core/report/pipeline";
 import { DETECT_RULES_VERSION, DETECT_RULE_CODES } from "@/lib/core/rules/detect-rules";
 import { scanDocument, verifyCitation } from "@/lib/core/rules/scan";
+import { logAiCall } from "@/lib/quality/log";
 import { loadDetectRuleSet, ruleSetSummary } from "@/lib/rules/detect-rule-set";
 import type { Finding, Report } from "@/lib/core/schemas/report";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -231,6 +232,8 @@ export async function runAnalysis(input: {
   let report: Report;
   let source: ReportSource;
   let discardedCount = 0;
+  // 폐기율의 **분모**다(§5.8). 모델이 낸 건수이며 살아남은 건수가 아니다.
+  let generatedCount = 0;
 
   if (ai.used) {
     const merged = mergeModelFindings({
@@ -241,6 +244,7 @@ export async function runAnalysis(input: {
     });
 
     discardedCount = merged.discarded.length;
+    generatedCount = ai.report.findings.length;
 
     // 모델이 낸 것이 전부 폐기됐다면 남은 것은 룰 결과뿐이다 — 그렇다고 말한다.
     const findings: Finding[] =
@@ -295,12 +299,23 @@ export async function runAnalysis(input: {
     .eq("id", input.analysisId);
 
   // 품질·비용 원천(F-A-04 · §5.8). **문서 내용은 담기지 않는다.**
-  await admin.from("ai_call_logs").insert({
+  //
+  // S8-07 이 래퍼로 옮기고 **셀 수 있는 값 다섯을 더했다** — 지연·토큰 둘·생성/폐기
+  // finding 수. 폐기 수는 그 호출이 끝나면 **다시 셀 수 없다**(폐기된 행은 저장되지
+  // 않는다). 그전까지 유일한 흔적이 `entity_events.memo` 의 문자열이었고, 그것으로
+  // 지표를 만들면 memo 형식을 바꾸는 날 폐기율이 조용히 0이 된다.
+  await logAiCall({
     feature: "report",
     model: ai.used ? ai.model : null,
-    prompt_version: ai.promptVersion,
-    validation_result: ai.used ? "ok" : ai.reason,
-    retry_count: ai.used ? ai.attempts - 1 : 1,
+    promptVersion: ai.promptVersion,
+    validationResult: ai.used ? "ok" : ai.reason,
+    retryCount: ai.used ? ai.attempts - 1 : 1,
+    latencyMs: Date.now() - startedAt,
+    tokenIn: ai.used ? ai.tokenIn : null,
+    tokenOut: ai.used ? ai.tokenOut : null,
+    analysisId: input.analysisId,
+    findingsGenerated: generatedCount,
+    findingsDiscarded: discardedCount,
   });
 
   const summary = ruleSetSummary(ruleSet);
