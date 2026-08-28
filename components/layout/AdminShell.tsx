@@ -94,6 +94,11 @@ const ADMIN_NAV: NavItem[] = [
   // `/admin/quality` 를 가리켰고 §6.4 는 `/admin/ai-quality` 를 적었다(FIX-23 가 그 사실을
   // 기록해 두었다). **명세를 따른다** — 그쪽이 진실이고(CLAUDE.md 머리글) 이미
   // 그 경로로 문서가 여러 곳에서 참조된다.
+  // S8-06. **AI 품질 바로 위**에 둔다 — 둘은 같은 파이프라인을 앞뒤로 본다:
+  // 여기서 "무엇이 도는가" 를 정하고 그쪽에서 "그 결과가 어때는가" 를 본다.
+  // 화면은 §6.4 에 있었는데 **내비가 가리키지 않았다** — URL 을 직접 쳐야 열리는
+  // 화면이 될 뻔했다(FIX-25 계열).
+  { href: "/admin/rules", label: "룰·프롬프트", icon: ScrollText },
   { href: "/admin/ai-quality", label: "AI 품질·비용", icon: BarChart3 },
   // S8-08 이 이 화면을 세웠다. **경로가 내비와 명세가 서로 달랐다** — 내비는
   // `/admin/content` 를 가리켰고 §6.4 는 `/admin/cms` 를 적었다(FIX-23 가 기록해 둔 자리).
