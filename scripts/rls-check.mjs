@@ -9199,8 +9199,12 @@ if (!vendorStaff || !adminUser) {
   check(
     "**수정 경로가 만지는 칸이 셋뿐이다** — 서비스롤이라 DB 컬럼 권한이 안 걸린다",
     (() => {
+      // **줄바꿈에 기대지 않는다.** 처음엔 `.from(...)` 다음 줄의 주석을 앵커로 썼는데,
+      // 커밋 뒤 체크아웃이 CRLF 로 정규화하자 앵커가 사라져 검사가 **엉뚱한 문자열을**
+      // 봤다 — 통과도 실패도 아닌 상태였고, 검사가 검사 노릇을 못 한 자리다.
+      // 앵커를 **한 줄 안에서** 찾는다 — 개행을 건너지 않으므로 CRLF·LF 어느 쪽이든 같다.
       const src = readFileSync("lib/rules/admin.ts", "utf8");
-      const block = src.slice(src.indexOf('.from("detect_rules")\n    // **이 세 칸만.**'));
+      const block = src.slice(src.indexOf("// **이 세 칸만."));
       const update = block.slice(block.indexOf(".update({"), block.indexOf("})"));
 
       return (
@@ -9268,6 +9272,288 @@ if (!vendorStaff || !adminUser) {
   );
 
   void ruleId;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-09 — CS·신고 처리 (F-A-06 · 0062)
+//
+// 앞선 여덟은 대개 "정책이 없어 오늘은 막힌다" 였는데 **여기는 정책이 있고 그 정책이
+// 뚫려 있었다**(FIX-43). 신고자가 접수하면서 `status='resolved'` 를 직접 쓰면 그 티켓은
+// 운영자 큐에 아예 뜨지 않는다 — 접수는 됐고 아무도 보지 않는다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const openTicket = "00000000-0000-0000-0000-0000000000b1";
+  const closedTicket = "00000000-0000-0000-0000-0000000000b3";
+
+  // ── FIX-43: 신고자가 자기 신고를 닫을 수 있는가 ───────────────────────────
+  check(
+    "**신고자가 처리 완료 상태로 접수할 수 없다** (FIX-43 — 그러면 운영자 큐에 뜨지 않는다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        owner,
+        `insert into public.tickets (reporter_id, category, subject, status)
+           values ('${owner}', 'payment', '위조 접수', 'resolved');`,
+      ),
+    ),
+  );
+  check(
+    "**신고자가 담당자를 지정할 수 없다** — 남의 이름으로 '담당' 기록이 만들어진다",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        owner,
+        `insert into public.tickets (reporter_id, category, subject, assignee_id)
+           values ('${owner}', 'payment', '위조 배정', '${adminUser}');`,
+      ),
+    ),
+  );
+  check(
+    "**신고자가 처리 사유를 직접 쓸 수 없다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(
+        owner,
+        `insert into public.tickets (reporter_id, category, subject, resolution)
+           values ('${owner}', 'payment', '위조 사유', '직접 해결함');`,
+      ),
+    ),
+  );
+  check(
+    "정상 접수는 된다 (막을 것만 막는다)",
+    asUser(
+      owner,
+      `insert into public.tickets (reporter_id, category, subject, body)
+         values ('${owner}', 'payment', '정상 접수', '본문') returning 1;`,
+    ) === "1",
+  );
+  check(
+    "**접수된 티켓을 아무도 고칠 수 없다** (처리는 서비스롤 경유 · D-62)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.tickets set status = 'resolved' where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**운영자 세션으로도 고칠 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `update public.tickets set status = 'resolved' where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**티켓을 지울 수 없다** — 접수 기록이 사라지면 처리 이력도 사라진다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `delete from public.tickets where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "authenticated 에 tickets UPDATE·DELETE 권한이 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'tickets'
+             and privilege_type in ('UPDATE', 'DELETE')
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+  check(
+    "**INSERT 는 네 칸에만 열려 있다** (reporter_id·category·subject·body)",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'tickets'
+            and privilege_type = 'INSERT' and grantee = 'authenticated';`) ===
+      "body,category,reporter_id,subject",
+  );
+
+  // ── 층 2: 정책이 다른 표의 정책에 기대는가 (FIX-41) ───────────────────────
+  check(
+    "**티켓 정책 셋이 자기 조건을 스스로 말한다** — 부모 표의 RLS 를 빌려 쓰지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'tickets'
+             and coalesce(qual, with_check) like '%auth.uid()%'
+             or (schemaname = 'public' and tablename = 'tickets' and qual like '%is_operator%');`) !==
+      "0" &&
+      sql(`select count(*) from pg_policies
+             where schemaname = 'public' and tablename = 'tickets'
+               and coalesce(qual, with_check) like '%EXISTS%';`) === "0",
+  );
+
+  // ── 어휘·불변식을 DB 가 강제한다 (CHECK 이 하나도 없었다) ────────────────
+  check(
+    // 어휘 밖 상태는 `tickets_resolution_chk` 도 함께 어긴다(그 CHECK 이 허용 상태를
+    // 나열하므로). **어느 쪽이 먼저 우는지에 기대지 않는다** — 제약이 있다는 사실과
+    // 거절된다는 사실을 따로 본다(S8-11 이 같은 자리를 겪었다).
+    "**상태 어휘가 CHECK 으로 잠겨 있다**",
+    sql(`select count(*) from pg_constraint where conname = 'tickets_status_vocab';`) === "1" &&
+      rejectedWith(/tickets_status_vocab|tickets_resolution_chk/, () =>
+        sql(`update public.tickets set status = 'closed' where id = '${openTicket}';`),
+      ),
+  );
+  check(
+    "**분류 어휘가 CHECK 으로 잠겨 있다**",
+    rejectedWith(/tickets_category_vocab/, () =>
+      sql(`update public.tickets set category = 'spam' where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**종결에는 사유·처리자·시각이 함께 있어야 한다** ('조치하지 않음' 도 예외가 아니다)",
+    rejectedWith(/tickets_resolution_chk/, () =>
+      sql(`update public.tickets set status = 'rejected' where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**빈 사유로 종결할 수 없다**",
+    rejectedWith(/tickets_resolution_chk/, () =>
+      sql(`update public.tickets set status = 'resolved', resolution = '   ',
+             resolved_by = '${adminUser}', resolved_at = now() where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**담당자 없이 '담당 배정' 상태가 될 수 없다** — 아무도 안 보는 티켓이 '보고 있음' 으로 적힌다",
+    rejectedWith(/tickets_assigned_chk/, () =>
+      sql(`update public.tickets set status = 'assigned', assignee_id = null
+             where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "**제목이 비어 있을 수 없다**",
+    rejectedWith(/tickets_subject_chk/, () =>
+      sql(`update public.tickets set subject = '   ' where id = '${openTicket}';`),
+    ),
+  );
+  check(
+    "열린 티켓에 처리 사유가 붙어 있을 수 없다 (양방향으로 잠갔다)",
+    rejectedWith(/tickets_resolution_chk/, () =>
+      sql(`update public.tickets set resolution = '미리 적음' where id = '${openTicket}';`),
+    ),
+  );
+  {
+    const code = readFileSync("lib/core/support/ticket.ts", "utf8");
+    const dbStatuses = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint where conname = 'tickets_status_vocab';`,
+    );
+    const dbCategories = sql(
+      `select pg_get_constraintdef(oid) from pg_constraint where conname = 'tickets_category_vocab';`,
+    );
+
+    check(
+      "상태·분류 어휘가 코드와 DB 에서 같다",
+      ["open", "assigned", "resolved", "rejected"].every((s) => dbStatuses.includes(`'${s}'`)) &&
+        ["account", "payment", "vendor", "content", "abuse", "bug", "other"].every((c) =>
+          dbCategories.includes(`'${c}'`),
+        ) &&
+        code.includes('"open", "assigned", "resolved", "rejected"'),
+    );
+  }
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "**비로그인은 티켓을 못 본다** (본문에 연락처·거래 내용이 섞인다)",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.tickets;`)),
+  );
+  check(
+    "신고자는 자기 티켓을 본다 — 접수만 받고 결과를 안 보여주면 처리가 아니다",
+    Number(asUser(owner, `select count(*) from public.tickets;`)) >= 3,
+  );
+  check(
+    "**남의 티켓은 보이지 않는다**",
+    asUser(vendorOwner, `select count(*) from public.tickets;`) === "0",
+  );
+  check(
+    "운영자는 전부 본다 (본문을 읽지 않고는 처리할 수 없다 · D-115)",
+    Number(asUser(adminUser, `select count(*) from public.tickets;`)) >= 3,
+  );
+
+  // ── 제재: 집행이 실재하는가 ───────────────────────────────────────────────
+  check(
+    "**업체를 중지하면 공개 목록에서 실제로 사라진다** (집행이 실재한다)",
+    asAnon(
+      `select count(*) from public.vendors where id = (select id from public.vendors where status = 'active' limit 1);`,
+    ) === "1" &&
+      sql(
+        `begin;
+         update public.vendors set status = 'suspended' where status = 'active';
+         select count(*) from public.vendors where status = 'active';
+         rollback;`,
+      ) === "0",
+  );
+  check(
+    "**아무나 업체를 중지할 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.vendors set status = 'suspended';`),
+    ),
+  );
+  check(
+    "**사용자 제재 칸을 만들지 않았다** — 집행 수단이 없는 상태 칸은 화면을 거짓말하게 한다",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'profiles'
+             and column_name in ('suspended_at', 'suspended', 'banned_at', 'status');`) === "0" &&
+      readFileSync("lib/core/support/ticket.ts", "utf8").includes("USER_SANCTION_UNAVAILABLE"),
+  );
+
+  // ── 큐를 합치지 않는다 ────────────────────────────────────────────────────
+  check(
+    "**신고 큐를 합치는 표도 뷰도 만들지 않았다** (D-142 · 계산이다)",
+    sql(`select count(*) from information_schema.tables
+           where table_schema = 'public' and table_name like '%report_queue%';`) === "0",
+  );
+  check(
+    "**옆 큐 셋을 가리키기만 한다** — 합치지 않되 놓치지 않게",
+    readFileSync("lib/core/support/ticket.ts", "utf8").includes("SIBLING_QUEUES") &&
+      readFileSync("lib/support/admin.ts", "utf8").includes("community_reports") &&
+      readFileSync("lib/support/admin.ts", "utf8").includes("review_reports") &&
+      readFileSync("lib/support/admin.ts", "utf8").includes("finding_reports"),
+  );
+
+  // ── 픽스처 ────────────────────────────────────────────────────────────────
+  check(
+    "**담당자 없는 열린 티켓이 있다** — 화면이 가장 먼저 보라고 적는 값이다",
+    sql(`select count(*) from public.tickets where status = 'open' and assignee_id is null;`) !== "0",
+  );
+  check(
+    "배정된 티켓이 있다 (행위자 이름 경로가 실제로 도는지 본다)",
+    sql(`select count(*) from public.tickets where status = 'assigned' and assignee_id is not null;`) !== "0",
+  );
+  check(
+    "종결된 티켓이 사유·처리자·시각을 다 갖고 있다",
+    sql(`select count(*) from public.tickets
+           where status in ('resolved', 'rejected')
+             and resolution is not null and resolved_by is not null and resolved_at is not null;`) !== "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/tickets` 화면이 실재한다", existsSync("app/(admin)/admin/tickets/page.tsx"));
+  check(
+    "**접수 화면이 실재한다** — 없으면 운영자 큐가 영원히 빈다(FIX-25)",
+    existsSync("app/(consumer)/support/page.tsx"),
+  );
+  check(
+    "**`/support` 에 들어가는 자리가 있다**",
+    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/support"'),
+  );
+  check(
+    "**내비의 `/admin/tickets` 가 이제 살아 있다** (FIX-23 죽은 링크 하나 감소)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/tickets"'),
+  );
+  check(
+    "CS 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**'지연' 이라고 적지 않는다** — 처리 기한이 정해져 있지 않다",
+    !readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes("지연") ||
+      readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes("지연&apos;이라고 적지"),
+  );
+  check(
+    "**사용자 제재를 할 수 없다는 사실이 API 본문에 실린다** (함정 3)",
+    readFileSync("app/api/admin/tickets/route.ts", "utf8").includes("userSanction"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0062 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  void closedTicket;
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

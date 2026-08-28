@@ -159,7 +159,11 @@ export type EntityType =
   // 않는다**(§7.3) — 행과 `audit_logs` 가 갖는다. 남길 사실은 **어느 룰이 켜지고
   // 꺼졌는가**이며, 그것이 "왜 이 조항이 리포트에 없었나" 의 답이 된다.
   // `entity_id` 는 uuid 라 **룰 코드가 아니라 행 id** 이고, 코드는 memo 로 남긴다.
-  | "detect_rule";
+  | "detect_rule"
+  // S8-09. CS·신고 티켓. **본문도 사유 문안도 memo 에 넣지 않는다**(§7.3) — 티켓 본문에는
+  // 연락처·거래 내용이 섞인다. 남길 사실은 "접수됐다·맡았다·조치했다·조치하지 않기로
+  // 했다" 라는 전이이며, 사유는 행과 `audit_logs` 가 갖는다.
+  | "ticket";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 

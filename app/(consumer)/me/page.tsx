@@ -234,6 +234,25 @@ async function MeSection() {
         </section>
       ) : null}
 
+      {/* ── 문의·신고 (F-A-06 접수 면 · S8-09) ──────────────────
+          **여기가 `/support` 의 진입점이다.** 접수 경로가 없으면 운영자 큐가 영원히
+          비고, 빈 큐는 "신고가 없다" 로 읽힌다(FIX-25 계열). 하단 탭은 다섯 칸이 찼고
+          (D-55) 문의는 자주 오는 화면이 아니라 계정 설정에서 찾는 화면이다. */}
+      <section className="space-y-2" data-testid="me-support">
+        <h2 className="text-base font-semibold text-foreground">문의·신고</h2>
+        <Card>
+          <CardContent className="space-y-1 pt-5">
+            <Link href="/support" className="text-sm font-medium text-brand-600">
+              문의 보내기·처리 상태 보기
+            </Link>
+            <p className="text-caption text-muted-foreground">
+              계정·결제·업체 관련 문의를 받습니다. 게시물·후기 신고는 그 글에서 직접
+              신고해 주세요 — 처리 절차가 달라 따로 받습니다.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+
       {/* ── 동의 이력 ──────────────────────────────────────────────────── */}
       <section className="space-y-2" data-testid="me-consents">
         <h2 className="text-base font-semibold text-foreground">동의 이력</h2>
