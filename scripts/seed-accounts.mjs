@@ -635,9 +635,60 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     id: METRIC_ANALYSIS_ID,
     document_id: METRIC_DOCUMENT_ID,
     // 'done', not 'succeeded' - ANALYSIS_STATUSES in lib/core/report/pipeline.ts.
+    // The vocabulary is a DB CHECK since 0059 (FIX-33), so a typo here now fails
+    // loudly instead of silently producing a row nothing can count.
     status: "done",
     risk_score: 42,
+    rule_version: "v1",
+    prompt_version: "report@1",
+    model: "local-demo-model",
+    latency_ms: 8_200,
+    token_in: 12_400,
+    token_out: 1_800,
   });
+
+  // Findings for that analysis (S8-07 added these).
+  //
+  // WHY: a done analysis with zero findings is a legitimate state ("no risky
+  // clause"), but it is NOT the state the screens need to be exercisable. With
+  // no findings, /reports/[id] renders the empty branch and the false-positive
+  // report path has nothing to attach to - and db:rls checks that try to forge a
+  // finding had no id to aim at, so they errored on an empty uuid instead of
+  // being REJECTED. A check that cannot reach its target proves nothing.
+  //
+  // citation_verified is true because everything that survives the pipeline
+  // passed citation matching (analyze.ts step 7). The excerpt is masked text -
+  // storing raw contract wording is forbidden (CLAUDE.md 5.1).
+  const existingFindings = await rest(
+    `findings?select=id&analysis_id=eq.${METRIC_ANALYSIS_ID}&limit=1`,
+  );
+  if (existingFindings.length === 0) {
+    await rest("findings", {
+      method: "POST",
+      body: JSON.stringify([
+        {
+          analysis_id: METRIC_ANALYSIS_ID,
+          rule_code: "R-01",
+          severity: "high",
+          clause_excerpt_masked: "계약금은 어떤 경우에도 반환하지 않는다.",
+          basis_ref: "소비자분쟁해결기준",
+          explanation: "로컬 데모 설명.",
+          negotiation_script: "로컬 데모 요청 문구.",
+          citation_verified: true,
+        },
+        {
+          analysis_id: METRIC_ANALYSIS_ID,
+          rule_code: "R-02",
+          severity: "mid",
+          clause_excerpt_masked: "일정 변경은 업체가 정한다.",
+          basis_ref: "표준약관",
+          explanation: "로컬 데모 설명.",
+          negotiation_script: "로컬 데모 요청 문구.",
+          citation_verified: true,
+        },
+      ]),
+    });
+  }
 
   // Membership: one active (conversion) + one canceled (churn). Both are needed
   // or the churn-rate denominator has nothing in it and reads as "모수 없음".
@@ -992,6 +1043,144 @@ async function seedDisputeFixture(coupleMemberUser, vendorId, coupleId) {
 }
 
 
+// ── AI quality fixture (S8-07) ─────────────────────────────
+const QUALITY_REPORT_ID = "00000000-0000-0000-0000-0000000000a1";
+
+/**
+ * AI quality console fixture (F-A-04).
+ *
+ * WHY THIS EXISTS: /admin/ai-quality has four rate tiles and every one of them
+ * degrades to the SAME blank cell on an empty database - and each blank means
+ * something different (no calls / no attempts / no findings generated / price
+ * undecided). A reviewer cannot tell the aggregation works, and db:rls passes an
+ * isolation check against zero rows for the wrong reason (S8-01 fixture note).
+ *
+ * WHAT IS SEEDED, and what each row proves:
+ *   1 report call, ok, 5 generated / 1 discarded, tokens + latency
+ *     -> failure rate has a real denominator; discard rate is 1/5, not null
+ *   1 report call, invalid_output
+ *     -> the failure numerator is non-zero, so 0% and "no attempts" differ visibly
+ *   1 planner call, ok
+ *     -> planner shows as INSTRUMENTED. Before S8-07 nothing wrote planner logs,
+ *        so the dashboard would have said "planner 0%" - which is not a
+ *        measurement, it is the absence of one showing up as a number.
+ *   1 planner call, no_key
+ *     -> a NOT-ATTEMPTED row. It must not move the failure rate.
+ *   1 open finding report on a real rule code
+ *     -> the false-positive queue has something to act on
+ *
+ * NOT SEEDED: search calls (no local search traffic), estimate calls (that
+ * feature does not call AI at all - the screen says so rather than showing 0),
+ * and token prices. Prices are O-21 undecided; seeding one would make the cost
+ * tile show a figure that silently picks a rate.
+ *
+ * NOT SEEDED EITHER: an ai_report_reviews row. The review queue must start with
+ * something pending, otherwise "0 waiting" and "nothing to review" look alike.
+ */
+async function seedQualityFixture(coupleUser) {
+  const analyses = await rest(`document_analyses?select=id&status=eq.done&limit=1`);
+  const analysisId = analyses[0]?.id ?? null;
+
+  const existing = await rest(`ai_call_logs?select=id&limit=1`);
+  if (existing.length > 0) return "existing";
+
+  const minutesAgo = (n) => new Date(Date.now() - n * 60_000).toISOString();
+
+  await rest("ai_call_logs", {
+    method: "POST",
+    body: JSON.stringify([
+      {
+        feature: "report",
+        model: "local-demo-model",
+        prompt_version: "report@1",
+        validation_result: "ok",
+        retry_count: 0,
+        latency_ms: 8_200,
+        token_in: 12_400,
+        token_out: 1_800,
+        analysis_id: analysisId,
+        findings_generated: 5,
+        findings_discarded: 1,
+        created_at: minutesAgo(240),
+      },
+      {
+        feature: "report",
+        model: "local-demo-model",
+        prompt_version: "report@1",
+        validation_result: "invalid_output",
+        retry_count: 1,
+        latency_ms: 15_600,
+        token_in: 11_900,
+        token_out: 300,
+        analysis_id: null,
+        findings_generated: 0,
+        findings_discarded: 0,
+        created_at: minutesAgo(180),
+      },
+      {
+        feature: "planner",
+        model: "local-demo-model",
+        prompt_version: "planner@1",
+        validation_result: "ok",
+        retry_count: 0,
+        latency_ms: 2_100,
+        token_in: 3_200,
+        token_out: 640,
+        analysis_id: null,
+        findings_generated: null,
+        findings_discarded: null,
+        created_at: minutesAgo(120),
+      },
+      {
+        // NOT a failure - the key was absent, so nothing was called. It must
+        // stay out of the failure denominator (wasAttempted).
+        //
+        // Every row carries the SAME key set: PostgREST rejects a bulk insert
+        // whose objects differ ("All object keys must match"), and filling the
+        // gaps with null is what we mean anyway.
+        feature: "planner",
+        model: null,
+        prompt_version: "planner@1",
+        validation_result: "no_key",
+        retry_count: 0,
+        latency_ms: null,
+        token_in: null,
+        token_out: null,
+        analysis_id: null,
+        findings_generated: null,
+        findings_discarded: null,
+        created_at: minutesAgo(60),
+      },
+    ]),
+  });
+
+  // False-positive report. status stays 'open' - the column privileges in 0059
+  // stop a reporter from filing a closed one, and the fixture obeys the same
+  // rule it demonstrates. finding_id/analysis_id may be null on purpose: that is
+  // the state after a re-analysis, and the screen has to render it.
+  const findings = analysisId
+    ? await rest(`findings?select=id,rule_code&analysis_id=eq.${analysisId}&limit=1`)
+    : [];
+
+  await rest("finding_reports?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      id: QUALITY_REPORT_ID,
+      finding_id: findings[0]?.id ?? null,
+      analysis_id: analysisId,
+      rule_code: findings[0]?.rule_code ?? "R-01",
+      reporter_id: coupleUser?.id ?? null,
+      reason_code: "not_in_document",
+      status: "open",
+      created_at: minutesAgo(30),
+    }),
+  });
+
+  return "created";
+}
+
+
 // ── review fixture (S8-11) ──────────────────────────────────
 const REVIEW_BOOKING_B = "00000000-0000-0000-0000-00000000e001";
 const REVIEW_BOOKING_C = "00000000-0000-0000-0000-00000000e002";
@@ -1308,6 +1497,12 @@ async function main() {
     vendorUser,
   );
 
+  // AFTER the review fixture: the quality fixture hangs its call log off the
+  // analysis the metrics fixture created.
+  const qualitySeed = await seedQualityFixture(
+    results.find((row) => row.email === "couple-linked-a@local.test"),
+  );
+
   const privacySeed = await seedPrivacyFixture(
     results.find((row) => row.email === "admin@local.test"),
     linkedCouple,
@@ -1397,6 +1592,17 @@ async function main() {
   console.log("       exclusion drops the cell back below the floor.");
   console.log("    -> anomaly thresholds stay UNDECIDED (O-19) on purpose: the queue must");
   console.log("       say 기준 미확정, not 0건. Seeding them would fake a working detector.");
+  console.log("");
+  console.log("  ai quality fixture (S8-07)");
+  console.log(`    status      : ${qualitySeed}`);
+  console.log("    rows        : 4 ai_call_logs + 1 open finding report");
+  console.log("    -> report: 1 ok (5 generated / 1 discarded) + 1 invalid_output");
+  console.log("       so the failure rate has a real numerator AND denominator.");
+  console.log("    -> planner: 1 ok + 1 no_key. Before S8-07 nothing wrote planner logs,");
+  console.log("       so the dashboard would have shown 'planner 0%' - the absence of a");
+  console.log("       measurement showing up as a number. no_key must NOT move the rate.");
+  console.log("    -> token prices stay UNDECIDED (O-21) on purpose: the cost tile must");
+  console.log("       say \uae30\uc900 \ubbf8\uacb0, not 0\uc6d0. Tokens are real; only the rate is missing.");
   console.log("");
   console.log("  review fixture (S8-11)");
   console.log(`    status      : ${reviewSeed}`);

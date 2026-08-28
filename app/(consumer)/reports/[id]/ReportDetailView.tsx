@@ -16,6 +16,8 @@ import {
 import type { ReportDetail } from "@/lib/reports/loader";
 import { cn } from "@/lib/utils";
 
+import { FindingReportButton } from "./FindingReportButton";
+
 /**
  * /reports/[id] — 리포트 상세 (F-C-07 · 명세서 §6.2)
  *
@@ -169,6 +171,10 @@ export function ReportDetailView({ initial }: { initial: ReportDetail & { source
             ) : (
               <p className="text-caption text-muted-foreground">{NO_SCRIPT_NOTE}</p>
             )}
+
+            {/* 오탐 신고(F-A-04 접수 면 · S8-07). 운영자 큐만 만들고 여기를 잉지
+                않으면 그 큐는 영원히 비어 있고, **빈 큐는 '오탐이 없다' 로 읽힌다.** */}
+            <FindingReportButton findingId={finding.id} />
           </li>
         ))}
       </ul>

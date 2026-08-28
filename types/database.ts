@@ -36,39 +36,65 @@ export type Database = {
     Tables: {
       ai_call_logs: {
         Row: {
+          analysis_id: string | null
           cost_estimate: number | null
           created_at: string
           feature: Database["public"]["Enums"]["ai_feature"]
+          findings_discarded: number | null
+          findings_generated: number | null
           id: string
+          latency_ms: number | null
           model: string | null
           prompt_version: string | null
           retry_count: number
+          token_in: number | null
+          token_out: number | null
           updated_at: string
           validation_result: string | null
         }
         Insert: {
+          analysis_id?: string | null
           cost_estimate?: number | null
           created_at?: string
           feature: Database["public"]["Enums"]["ai_feature"]
+          findings_discarded?: number | null
+          findings_generated?: number | null
           id?: string
+          latency_ms?: number | null
           model?: string | null
           prompt_version?: string | null
           retry_count?: number
+          token_in?: number | null
+          token_out?: number | null
           updated_at?: string
           validation_result?: string | null
         }
         Update: {
+          analysis_id?: string | null
           cost_estimate?: number | null
           created_at?: string
           feature?: Database["public"]["Enums"]["ai_feature"]
+          findings_discarded?: number | null
+          findings_generated?: number | null
           id?: string
+          latency_ms?: number | null
           model?: string | null
           prompt_version?: string | null
           retry_count?: number
+          token_in?: number | null
+          token_out?: number | null
           updated_at?: string
           validation_result?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ai_call_logs_analysis_id_fkey"
+            columns: ["analysis_id"]
+            isOneToOne: false
+            referencedRelation: "document_analyses"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ai_conversations: {
         Row: {
@@ -148,6 +174,44 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "ai_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_report_reviews: {
+        Row: {
+          analysis_id: string
+          created_at: string
+          id: string
+          note: string
+          reviewer_id: string
+          updated_at: string
+          verdict: string
+        }
+        Insert: {
+          analysis_id: string
+          created_at?: string
+          id?: string
+          note: string
+          reviewer_id: string
+          updated_at?: string
+          verdict: string
+        }
+        Update: {
+          analysis_id?: string
+          created_at?: string
+          id?: string
+          note?: string
+          reviewer_id?: string
+          updated_at?: string
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_report_reviews_analysis_id_fkey"
+            columns: ["analysis_id"]
+            isOneToOne: false
+            referencedRelation: "document_analyses"
             referencedColumns: ["id"]
           },
         ]
@@ -2427,6 +2491,66 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
+      }
+      finding_reports: {
+        Row: {
+          analysis_id: string | null
+          created_at: string
+          finding_id: string | null
+          id: string
+          reason_code: string
+          reporter_id: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          rule_code: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          analysis_id?: string | null
+          created_at?: string
+          finding_id?: string | null
+          id?: string
+          reason_code: string
+          reporter_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          rule_code: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          analysis_id?: string | null
+          created_at?: string
+          finding_id?: string | null
+          id?: string
+          reason_code?: string
+          reporter_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          rule_code?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finding_reports_analysis_id_fkey"
+            columns: ["analysis_id"]
+            isOneToOne: false
+            referencedRelation: "document_analyses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finding_reports_finding_id_fkey"
+            columns: ["finding_id"]
+            isOneToOne: false
+            referencedRelation: "findings"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       findings: {
         Row: {
@@ -5577,7 +5701,7 @@ export type Database = {
       }
     }
     Enums: {
-      ai_feature: "planner" | "report" | "estimate"
+      ai_feature: "planner" | "report" | "estimate" | "search"
       booking_status: "hold" | "confirmed" | "cancelled" | "fulfilled"
       chat_sender_type: "couple" | "vendor" | "system"
       commission_scope_type: "global" | "category" | "vendor"
@@ -5753,7 +5877,7 @@ export const Constants = {
   },
   public: {
     Enums: {
-      ai_feature: ["planner", "report", "estimate"],
+      ai_feature: ["planner", "report", "estimate", "search"],
       booking_status: ["hold", "confirmed", "cancelled", "fulfilled"],
       chat_sender_type: ["couple", "vendor", "system"],
       commission_scope_type: ["global", "category", "vendor"],
