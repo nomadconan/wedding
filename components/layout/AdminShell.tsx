@@ -20,6 +20,7 @@ import {
   Star,
   Store,
   Tag,
+  ToggleLeft,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -128,6 +129,10 @@ const ADMIN_NAV: NavItem[] = [
   // S8-04. 감사 로그 바로 아래에 둔다 — 둘 다 "무엇이 남았고 무엇이 지워졌나" 를
   // 보는 화면이고, 개인정보 감사는 그 중 **법적 의무가 걸린 쪽**이다(§5.1·§7.3).
   { href: "/admin/privacy", label: "개인정보 감사", icon: ShieldAlert },
+  // S8-12. **설정 바로 위**에 둔다 — 자주 오는 화면이 아니지만 긴급 롤백을 위해
+  // **찾기 쉬운 자리**에 있어야 한다. 플래그 목록은 로드맵이라 이 화면은 운영자만
+  // 열리며(D-15) 목록은 SECURITY DEFINER 함수 하나를 지난다.
+  { href: "/admin/flags", label: "피처 플래그", icon: ToggleLeft },
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];
 

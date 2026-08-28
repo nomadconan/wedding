@@ -9556,5 +9556,248 @@ if (!vendorStaff || !adminUser) {
   void closedTicket;
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-12 — 피처 플래그 콘솔 (F-A-10 · 0063)
+//
+// **키 목록이 곧 미공개 기능 로드맵이다.** 0005 가 public 스키마에서 이 표 하나만
+// 테이블 GRANT 까지 회수한 이유이며(D-15), 이 콘솔이 그 경계를 깨지 않았는지가
+// 여기서 보는 것의 절반이다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+
+  // ── 층 1: D-15 의 경계가 그대로인가 ───────────────────────────────────────
+  check(
+    "**feature_flags 에 anon·authenticated 권한이 여전히 하나도 없다** (D-15 · 콘솔이 GRANT 를 복구하지 않았다)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'feature_flags'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+  check(
+    "**정책도 여전히 없다** — 정책을 만들려면 GRANT 부터 복구해야 하고 그것이 피한 일이다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'feature_flags';`) === "0",
+  );
+  check(
+    "**비로그인은 표를 못 읽는다**",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.feature_flags;`)),
+  );
+  check(
+    "**로그인해도 못 읽는다** — 소비자·업체 모두",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `select count(*) from public.feature_flags;`),
+    ) &&
+      rejectedWith(/permission denied/, () =>
+        asUser(vendorOwner, `select count(*) from public.feature_flags;`),
+      ),
+  );
+  check(
+    "**운영자도 표를 직접 읽지 못한다** — 문은 함수 하나다",
+    rejectedWith(/permission denied/, () =>
+      asUser(adminUser, `select count(*) from public.feature_flags;`),
+    ),
+  );
+  check(
+    "**아무도 표를 직접 쓰지 못한다**",
+    rejectedWith(/permission denied/, () =>
+      asUser(adminUser, `update public.feature_flags set enabled = true;`),
+    ) &&
+      rejectedWith(/permission denied/, () =>
+        asUser(owner, `insert into public.feature_flags (key) values ('forged.flag');`),
+      ),
+  );
+
+  // ── 함수가 경계를 갖는가 ──────────────────────────────────────────────────
+  check(
+    "운영자는 함수로 플래그를 읽는다 (F-A-10)",
+    Number(asUser(adminUser, `select count(*) from public.admin_feature_flags();`)) >= 2,
+  );
+  check(
+    "**소비자가 함수를 불러도 막힌다** — 경계가 함수 안에 있다",
+    rejectedWith(/forbidden|42501/, () =>
+      asUser(owner, `select count(*) from public.admin_feature_flags();`),
+    ),
+  );
+  check(
+    "**업체가 불러도 막힌다**",
+    rejectedWith(/forbidden|42501/, () =>
+      asUser(vendorOwner, `select count(*) from public.admin_feature_flags();`),
+    ),
+  );
+  check(
+    "**비로그인이 불러도 막힌다**",
+    rejectedWith(/forbidden|42501|permission denied/, () =>
+      asAnon(`select count(*) from public.admin_feature_flags();`),
+    ),
+  );
+  check(
+    "**서비스롤이 불러도 막힌다** — auth.uid() 가 없다(S8-01 이 지표에서 정한 규약)",
+    rejectedWith(/forbidden|42501/, () =>
+      sql(`set local role service_role; select count(*) from public.admin_feature_flags();`),
+    ),
+  );
+  check(
+    // **소유자(postgres)는 세지 않는다.** 처음엔 grantee 목록을 통째로 비교했는데
+    // 소유자가 늘 끼어 있어 실패했다 — 검사가 확인하려던 것은 "anon 이 없고
+    // authenticated·service_role 이 있다" 이지 목록의 글자 일치가 아니다(함정 8).
+    "함수 실행 권한이 anon 에 없고 authenticated·service_role 에 있다 (함정 5 — revoke all 뒤 다시 줬다)",
+    sql(`select count(*) from information_schema.role_routine_grants
+           where specific_schema = 'public' and routine_name = 'admin_feature_flags'
+             and grantee = 'anon';`) === "0" &&
+      sql(`select count(*) from information_schema.role_routine_grants
+             where specific_schema = 'public' and routine_name = 'admin_feature_flags'
+               and grantee in ('authenticated', 'service_role');`) === "2",
+  );
+
+  // ── 층 2: 정책이 다른 표에 기대는가 (FIX-41) ──────────────────────────────
+  //
+  // 정책이 아예 없으므로 기댈 것도 없다. 함수는 `is_operator()` 하나로 자기 조건을
+  // 스스로 말한다 — 확인만 하고 넘어간다.
+  check(
+    "**함수가 자기 조건을 스스로 말한다** — 다른 표의 정책에 기대지 않는다",
+    sql(`select pg_get_functiondef(oid) from pg_proc
+           where proname = 'admin_feature_flags';`).includes("is_operator()"),
+  );
+
+  // ── 어휘·형식을 DB 가 강제한다 (CHECK 이 하나도 없었다) ──────────────────
+  check(
+    "**키 형식을 DB 가 강제한다** — 오타 난 키는 아무도 안 읽으면서 '켜짐' 으로 보인다",
+    rejectedWith(/feature_flags_key_format_chk/, () =>
+      sql(`insert into public.feature_flags (key, enabled) values ('Bad Key', true);`),
+    ) &&
+      rejectedWith(/feature_flags_key_format_chk/, () =>
+        sql(`insert into public.feature_flags (key, enabled) values ('nodot', true);`),
+      ),
+  );
+  check(
+    "정상 키는 받는다 (막을 것만 막는다)",
+    sql(`begin;
+         insert into public.feature_flags (key, enabled) values ('demo.flag', false);
+         select count(*) from public.feature_flags where key = 'demo.flag';
+         rollback;`) === "1",
+  );
+  check(
+    "**rollout_json 은 객체여야 한다** — 배열이면 부분 스위치가 조용히 전부 꺼진 것으로 읽힌다",
+    rejectedWith(/feature_flags_rollout_object_chk/, () =>
+      sql(`update public.feature_flags set rollout_json = '[]'::jsonb where key = 'community.enabled';`),
+    ),
+  );
+
+  // ── 코드↔DB 대조 ─────────────────────────────────────────────────────────
+  {
+    const registry = readFileSync("lib/core/flags/registry.ts", "utf8");
+    const codeKeys = [...registry.matchAll(/key: "([a-z][a-z0-9_.]*)"/g)]
+      .map((match) => match[1])
+      .filter((key) => key.includes("."));
+    const dbKeys = sql(`select string_agg(key, ',' order by key) from public.feature_flags;`)
+      .split(",")
+      .filter(Boolean);
+
+    check(
+      "레지스트리의 플래그 키가 DB 행과 같다 (사본이 벌어져도 화면에는 아무 일도 안 생긴다)",
+      codeKeys.length === 2 && dbKeys.length === 2 && codeKeys.every((key) => dbKeys.includes(key)),
+      `code=${codeKeys.join(",")} db=${dbKeys.join(",")}`,
+    );
+  }
+  {
+    // 부분 스위치 이름이 실제로 읽는 쪽과 같은가. 갈리면 콘솔이 켠 스위치를
+    // 화면이 안 읽는다 — 스위치가 스위치 노릇을 못 한다.
+    const registry = readFileSync("lib/core/flags/registry.ts", "utf8");
+    const view = readFileSync("lib/core/schedule/view.ts", "utf8");
+
+    check(
+      "**부분 스위치 이름이 enabledViews 가 읽는 것과 같다**",
+      ["timeline", "progress", "next", "graph"].every(
+        (name) => registry.includes(`key: "${name}"`) && view.includes(name),
+      ),
+    );
+  }
+
+  // ── 코드가 읽는 규칙과 콘솔이 보이는 규칙이 같은가 ────────────────────────
+  check(
+    "**행이 없으면 꺼진 것이다** — isFeatureEnabled 와 콘솔이 같은 말을 한다",
+    readFileSync("lib/flags.ts", "utf8").includes("enabled === true") &&
+      readFileSync("lib/core/flags/registry.ts", "utf8").includes("row?.enabled === true"),
+  );
+  check(
+    "**아무도 안 읽는 행을 '열린 기능' 으로 세지 않는다**",
+    readFileSync("lib/core/flags/registry.ts", "utf8").includes(
+      "known.filter((flag) => flag.enabled).length",
+    ),
+  );
+
+  // ── 조건 미충족 상태로 켜기 (D-145) ───────────────────────────────────────
+  check(
+    "**막지 않고 드러낸다** — 조건 안내가 있고 차단이 없다",
+    readFileSync("lib/core/flags/registry.ts", "utf8").includes("conditionNotice") &&
+      !readFileSync("lib/flags/admin.ts", "utf8").includes("CONDITION_NOT_MET"),
+  );
+  check(
+    "**사유가 필수다** — 조건을 안 막는 대신 왜 켰는지를 남긴다",
+    readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("왜 바꾸는지 적어 주세요"),
+  );
+  check(
+    "**선언된 부분 스위치만 덮어쓴다** — 개방 조건 서술이 사라지면 안 된다(D-67)",
+    readFileSync("lib/flags/admin.ts", "utf8").includes("declared.has(key)"),
+  );
+  check(
+    "**updated_by 를 입력으로 받지 않는다** — 남의 이름으로 '이 사람이 켰다' 가 만들어진다",
+    !readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("updatedBy"),
+  );
+
+  // ── 집행되지 않는 조치를 만들지 않는다 ────────────────────────────────────
+  check(
+    "**지역·세그먼트 부분 공개를 만들지 않았고 그 사실이 API 본문에 실린다** (함정 3)",
+    readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("segmentRolloutAvailable") &&
+      readFileSync("lib/flags/admin.ts", "utf8").includes("available: false"),
+  );
+
+  // ── 픽스처 ────────────────────────────────────────────────────────────────
+  check(
+    "플래그 두 행이 시드에 있다 (0건이면 콘솔이 빈 화면이라 아무것도 확인 못 한다)",
+    sql(`select count(*) from public.feature_flags;`) === "2",
+  );
+  check(
+    "**부분 스위치를 가진 행이 있다** — 그 경로가 실제로 도는지 본다",
+    sql(`select count(*) from public.feature_flags
+           where key = 'schedule.views' and rollout_json ? 'timeline';`) === "1",
+  );
+  check(
+    "**개방 조건이 적힌 행이 있다**(D-67) — 조건 표시 경로가 도는지 본다",
+    sql(`select count(*) from public.feature_flags
+           where key = 'community.enabled' and rollout_json ? 'reason';`) === "1",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/flags` 화면이 실재한다", existsSync("app/(admin)/admin/flags/page.tsx"));
+  check(
+    "**내비가 `/admin/flags` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/flags"'),
+  );
+  check(
+    "플래그 화면이 캐시되지 않는다 (스위치가 캐시되면 스위치가 아니다 · FIX-22)",
+    readFileSync("app/(admin)/admin/flags/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**되돌릴 수 없는 것을 먼저 말한다** — 플래그는 되돌려도 그 사이 벌어진 일은 남는다",
+    readFileSync("lib/core/flags/registry.ts", "utf8").includes("irreversible"),
+  );
+  check(
+    "**전환을 증적에 남긴다** (entity_events + audit_logs)",
+    readFileSync("lib/flags/admin.ts", "utf8").includes('entityType: "feature_flag"') &&
+      readFileSync("lib/flags/admin.ts", "utf8").includes("writeAuditLog"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0063 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

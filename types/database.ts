@@ -5604,6 +5604,16 @@ export type Database = {
           user_id: string
         }[]
       }
+      admin_feature_flags: {
+        Args: never
+        Returns: {
+          enabled: boolean
+          key: string
+          rollout_json: Json
+          updated_at: string
+          updated_by: string
+        }[]
+      }
       admin_metrics: { Args: { p_from: string; p_to: string }; Returns: Json }
       admin_purge_audit: { Args: never; Returns: Json }
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
