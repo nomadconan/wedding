@@ -48,6 +48,8 @@ export default defineConfig({
       // S7-11. 구독 어댑터도 같은 이유다 — 깨지면 **받지 않은 돈으로 멤버십이 열리고**
       // 그 등급이 AI 턴 상한을 푼다(§5.6). 프로덕션에서 스텁을 거부하는지도 여기서 본다.
       "lib/membership/**/*.test.ts",
+      // S8-13: 배치 실행 인프라 선언이 디스크·vercel.json 과 갈리지 않는지 대조한다.
+      "lib/ops/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {
