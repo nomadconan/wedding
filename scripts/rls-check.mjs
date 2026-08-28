@@ -4305,24 +4305,31 @@ if (!vendorStaff || !adminUser) {
   // `prompt_fragment` 는 우리가 쓴 분석 지시문이다. 룰 자체가 서비스의 자산이라
   // 0005 가 정책을 두지 않았고(서비스롤 전용), 스캔은 서버에서만 돈다.
   check(
+    // **S8-06 이 0행에서 거절로 바꿨다.** 0061 이 anon 의 SELECT 권한까지 걷어서
+    // 이제 정책에 닿기 전에 끊긴다 — 0행은 "안 보인다" 이고 거절은 "읽을 수 없다" 인데,
+    // 내부 자산에 필요한 것은 뒤쪽이다.
     "**비로그인은 검출 룰을 못 본다** (지시문은 내부 자산이다)",
-    asAnon(`select count(*) from public.detect_rules;`) === "0",
+    rejectedWith(/permission denied/, () =>
+      asAnon(`select count(*) from public.detect_rules;`),
+    ),
   );
   check(
     "로그인해도 검출 룰을 못 본다",
     asUser(owner, `select count(*) from public.detect_rules;`) === "0",
   );
   check(
-    "운영자도 클라이언트 경로로는 검출 룰을 못 본다 (관리 화면은 서버를 지난다)",
-    asUser(adminUser, `select count(*) from public.detect_rules;`) === "0",
+    // **S8-06 이 이 줄의 뜻을 바꿨다.** 그전에는 운영자도 못 봤는데, F-A-03 콘솔이
+    // "어떤 룰이 도는가" 를 한 줄씩 보는 화면이라 **운영자에게만** 열었다(0061 · D-115).
+    // 소비자·업체·비로그인은 위아래 검사가 그대로 막는다.
+    "운영자는 검출 룰을 읽는다 (F-A-03 은 행을 보는 일이다 · S8-06 이 열었다)",
+    Number(asUser(adminUser, `select count(*) from public.detect_rules;`)) >= 20,
   );
   check(
+    // 0061 이 쓰기 권한을 걷어 이제 0행이 아니라 거절이다.
     "쓰기도 막힌다 — 룰을 고치는 일은 배포로 한다",
-    asUser(
-      owner,
-      `with u as (update public.detect_rules set is_active = false returning code)
-         select count(*) from u;`,
-    ) === "0",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.detect_rules set is_active = false;`),
+    ),
   );
 
   // ── 위약금 기준은 **일부러 비어 있다** ────────────────────────────────────
@@ -4334,8 +4341,12 @@ if (!vendorStaff || !adminUser) {
     sql(`select count(*) from public.penalty_rules;`) === "0",
   );
   check(
+    // **S8-06 이 0행에서 거절로 바꿨다.** 0061 이 anon 의 SELECT 권한까지 걷었다 —
+    // 밴드가 곧 금액이고, 비어 있는 표라도 스키마를 읽히는 것이 이득이 없다.
     "비로그인은 위약금 기준 표도 못 본다",
-    asAnon(`select count(*) from public.penalty_rules;`) === "0",
+    rejectedWith(/permission denied/, () =>
+      asAnon(`select count(*) from public.penalty_rules;`),
+    ),
   );
 }
 
@@ -9018,6 +9029,245 @@ if (!vendorStaff || !adminUser) {
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",
   );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-06 — 룰·프롬프트 콘솔 (F-A-03 · 0061)
+//
+// **검출 룰은 계약서 분석의 판단 기준이다.** 아무나 룰을 끄거나 지시문을 바꿀 수
+// 있으면 리포트가 무엇을 근거로 나왔는지 답할 수 없고, 룰을 전부 지우면 분석이
+// "위험 없음" 을 내는 것이 아니라 **아예 서지 않는다**(S7-01).
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const ruleId = sql(`select id from public.detect_rules where code = 'R-01';`);
+
+  // ── 층 1: 정책 아래의 권한 ────────────────────────────────────────────────
+  check(
+    "**아무나 룰을 끌 수 없다** — 끄는 것은 그 조항을 안 보겠다는 뜻이다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.detect_rules set is_active = false where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**아무나 지시문을 바꿀 수 없다** — AI 분석에 그대로 실려 나간다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(owner, `update public.detect_rules set prompt_fragment = '조작' where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**업체가 자기에게 불리한 룰을 지울 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(vendorOwner, `delete from public.detect_rules where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**아무나 룰을 새로 넣을 수 없다** (넣어도 정규식이 없어 안 돌지만 목록을 더럽힌다)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.detect_rules (code, title, severity_default, version)
+           values ('R-99', '지어낸 룰', 'high', 'v1');`,
+      ),
+    ),
+  );
+  check(
+    "**운영자 세션으로도 룰을 고칠 수 없다** — 수정은 서비스롤 경유다(D-62)",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(adminUser, `update public.detect_rules set is_active = false where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**위약금 밴드를 아무나 만들 수 없다** — 밴드가 곧 금액이다",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.penalty_rules (category, min_days_before_event, max_days_before_event, rate_bp)
+           values ('hall', 0, 999, 0);`,
+      ),
+    ),
+  );
+  check(
+    "**프롬프트 배포 이력을 아무나 쓸 수 없다**",
+    rejectedWith(/permission denied|row-level security/, () =>
+      asUser(
+        owner,
+        `insert into public.prompt_versions (feature, version, system_prompt)
+           values ('report', 'forged@1', '지어낸 프롬프트');`,
+      ),
+    ),
+  );
+  check(
+    "세 표 어디에도 authenticated 쓰기 권한이 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public'
+             and table_name in ('detect_rules', 'prompt_versions', 'penalty_rules')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE')
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  // ── 층 2: 정책이 다른 표의 정책에 기대는가 (FIX-41) ───────────────────────
+  check(
+    "**새 정책 셋이 자기 조건을 스스로 말한다** — 부모 표의 RLS 를 빌려 쓰지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public'
+             and policyname in ('detect_rules_select_operator', 'prompt_versions_select_operator',
+                                'penalty_rules_select_operator')
+             and qual like '%is_operator%'
+             and qual not like '%EXISTS%';`) === "3",
+  );
+
+  // ── 열람 경계 ─────────────────────────────────────────────────────────────
+  check(
+    "**룰은 비로그인에게 보이지 않는다** — prompt_fragment 는 내부 자산이다",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.detect_rules;`)),
+  );
+  check(
+    "**소비자·업체에게도 보이지 않는다**",
+    asUser(owner, `select count(*) from public.detect_rules;`) === "0" &&
+      asUser(vendorOwner, `select count(*) from public.detect_rules;`) === "0",
+  );
+  check(
+    "운영자는 룰을 읽는다 — '어떤 룰이 도는가' 를 한 줄씩 보는 화면이다(D-115)",
+    Number(asUser(adminUser, `select count(*) from public.detect_rules;`)) >= 20,
+  );
+  check(
+    "**프롬프트 본문도 비로그인에게 보이지 않는다**",
+    rejectedWith(/permission denied/, () =>
+      asAnon(`select count(*) from public.prompt_versions;`),
+    ),
+  );
+  check(
+    "운영자는 위약금 밴드를 읽는다 (비어 있다는 사실도 봐야 한다)",
+    asUser(adminUser, `select count(*) from public.penalty_rules;`) !== "",
+  );
+
+  // ── 어휘·형식을 DB 가 강제한다 (CHECK 이 하나도 없었다) ──────────────────
+  check(
+    "**룰 코드 형식을 DB 가 강제한다** — 형식이 어긋난 행은 영원히 실행되지 않는다",
+    rejectedWith(/detect_rules_code_format_chk/, () =>
+      sql(`insert into public.detect_rules (code, title, severity_default, version)
+             values ('BAD', '제목', 'high', 'v1');`),
+    ),
+  );
+  check(
+    "**판본이 비어 있을 수 없다** — 코드↔DB 대조의 근거다",
+    rejectedWith(/detect_rules_version_chk/, () =>
+      sql(`update public.detect_rules set version = '   ' where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**제목이 비어 있을 수 없다**",
+    rejectedWith(/detect_rules_title_chk/, () =>
+      sql(`update public.detect_rules set title = '' where code = 'R-01';`),
+    ),
+  );
+  check(
+    "**자기 자신을 롤백 대상으로 삼을 수 없다**",
+    rejectedWith(/prompt_versions_rollback_self_chk/, () =>
+      sql(`begin;
+           insert into public.prompt_versions (id, feature, version, system_prompt)
+             values ('00000000-0000-0000-0000-0000000000b1', 'report', 'x@1', 'p');
+           update public.prompt_versions set rollback_of = id
+             where id = '00000000-0000-0000-0000-0000000000b1';
+           rollback;`),
+    ),
+  );
+
+  // ── 코드↔DB 대조 (S7-01 이 세운 방식 그대로) ──────────────────────────────
+  {
+    const codeCodes = [
+      ...readFileSync("lib/core/rules/detect-rules.ts", "utf8").matchAll(/code: "(R-\d{2})"/g),
+    ].map((match) => match[1]);
+    const dbCodes = sql(`select string_agg(code, ',' order by code) from public.detect_rules;`)
+      .split(",")
+      .filter(Boolean);
+
+    check(
+      "룰 코드가 코드와 DB 에서 같다 (사본이 벌어져도 화면에는 아무 일도 안 생긴다)",
+      codeCodes.length === 20 && dbCodes.length === 20 && codeCodes.every((code) => dbCodes.includes(code)),
+      `code=${codeCodes.length} db=${dbCodes.length}`,
+    );
+  }
+  check(
+    "**콘솔이 스캔과 같은 병합 함수를 쓴다** — 따로 계산하면 화면과 스캔이 갈린다",
+    readFileSync("lib/rules/admin.ts", "utf8").includes("mergeDetectRules"),
+  );
+
+  // ── 고칠 수 있는 칸이 셋뿐인가 ────────────────────────────────────────────
+  check(
+    "**수정 경로가 만지는 칸이 셋뿐이다** — 서비스롤이라 DB 컬럼 권한이 안 걸린다",
+    (() => {
+      const src = readFileSync("lib/rules/admin.ts", "utf8");
+      const block = src.slice(src.indexOf('.from("detect_rules")\n    // **이 세 칸만.**'));
+      const update = block.slice(block.indexOf(".update({"), block.indexOf("})"));
+
+      return (
+        update.includes("is_active") &&
+        update.includes("prompt_fragment") &&
+        update.includes("basis_ref") &&
+        !update.includes("pattern_json") &&
+        !update.includes("severity_default") &&
+        !update.includes("code:")
+      );
+    })(),
+  );
+  check(
+    "**정규식이 편집 목록에 없다**",
+    !readFileSync("lib/core/rules/console.ts", "utf8").includes(
+      'EDITABLE_RULE_FIELDS = ["is_active", "prompt_fragment", "basis_ref", "pattern_json"',
+    ) &&
+      readFileSync("lib/core/rules/console.ts", "utf8").includes(
+        'EDITABLE_RULE_FIELDS = ["is_active", "prompt_fragment", "basis_ref"]',
+      ),
+  );
+
+  // ── 없는 것을 있는 것처럼 적지 않는다 ─────────────────────────────────────
+  check(
+    "**배포 게이트가 blocked 로 API 본문에 실린다** (골든셋이 없다 · FIX-42 · 함정 3)",
+    readFileSync("app/api/admin/rules/route.ts", "utf8").includes("gateBlocked") &&
+      readFileSync("lib/core/rules/console.ts", "utf8").includes('reason: "golden_set_missing"'),
+  );
+  check(
+    "**배포 이력 표가 비어 있다는 사실도 상태로 나간다** (O-22)",
+    readFileSync("app/api/admin/rules/route.ts", "utf8").includes("ledgerEmpty") &&
+      readFileSync("lib/core/rules/console.ts", "utf8").includes('openIssue: "O-22"'),
+  );
+  check(
+    "**한 번도 안 불린 판본을 0회로 적지 않는다** (S8-07 이 겪은 것)",
+    readFileSync("lib/rules/admin.ts", "utf8").includes("usage.get(source.version) ?? null"),
+  );
+  check(
+    "**판본 사용 이력을 저장하지 않는다** — ai_call_logs 에서 센다(D-124)",
+    sql(`select count(*) from public.prompt_versions;`) === "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ─────────────────────────────────────────────
+  check("`/admin/rules` 화면이 실재한다", existsSync("app/(admin)/admin/rules/page.tsx"));
+  check(
+    "**내비가 `/admin/rules` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/rules"'),
+  );
+  check(
+    "룰 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/rules/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**마지막 룰을 끌 때 결과를 미리 말한다** — 막지는 않는다",
+    readFileSync("lib/core/rules/console.ts", "utf8").includes("deactivationWarning"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0061 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  void ruleId;
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

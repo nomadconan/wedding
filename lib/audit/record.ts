@@ -154,7 +154,12 @@ export type EntityType =
   // S8-08. 콘텐츠 CMS. **본문도 사유 문안도 memo 에 넣지 않는다**(§7.3) — 행과
   // 리비전이 이미 갖고 있다. 남길 사실은 "만들었다·고쳤다·공개 상태가 바뀌었다·
   // 내렸다" 라는 전이이며, 슬러그 변경(= URL 변경)은 `audit_logs` 가 값으로 갖는다.
-  | "content_post";
+  | "content_post"
+  // S8-06. 검출 룰의 켬/끔·지시문 수정. **지시문 본문도 사유 문안도 memo 에 넣지
+  // 않는다**(§7.3) — 행과 `audit_logs` 가 갖는다. 남길 사실은 **어느 룰이 켜지고
+  // 꺼졌는가**이며, 그것이 "왜 이 조항이 리포트에 없었나" 의 답이 된다.
+  // `entity_id` 는 uuid 라 **룰 코드가 아니라 행 id** 이고, 코드는 memo 로 남긴다.
+  | "detect_rule";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 
