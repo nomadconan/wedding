@@ -737,6 +737,27 @@ export type Database = {
           },
         ]
       }
+      client_events: {
+        Row: {
+          code: string
+          id: string
+          kind: string
+          occurred_at: string
+        }
+        Insert: {
+          code: string
+          id?: string
+          kind: string
+          occurred_at?: string
+        }
+        Update: {
+          code?: string
+          id?: string
+          kind?: string
+          occurred_at?: string
+        }
+        Relationships: []
+      }
       commission_rates: {
         Row: {
           created_at: string

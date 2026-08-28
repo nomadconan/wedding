@@ -149,7 +149,11 @@ export function LoginForm() {
     } catch (caught) {
       // 서버 예외 메시지를 그대로 보여주지 않는다(CLAUDE.md §5.3).
       // 대신 실패한 **계층**을 고른다 — 자격증명 문제와 인프라 문제는 할 일이 다르다.
-      setError(classifyLoginError(caught));
+      const view = classifyLoginError(caught);
+      setError(view);
+      // **실패했다는 사실을 서버에 알린다**(FIX-32). 로그인은 브라우저→Supabase
+      // 직행이라 이 신고가 없으면 서버에 흔적이 **구조적으로** 남지 않는다.
+      reportLoginFailure(view.code);
     } finally {
       setPending(false);
     }
@@ -282,3 +286,22 @@ export function LoginForm() {
 }
 
 export default LoginForm;
+
+/**
+ * 로그인 실패를 서버에 알린다 (FIX-32 · S8-13).
+ *
+ * **기다리지 않고 실패를 삼킨다.** 관측 경로가 로그인을 느리게 하거나 막으면
+ * 주종과 겁이 바뀜다. `keepalive` 로 보내 페이지가 넘어가도 발송을 마치게 한다.
+ *
+ * **코드 하나만 보낸다** — 이메일·입력값을 싣지 않는다(§5.3).
+ */
+function reportLoginFailure(code: string): void {
+  void fetch("/api/observability/client-event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "login_failed", code }),
+    keepalive: true,
+  }).catch(() => {
+    // 삼킨다. 신고가 안 되는 것은 로그인 실패보다 작은 일이다.
+  });
+}

@@ -950,6 +950,49 @@ async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
 }
 
 
+// -- monitoring fixture (S8-13) ---------------------------------------------
+/**
+ * Monitoring fixture (S8-13 / FIX-32).
+ *
+ * WHY THIS EXISTS: /admin/ops splits batches four ways - no_route,
+ * not_scheduled, never_ran, ran. With an empty job_runs table EVERY batch reads
+ * "never_ran" and the screen looks identical to a screen whose loader is broken.
+ * That is trap 8: a check aimed at something already in the failure state proves
+ * nothing. So we seed ONE succeeded run for a batch other than purge-documents
+ * (which the privacy fixture already leaves failed) - now the screen shows at
+ * least two distinct states and db:rls can tell them apart.
+ *
+ * client_events rows cover both alert branches: an infra code (alerts) and a
+ * credential code (deliberately NOT an alert - noise).
+ */
+async function seedMonitoringFixture() {
+  const hoursAgo = (n) => new Date(Date.now() - n * 3600 * 1000).toISOString();
+
+  await rest("job_runs", {
+    method: "POST",
+    body: JSON.stringify({
+      job_name: "sla-escalation",
+      started_at: hoursAgo(2),
+      finished_at: hoursAgo(2),
+      status: "succeeded",
+      processed_count: 4,
+      error_summary: null,
+    }),
+  });
+
+  await rest("client_events", {
+    method: "POST",
+    body: JSON.stringify([
+      { kind: "login_failed", code: "AUTH_TIMEOUT" },
+      { kind: "login_failed", code: "AUTH_INVALID_CREDENTIALS" },
+      { kind: "login_failed", code: "AUTH_INVALID_CREDENTIALS" },
+    ]),
+  });
+
+  return "created";
+}
+
+
 // ── dispute console fixture (S8-03) ─────────────────────────────────────────
 const DISPUTE_BOOKING_ID = "00000000-0000-0000-0000-00000000f001";
 const DISPUTE_ESCROW_ID = "00000000-0000-0000-0000-00000000f002";
@@ -1614,6 +1657,14 @@ async function main() {
     linkedCouple,
   );
 
+  const monitoringSeed = await seedMonitoringFixture();
+
+  console.log(`  monitoring fixture (S8-13): ${monitoringSeed}`);
+  console.log("    job_runs   : sla-escalation succeeded (purge-documents stays failed)");
+  console.log("               -> /admin/ops shows more than one state, so the split is testable");
+  console.log("    client_events: 1 infra + 2 credential login failures (FIX-32)");
+  console.log("               -> credential failures must NOT raise an alert");
+  console.log("");
   console.log("  accounts");
   for (const row of results) {
     console.log(

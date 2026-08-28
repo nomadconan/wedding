@@ -11,7 +11,7 @@
 // 실행:  npm run db:rls        (먼저 npm run db:reset && npm run seed:accounts)
 // =============================================================================
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -7528,10 +7528,18 @@ if (!vendorStaff || !adminUser) {
     ),
   );
   check(
-    "**파기 배치가 세션이 아니라 서비스롤 키로 열린다** — 아무나 파기를 돌릴 수 없다",
+    // S8-13 이 인증을 `lib/ops/job-auth.ts` 로 모았다(D-149). **검사가 보던 문자열이
+    // 라우트에서 사라졌다** — 그런데 검사가 보려던 것은 문자열이 아니라 "세션으로
+    // 열리지 않는다" 였다. 그 뜻대로 다시 쓴다: 라우트가 공통 인증을 쓰고, 그 인증이
+    // 서버 전용 키 둘만 받는지.
+    "**파기 배치가 세션이 아니라 서버 비밀키로 열린다** — 아무나 파기를 돌릴 수 없다",
     readFileSync("app/api/jobs/purge-documents/route.ts", "utf8").includes(
-      "SUPABASE_SERVICE_ROLE_KEY",
-    ),
+      "authorizeJob(request)",
+    ) &&
+      readFileSync("lib/ops/job-auth.ts", "utf8").includes("SUPABASE_SERVICE_ROLE_KEY") &&
+      readFileSync("lib/ops/job-auth.ts", "utf8").includes("CRON_SECRET") &&
+      // 세션에서 뽑은 사용자로 여는 경로가 없어야 한다.
+      !readFileSync("lib/ops/job-auth.ts", "utf8").includes("getSessionUser"),
   );
   check(
     "**배치가 Storage 를 지운 뒤에 purged_at 을 찍는다**(D-58) — 뒤집으면 감사가 눈을 감는다",
@@ -7894,9 +7902,13 @@ if (!vendorStaff || !adminUser) {
     ),
   );
   check(
+    // **CHECK 순서에 기대지 않는다**(함정 8). `job_name` 을 'probe' 로 두면 S8-13 이
+    // 더한 `job_runs_name_vocab` 이 **먼저** 걸려, 상태 어휘를 확인하지 못한 채
+    // 검사가 통과한다 — 실제로 그렇게 됐다. 이름은 유효한 것으로 두고 상태만 흔든다.
     "**모르는 배치 상태는 저장되지 않는다**",
     rejectedWith(/job_runs_status_vocab/, () =>
-      sql(`insert into public.job_runs(job_name, status) values ('probe', 'done');`),
+      sql(`insert into public.job_runs(job_name, started_at, status)
+             values ('purge-documents', now(), 'done');`),
     ),
   );
   check(
@@ -7977,12 +7989,13 @@ if (!vendorStaff || !adminUser) {
     ),
   );
   check(
-    "**두 배치가 서비스롤 키로만 열린다** — 아무나 지수를 다시 셀 수 없다",
+    // S8-13 이 인증을 공통 헬퍼로 모았다(D-149). 위와 같은 이유로 뜻대로 다시 쓴다.
+    "**두 배치가 서버 비밀키로만 열린다** — 아무나 지수를 다시 셀 수 없다",
     readFileSync("app/api/jobs/price-index-refresh/route.ts", "utf8").includes(
-      "SUPABASE_SERVICE_ROLE_KEY",
+      "authorizeJob(request)",
     ) &&
       readFileSync("app/api/jobs/price-anomaly-scan/route.ts", "utf8").includes(
-        "SUPABASE_SERVICE_ROLE_KEY",
+        "authorizeJob(request)",
       ),
   );
   check(
@@ -9793,6 +9806,245 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0063 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S8-13 — 모니터링·장애 대응 (§7.4 · 0064 · FIX-32)
+//
+// 이 블록이 보는 것은 셋이다.
+//   (가) `client_events` 가 **비인증 INSERT 를 받으면서도** 낙서장이 되지 않는가
+//   (나) 배치 이름 어휘가 코드·DB·`vercel.json` 세 곳에서 같은가
+//   (다) 화면이 **보내지 않는다는 사실을 응답 본문까지** 들고 가는가 (함정 3)
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+
+  // ── 층 1: `client_events` 의 권한 ─────────────────────────────────────────
+  check(
+    "client_events 에 RLS 가 켜져 있다",
+    sql(`select relrowsecurity from pg_class where oid = 'public.client_events'::regclass;`) === "t",
+  );
+  check(
+    "**비인증이 신고를 넣을 수 있다** — 로그인 전의 사건이라 그렇다(FIX-32)",
+    asAnon(`insert into public.client_events (kind, code)
+              values ('login_failed', 'AUTH_TIMEOUT') returning 1;`) === "1",
+  );
+  check(
+    "**비인증은 자기가 넣은 것조차 못 읽는다** — 어떤 실패가 몰렸는지는 운영 정보다",
+    rejectedWith(/permission denied/, () => asAnon(`select count(*) from public.client_events;`)),
+  );
+  check(
+    "**로그인해도 운영자가 아니면 못 읽는다** (정책이 막는다)",
+    asUser(owner, `select count(*) from public.client_events;`) === "0" &&
+      asUser(vendorOwner, `select count(*) from public.client_events;`) === "0",
+  );
+  check(
+    "**운영자는 행을 읽는다** — 어느 실패가 몰렸는지 한 줄씩 본다(D-115)",
+    Number(asUser(adminUser, `select count(*) from public.client_events;`)) >= 3,
+  );
+
+  // ── 층 1: 쓸 수 없는 칸을 표에서 걷었는가 (FIX-36 · 위조 사례) ────────────
+  check(
+    "**시각을 손으로 정하지 못한다** — 과거·미래로 로그를 흩뿌릴 수 있다",
+    rejectedWith(/permission denied|column/i, () =>
+      asAnon(`insert into public.client_events (kind, code, occurred_at)
+                values ('login_failed', 'AUTH_TIMEOUT', now() - interval '400 days');`),
+    ),
+  );
+  check(
+    "**넣은 신고를 고치거나 지울 수 없다** — 신고는 사건이지 문서가 아니다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asAnon(`update public.client_events set code = 'AUTH_CONFIG';`),
+    ) &&
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asAnon(`delete from public.client_events;`),
+      ),
+  );
+  check(
+    "**운영자도 신고를 지우지 못한다** — 불리한 신호를 지울 수 있으면 관측이 아니다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(adminUser, `delete from public.client_events;`),
+    ),
+  );
+  check(
+    "client_events 에 TRUNCATE 가 열려 있지 않다 (함정 7 · RLS 는 TRUNCATE 에 안 걸린다)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'client_events'
+             and privilege_type = 'TRUNCATE' and grantee in ('anon', 'authenticated');`) === "0",
+  );
+
+  // ── 층 1: 어휘를 표가 강제한다 — 비인증 경로라 더 중요하다 ────────────────
+  check(
+    "**모르는 사유 코드를 거부한다** — 자유 문자열이면 표가 낙서장이 된다",
+    rejectedWith(/client_events_code_vocab/, () =>
+      asAnon(`insert into public.client_events (kind, code) values ('login_failed', 'DROP TABLE');`),
+    ),
+  );
+  check(
+    "**모르는 종류를 거부한다**",
+    rejectedWith(/client_events_kind_vocab/, () =>
+      asAnon(`insert into public.client_events (kind, code) values ('whatever', 'AUTH_TIMEOUT');`),
+    ),
+  );
+  check(
+    "**식별정보를 담을 칸이 아예 없다** — 있으면 언젠가 채워진다(§5.2)",
+    sql(`select count(*) from information_schema.columns
+           where table_schema = 'public' and table_name = 'client_events'
+             and column_name not in ('id', 'kind', 'code', 'occurred_at');`) === "0",
+  );
+
+  // ── 층 2 (FIX-41): 부모의 RLS 를 빌리는 정책이 있는가 ─────────────────────
+  check(
+    "**client_events 정책이 부모 표를 참조하지 않는다** — 자기 조건을 스스로 말한다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'client_events'
+             and (coalesce(qual, '') like '%exists%' or coalesce(with_check, '') like '%exists%');`) ===
+      "0",
+  );
+
+  // ── `job_runs` 어휘가 세 곳에서 같은가 ────────────────────────────────────
+  {
+    const monitor = readFileSync("lib/core/ops/monitor.ts", "utf8");
+    const names = [...monitor.matchAll(/name: "([a-z]+(?:-[a-z]+)+)",/g)].map((match) => match[1]);
+    const inCheck = sql(`select pg_get_constraintdef(oid) from pg_constraint
+                           where conname = 'job_runs_name_vocab';`);
+
+    check("코드가 배치 열 종을 선언한다 (명세 §4.5)", new Set(names).size === 10);
+    check(
+      "**CHECK 어휘가 코드와 같다** — 갈리면 배치가 이름을 못 남기거나 화면이 그 배치를 모른다",
+      names.length > 0 && names.every((name) => inCheck.includes(`'${name}'`)),
+    );
+    check(
+      "**모르는 배치 이름을 거부한다** — 오타 난 이름은 '어느 배치인지 모르는 실행' 이 된다",
+      rejectedWith(/job_runs_name_vocab/, () =>
+        sql(`insert into public.job_runs (job_name, started_at, status)
+               values ('purge-document', now(), 'running');`),
+      ),
+    );
+  }
+
+  // ── 배치가 실제로 등록됐는가 ──────────────────────────────────────────────
+  {
+    const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+    const scheduled = (vercel.crons ?? []).map((cron) => cron.path);
+    const routes = readdirSync("app/api/jobs", { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `/api/jobs/${entry.name}`)
+      .sort();
+
+    check(
+      "**라우트가 있는 배치가 전부 cron 에 등록돼 있다** — 안 부르면 만든 적 없는 것과 같다",
+      routes.length > 0 && [...scheduled].sort().join(",") === routes.join(","),
+    );
+    check(
+      "**등록된 경로에는 전부 라우트가 있다** — 없으면 매번 404 를 부른다",
+      scheduled.every((path) => routes.includes(path)),
+    );
+    check(
+      "**Vercel Cron 은 GET 으로 부른다** — 모든 배치가 GET 을 낸다(없으면 매번 405)",
+      routes.every((path) =>
+        readFileSync(`app${path}/route.ts`, "utf8").includes("export const GET = POST"),
+      ),
+    );
+    check(
+      "**모든 배치가 공통 인증을 쓴다** — `CRON_SECRET` 또는 서비스롤 키",
+      routes.every((path) =>
+        readFileSync(`app${path}/route.ts`, "utf8").includes("authorizeJob(request)"),
+      ),
+    );
+    check(
+      "**모든 배치가 `job_runs` 를 채운다** — 안 채우면 화면이 '한 번도 안 돌았다' 로 적는다",
+      routes.every((path) => {
+        // **라우트 파일만 보면 안 된다.** `purge-documents` 는 기록을 `lib/privacy/purge.ts`
+        // 안에서 남긴다 — 라우트 본문만 훑는 검사는 그것을 '안 채운다' 로 읽는다.
+        // 라우트가 부르는 `@/lib/...` 모듈을 한 겹 따라간다.
+        const src = readFileSync(`app${path}/route.ts`, "utf8");
+        const writes = (text) => text.includes("openJobRun") || text.includes('.from("job_runs")');
+        if (writes(src)) return true;
+
+        return [...src.matchAll(/from "@\/(lib\/[^"]+)"/g)].some((match) => {
+          const file = `${match[1]}.ts`;
+          return existsSync(file) && writes(readFileSync(file, "utf8"));
+        });
+      }),
+    );
+  }
+
+  // ── 픽스처 — **이미 실패 상태인 것만 보면 검사가 통과한다**(함정 8) ───────
+  check(
+    "**상태가 두 가지 이상 있다** — 전부 '기록 없음' 이면 갈라 보이는지 확인할 수 없다",
+    Number(sql(`select count(distinct job_name) from public.job_runs;`)) >= 2 &&
+      sql(`select count(*) from public.job_runs where status = 'succeeded';`) !== "0" &&
+      sql(`select count(*) from public.job_runs where status = 'failed';`) !== "0",
+  );
+  check(
+    "**자격증명과 인프라 실패가 둘 다 시드에 있다** — 경보 분기를 둘 다 눈다",
+    sql(`select count(*) from public.client_events where code = 'AUTH_INVALID_CREDENTIALS';`) !==
+      "0" &&
+      sql(`select count(*) from public.client_events where code <> 'AUTH_INVALID_CREDENTIALS';`) !==
+        "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check("`/admin/ops` 화면이 실재한다", existsSync("app/(admin)/admin/ops/page.tsx"));
+  check(
+    "**내비가 `/admin/ops` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/ops"'),
+  );
+  check(
+    "운영 상태 화면이 캐시되지 않는다 (5분 전 상태를 보이면 장애 화면이 아니다)",
+    readFileSync("app/(admin)/admin/ops/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+
+  // ── 함정 3: 화면이 안 그리는 것만으로는 부족하다 ─────────────────────────
+  check(
+    "**경보를 보내지 않는다는 사실이 API 응답 본문에 실린다**(D-147 · D-28)",
+    readFileSync("lib/ops/admin.ts", "utf8").includes("alertDelivery") &&
+      readFileSync("lib/core/ops/monitor.ts", "utf8").includes("available: false"),
+  );
+  check(
+    "**로그인 실패 집계가 전수가 아니라는 사실도 본문에 실린다**(FIX-32)",
+    readFileSync("lib/ops/admin.ts", "utf8").includes("loginObservability"),
+  );
+  check(
+    "**측정하지 않은 것을 0 으로 적지 않는다** — 집계 키가 빠지면 오류로 끝난다",
+    readFileSync("lib/ops/admin.ts", "utf8").includes("OPS_LOAD_FAILED"),
+  );
+
+  // ── FIX-32 의 신고 경로가 실제로 이어져 있는가 ───────────────────────────
+  check(
+    "신고 라우트가 실재한다",
+    existsSync("app/api/observability/client-event/route.ts"),
+  );
+  check(
+    "**로그인 화면이 그 라우트를 부른다** — 만든 경로에 들어가는 자리를 잇는다",
+    readFileSync("app/(auth)/login/LoginForm.tsx", "utf8").includes(
+      "/api/observability/client-event",
+    ),
+  );
+  check(
+    "**신고가 로그인을 막지 않는다** — 기다리지 않고 실패를 삼킨다",
+    readFileSync("app/(auth)/login/LoginForm.tsx", "utf8").includes("keepalive: true"),
+  );
+  check(
+    "**신고 라우트가 서비스롤을 쓰지 않는다** — 비인증 입력에 RLS 우회 권한을 붙이지 않는다",
+    !readFileSync("app/api/observability/client-event/route.ts", "utf8").includes(
+      "createAdminClient",
+    ),
+  );
+  check(
+    "**신고 라우트가 성공·실패를 구분해 알려주지 않는다** — 표의 어휘를 캐는 도구가 된다",
+    readFileSync("app/api/observability/client-event/route.ts", "utf8").includes("status: 204"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0064 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

@@ -21,6 +21,7 @@ import {
   Store,
   Tag,
   ToggleLeft,
+  Activity,
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -133,6 +134,10 @@ const ADMIN_NAV: NavItem[] = [
   // **찾기 쉬운 자리**에 있어야 한다. 플래그 목록은 로드맵이라 이 화면은 운영자만
   // 열리며(D-15) 목록은 SECURITY DEFINER 함수 하나를 지난다.
   { href: "/admin/flags", label: "피처 플래그", icon: ToggleLeft },
+  // S8-13. **개인정보 감사·플래그와 같은 묶음**이다 — 장애가 났을 때 여는 화면이라
+  // 찾는 데 시간이 걸리면 안 된다. 파기 배치가 멈춘 것을 이 화면이 먼저 말하고
+  // 개인정보 감사로 넘긴다.
+  { href: "/admin/ops", label: "운영 상태", icon: Activity },
   { href: "/admin/settings", label: "설정", icon: Settings },
 ];
 
@@ -176,12 +181,19 @@ export function AdminShell({
   className,
 }: AdminShellProps) {
   const pathname = usePathname();
-  const nav = role === "vendor" ? VENDOR_NAV : role === "planner" ? PLANNER_NAV : ADMIN_NAV;
+  const nav =
+    role === "vendor"
+      ? VENDOR_NAV
+      : role === "planner"
+        ? PLANNER_NAV
+        : ADMIN_NAV;
 
   function isActive(href: string) {
     // 대시보드(루트)는 정확히 일치할 때만 활성으로 본다.
     const isRoot = href === "/vendor" || href === "/admin" || href === "/pro";
-    return isRoot ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+    return isRoot
+      ? pathname === href
+      : pathname === href || pathname.startsWith(`${href}/`);
   }
 
   return (
@@ -201,7 +213,10 @@ export function AdminShell({
             </span>
           </div>
 
-          <nav aria-label={ROLE_LABEL[role]} className="flex-1 overflow-y-auto p-2">
+          <nav
+            aria-label={ROLE_LABEL[role]}
+            className="flex-1 overflow-y-auto p-2"
+          >
             <ul className="space-y-0.5">
               {nav.map((item) => {
                 const active = isActive(item.href);
@@ -221,7 +236,9 @@ export function AdminShell({
                       )}
                     >
                       <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
-                      <span className="hidden truncate lg:inline">{item.label}</span>
+                      <span className="hidden truncate lg:inline">
+                        {item.label}
+                      </span>
                     </Link>
                   </li>
                 );
@@ -233,9 +250,13 @@ export function AdminShell({
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 flex min-h-header flex-wrap items-center justify-between gap-3 border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
             <div className="min-w-0">
-              <h1 className="truncate text-display-sm text-foreground">{title}</h1>
+              <h1 className="truncate text-display-sm text-foreground">
+                {title}
+              </h1>
               {description ? (
-                <p className="mt-0.5 truncate text-sm text-muted-foreground">{description}</p>
+                <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                  {description}
+                </p>
               ) : null}
             </div>
             {action ? <div className="shrink-0">{action}</div> : null}

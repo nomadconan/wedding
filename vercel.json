@@ -1,4 +1,13 @@
 {
   "framework": "nextjs",
-  "regions": ["icn1"]
+  "regions": ["icn1"],
+  "crons": [
+    { "path": "/api/jobs/purge-documents", "schedule": "0 * * * *" },
+    { "path": "/api/jobs/dday-notifications", "schedule": "0 0 * * *" },
+    { "path": "/api/jobs/price-index-refresh", "schedule": "0 1 * * 1" },
+    { "path": "/api/jobs/price-anomaly-scan", "schedule": "0 2 * * *" },
+    { "path": "/api/jobs/sla-escalation", "schedule": "30 * * * *" },
+    { "path": "/api/jobs/consultation-confirm-request", "schedule": "15 * * * *" },
+    { "path": "/api/jobs/consultation-resolve", "schedule": "45 * * * *" }
+  ]
 }

@@ -18,15 +18,24 @@
  * 어느 계정이 존재하는지는 여전히 알려주지 않는다(계정 열거 방지).
  */
 
-/** 도메인 접두어 `AUTH_` 를 쓴다(CLAUDE.md §6). */
-export type LoginErrorCode =
-  | "AUTH_INVALID_CREDENTIALS"
-  | "AUTH_EMAIL_NOT_CONFIRMED"
-  | "AUTH_RATE_LIMITED"
-  | "AUTH_SERVICE_UNAVAILABLE"
-  | "AUTH_TIMEOUT"
-  | "AUTH_CONFIG"
-  | "AUTH_UNKNOWN";
+/**
+ * 도메인 접두어 `AUTH_` 를 쓴다(CLAUDE.md §6).
+ *
+ * **배열이 진실이고 타입을 거기서 끌어낸다**(S8-13). 이 어휘를 세 곳이 공유한다 —
+ * 이 파일·신고 라우트(`/api/observability/client-event`)·`client_events` 의 CHECK.
+ * 타입만 있으면 런타임에서 대조할 것이 없어 세 곳이 조용히 갈라진다(`db:rls` 가 대조한다).
+ */
+export const LOGIN_ERROR_CODES = [
+  "AUTH_INVALID_CREDENTIALS",
+  "AUTH_EMAIL_NOT_CONFIRMED",
+  "AUTH_RATE_LIMITED",
+  "AUTH_SERVICE_UNAVAILABLE",
+  "AUTH_TIMEOUT",
+  "AUTH_CONFIG",
+  "AUTH_UNKNOWN",
+] as const;
+
+export type LoginErrorCode = (typeof LOGIN_ERROR_CODES)[number];
 
 export type LoginErrorView = {
   code: LoginErrorCode;

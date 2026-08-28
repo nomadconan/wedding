@@ -1,6 +1,8 @@
 import type { NextRequest } from "next/server";
 
 import { fail, ok } from "@/lib/api/response";
+import { authorizeJob } from "@/lib/ops/job-auth";
+import { closeJobRun, openJobRun } from "@/lib/ops/job-run";
 import { runExpiry, runSlaEscalation } from "@/lib/notify/sla";
 
 /**
@@ -22,25 +24,46 @@ import { runExpiry, runSlaEscalation } from "@/lib/notify/sla";
  * 그 값을 실어** 무엇을 기준으로 돌았는지 남긴다.
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const provided = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-
-  if (!secret || provided !== secret) {
+  if (!authorizeJob(request).ok) {
     return fail(401, "JOB_UNAUTHORIZED", "실행 권한이 없습니다.");
   }
 
   const rawNow = request.nextUrl.searchParams.get("now");
-  const now = rawNow && !Number.isNaN(Date.parse(rawNow)) ? rawNow : new Date().toISOString();
+  const now =
+    rawNow && !Number.isNaN(Date.parse(rawNow))
+      ? rawNow
+      : new Date().toISOString();
   const today = now.slice(0, 10);
+
+  const run = await openJobRun("sla-escalation");
 
   try {
     // 만료를 **먼저** 돌린다. 그래야 이미 지난 문의를 재촉하지 않는다.
     const expiry = await runExpiry(now, today);
     const escalation = await runSlaEscalation(now);
 
+    await closeJobRun(run, {
+      status: "succeeded",
+      // **두 일을 한 배치라 훨은 건수를 더한다.** 한쪽만 세면 나머지가 안 도는 것처럼 보인다.
+      processedCount:
+        expiry.quotes +
+        expiry.targets +
+        escalation.overdueInquiries +
+        escalation.overdueChatRooms,
+    });
+
     return ok({ now, today, expiry, escalation });
   } catch {
+    await closeJobRun(run, { status: "failed", errorSummary: "sla_failed:1" });
+
     // 실패 원인을 응답에 싣지 않는다(CLAUDE.md §5.3). 경보는 S8-13 이 붙인다.
     return fail(500, "JOB_FAILED", "배치를 끝내지 못했습니다.");
   }
 }
+
+/**
+ * **Vercel Cron 은 GET 으로 부른다.** POST 만 있으면 스케줄은 도는데 매번 405 가 되고
+ * `job_runs` 에는 아무것도 안 남아 화면은 "한 번도 안 돌았다" 로 보인다 — 틀린
+ * 화면은 아니지만 원인을 가리킨다. 같은 핸들러를 둘 다 낸다.
+ */
+export const GET = POST;
