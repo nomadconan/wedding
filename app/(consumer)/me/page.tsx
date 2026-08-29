@@ -254,6 +254,22 @@ async function MeSection() {
 
       <Separator />
 
+      {/* ── 내 쿠폰 (F-C-35 · S5-12) ──
+          **여기가 `/coupons` 의 진입점이다.** 하단 탭은 다섯 칸이 찼고(D-55)
+          쿠폰함은 결제 화면에서도 들어가지만, **받은 것을 모아 보는 자리**가
+          따로 있어야 만료 임박을 알 수 있다. */}
+      <section className="space-y-2" data-testid="me-coupons">
+        <h2 className="text-base font-semibold text-foreground">내 쿠폰</h2>
+        <p className="text-caption text-muted-foreground">
+          받은 쿠폰과 사용 조건·기한을 확인하세요. 사용은 결제 화면에서 합니다.
+        </p>
+        <Link href="/coupons" className="text-caption font-medium text-brand-600">
+          쿠폰함 열기
+        </Link>
+      </section>
+
+      <Separator />
+
       {/* ── 후기 쓸 수 있는 거래 (F-C-17 · S8-11) ────────────────
           `/reviews/new/[bookingId]` 로 가는 **두 길 중 하나**다. S8-11 이 이 자리를
           임시로 만들 때는 §6.2 가 진입점으로 삼는 `/bookings/[id]` 가 없었고,

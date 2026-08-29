@@ -173,7 +173,8 @@ export type CouponBlockReason =
   | "revoked"
   | "min_order"
   | "sold_out"
-  | "stacking";
+  | "stacking"
+  | "other_vendor";
 
 export const COUPON_BLOCK_MESSAGE: Record<CouponBlockReason, string> = {
   not_active: "지금은 사용할 수 없는 쿠폰이에요.",
@@ -184,6 +185,7 @@ export const COUPON_BLOCK_MESSAGE: Record<CouponBlockReason, string> = {
   min_order: "최소 주문 금액에 못 미쳐요.",
   sold_out: "수량이 모두 소진됐어요.",
   stacking: "이 결제에는 이미 다른 쿠폰이 적용돼 있어요.",
+  other_vendor: "발행한 업체와의 거래에만 쓸 수 있는 쿠폰이에요.",
 };
 
 export type CouponEligibility =
@@ -207,9 +209,20 @@ export function couponEligibility(input: {
     validFrom: string | null;
     totalQuantity: number | null;
     issuedCount: number;
+    /** 발행 주체와 그 업체. 업체 발행이면 `issuerId` 가 그 업체다. */
+    issuerType?: CouponIssuer;
+    issuerId?: string | null;
   };
   issue: { status: CouponIssueStatus; expiresAt: string | null };
   orderAmount: number;
+  /**
+   * 이 결제가 속한 예약의 업체. 모르면 `null`.
+   *
+   * **업체 발행 쿠폰은 그 업체와의 거래에만 쓴다**(S5-12 · D-27). 이 조건이 없으면
+   * A 업체가 발행한 쿠폰을 B 업체 결제에 쓸 수 있고, 정산은 **할인액을 예약의 업체
+   * 에서 뺀다** — B 가 A 의 판촉비를 대신 내는 셈이 된다.
+   */
+  bookingVendorId?: string | null;
   /** 이미 적용된 쿠폰 수. 중복 규칙이 `single` 이면 1 이상일 때 막힌다. */
   appliedCount?: number;
   stackingMode?: "single" | "multiple" | null;
@@ -239,6 +252,17 @@ export function couponEligibility(input: {
 
   if (coupon.totalQuantity !== null && coupon.issuedCount > coupon.totalQuantity) {
     return block("sold_out");
+  }
+
+  // **업체 발행은 그 업체와의 거래에만.** 발행 업체를 모르면 판정하지 않는다 —
+  // 모르는 것을 '안 맞는다' 로 적으면 쓸 수 있는 쿠폰이 사라진다.
+  if (
+    coupon.issuerType === "vendor" &&
+    typeof coupon.issuerId === "string" &&
+    typeof input.bookingVendorId === "string" &&
+    coupon.issuerId !== input.bookingVendorId
+  ) {
+    return block("other_vendor");
   }
 
   if (input.orderAmount < coupon.minOrderAmount) {

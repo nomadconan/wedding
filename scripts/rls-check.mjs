@@ -2621,13 +2621,24 @@ if (!vendorStaff || !adminUser) {
   );
 
   // ── 회차 열람 ─────────────────────────────────────────────────────────────
+  // **개수가 아니라 이 픽스처의 계약에 달린 회차가 보이는지를 본다.** 원문은 `=== "2"`
+  // 였고, S5-12 가 계약·회차 시드를 붙이자 곧바로 깨졌다 — 검사가 확인하려던 것은
+  // "몇 개인가" 가 아니라 "내 계약의 회차가 보이는가" 다(함정 8).
   check(
     "커플 소유자는 결제 회차를 본다",
-    asUser(owner, `select count(*) from public.payment_schedules;`, payFixture) === "2",
+    asUser(
+      owner,
+      `select count(*) from public.payment_schedules where contract_id = '${PC}';`,
+      payFixture,
+    ) === "2",
   );
   check(
     "업체 멤버도 결제 회차를 본다 (응대에 필요한 운영 정보다)",
-    asUser(vendorStaff, `select count(*) from public.payment_schedules;`, payFixture) === "2",
+    asUser(
+      vendorStaff,
+      `select count(*) from public.payment_schedules where contract_id = '${PC}';`,
+      payFixture,
+    ) === "2",
   );
   check(
     "타 업체는 남의 회차를 못 본다",
@@ -3571,25 +3582,42 @@ if (!vendorStaff || !adminUser) {
     rejectedWith(/permission denied|42501/i, () =>
       asUser(owner, `delete from public.coupon_redemptions;`, couponFixture)),
   );
+  // **개수가 아니라 이 픽스처의 행이 보이는지를 본다.** 원문은 `=== "1"` 이었고,
+  // S5-12 가 쿠폰 시드를 붙이자 곧바로 깨졌다 — 검사가 확인하려던 것은 "몇 장인가"
+  // 가 아니라 "내 것이 보이는가" 이므로 그 뜻대로 다시 쓴다(함정 8).
   check(
     "고객은 자기 발급분을 본다",
-    asUser(owner, `select count(*) from public.coupon_issues;`, couponFixture) === "1",
+    asUser(
+      owner,
+      `select count(*) from public.coupon_issues where id = '${CI}';`,
+      couponFixture,
+    ) === "1",
   );
   check(
     "업체는 자사 쿠폰 발급 현황을 본다",
-    asUser(outsider, `select count(*) from public.coupon_issues;`, couponFixture) === "1",
+    asUser(
+      outsider,
+      `select count(*) from public.coupon_issues where id = '${CI}';`,
+      couponFixture,
+    ) === "1",
   );
   check(
     "타 업체는 남의 쿠폰을 못 본다",
     asUser(vendorStaff, `select count(*) from public.coupons where issuer_id is null;`, couponFixture) === "0",
   );
+  // **0행이 아니라 거절이다**(0066). 원문은 `=== "0"` 이었는데, 그것은 "정책이 안
+  // 보여준다" 를 뜻할 뿐이었다. S5-12 가 `anon` 의 SELECT GRANT 를 걷었으므로 이제는
+  // 표에 닿지도 못한다 — 더 강한 사실이므로 그렇게 적는다.
   check(
-    "비로그인은 쿠폰을 못 본다",
-    asAnon(`select count(*) from public.coupons;`, couponFixture) === "0",
+    "비로그인은 쿠폰 표에 닿지도 못한다",
+    rejectedWith(/permission denied/, () =>
+      asAnon(`select count(*) from public.coupons;`, couponFixture)),
   );
+  // 0066 이 GRANT 를 걷으면서 거절 사유가 `row-level security` 에서 `permission denied`
+  // 로 바뀌었다 — **막히는 층이 하나 더 아래로 내려간 것**이라 둘 다 받는다.
   check(
     "쿠폰 발급은 당사자가 못 한다 (수량·조건을 우회할 수 있다)",
-    rejectedWith(/row-level security/i, () =>
+    rejectedWith(/permission denied|row-level security/i, () =>
       asUser(owner, `insert into public.coupon_issues (coupon_id, user_id)
          values ('${CP}', '${owner}');`, couponFixture)),
   );
@@ -10304,6 +10332,270 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0065 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S5-12 — 쿠폰함·결제 적용 (F-C-35·36 · 0066 · **FIX-13 · FIX-45**)
+//
+// 쿠폰은 **돈이 직접 걸린 표**다. 할인액과 부담 주체를 당사자가 적을 수 있으면
+// 그것은 남의 정산에서 돈을 빼는 경로다. 아래 검사들이 그 길이 없는지 본다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const outsiderCouple = idOf("couple-a@local.test");
+  const issueId = sql(`select id from public.coupon_issues
+                         where couple_id = '${coupleId}' limit 1;`);
+
+  // ── 층 1: 쓰기가 걷혔는가 ────────────────────────────────────────────────
+  check(
+    "**coupon_redemptions 에 당사자 쓰기 권한이 없다** — 할인액·부담 주체를 스스로 적을 수 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'coupon_redemptions'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**컬럼 권한도 남아 있지 않다** — 표에만 걸면 컬럼 GRANT 가 따로 산다(FIX-36)",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public'
+             and table_name in ('coupon_redemptions', 'coupon_issues')
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**coupon_issues 에 당사자 쓰기 권한이 없다** — 자기 이름으로 발급하면 발행 조건이 장식이 된다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'coupon_issues'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**issued_count 는 대표도 못 쓴다** — 0 으로 되돌리면 수량 제한(sold_out)이 무력해진다",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'coupons'
+             and column_name = 'issued_count' and grantee = 'authenticated'
+             and privilege_type in ('INSERT', 'UPDATE');`) === "0",
+  );
+  check(
+    "**쿠폰을 지울 수 있는 사람이 없다** — 사용 이력이 달린 쿠폰이 사라지면 정산 근거가 사라진다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'coupons'
+             and grantee in ('anon', 'authenticated') and privilege_type = 'DELETE';`) === "0",
+  );
+  check(
+    "**비로그인은 쿠폰 정의를 못 읽는다** — 발행 조건·수량은 운영 정보다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public'
+             and table_name in ('coupons', 'coupon_issues', 'coupon_redemptions')
+             and grantee = 'anon' and privilege_type = 'SELECT';`) === "0",
+  );
+
+  // ── 위조 시도: 실제로 막히는가 ───────────────────────────────────────────
+  check(
+    "**커플이 사용 기록을 스스로 만들 수 없다** (할인액·부담 주체를 적는 경로다)",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(
+        owner,
+        `insert into public.coupon_redemptions
+           (coupon_issue_id, discount_amount, borne_by)
+         values ('${issueId}', 9999999, 'vendor');`,
+      ),
+    ),
+  );
+  check(
+    "**커플이 자기에게 쿠폰을 발급할 수 없다**",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(
+        owner,
+        `insert into public.coupon_issues (coupon_id, couple_id, status)
+         select id, '${coupleId}', 'issued' from public.coupons limit 1;`,
+      ),
+    ),
+  );
+  check(
+    "**커플이 발급분 상태를 되돌릴 수 없다** — 'used' 를 'issued' 로 바꾸면 무한히 쓴다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `update public.coupon_issues set status = 'issued';`),
+    ),
+  );
+  check(
+    "**업체 대표도 발급 계수기를 못 만진다**",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(vendorOwner, `update public.coupons set issued_count = 0;`),
+    ),
+  );
+
+  // ── 읽기 경계 ────────────────────────────────────────────────────────────
+  check(
+    "**커플은 자기 쿠폰을 읽는다** — 걷은 것은 쓰기지 읽기가 아니다",
+    Number(asUser(owner, `select count(*) from public.coupon_issues;`)) >= 3,
+  );
+  check(
+    "**남은 남의 쿠폰을 못 읽는다**",
+    asUser(outsiderCouple, `select count(*) from public.coupon_issues;`) === "0",
+  );
+  check(
+    "**발급분과 쿠폰 정의가 함께 보인다** — 한쪽만 보이면 목록에서 행이 조용히 사라진다(함정 1)",
+    Number(asUser(owner, `select count(*) from public.coupons;`)) >= 3,
+  );
+
+  // ── 층 2 (FIX-41): 정책이 다른 표의 정책에 기대는가 ──────────────────────
+  {
+    const helpers = sql(`select string_agg(p.proname, ',' order by p.proname)
+                           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                          where n.nspname = 'public'
+                            and p.proname in ('has_coupon_issue', 'owns_coupon_issue');`);
+
+    check("쿠폰 정책이 쓰는 도우미 둘이 실재한다", helpers === "has_coupon_issue,owns_coupon_issue");
+    check(
+      "**두 도우미가 소유자 조건을 자기 안에 들고 있다** — 없으면 부모가 열리는 날 자식이 함께 열린다",
+      ["has_coupon_issue", "owns_coupon_issue"].every((name) =>
+        sql(`select pg_get_functiondef(oid) from pg_proc where proname = '${name}';`).includes(
+          "auth.uid()",
+        ),
+      ),
+    );
+  }
+
+  // ── 한 번만 쓴다 — 경계는 유니크 인덱스다 ────────────────────────────────
+  // 거절 사유는 0032 가 건 UNIQUE 다(`coupon_redemptions_coupon_issue_id_key`).
+  // S5-12 는 같은 인덱스를 다시 만들지 않고 **그 보장이 살아 있는지를 여기서 본다.**
+  // **시드 행에 기대지 않는다.** 앞선 검사·흐름 점검이 그 발급분을 이미 썼을 수 있고,
+  // 그러면 첫 삽입부터 걸려 무엇을 확인했는지 알 수 없다. 쿠폰과 발급분을 **둘 다**
+  // 이 트랜잭션 안에서 만든다 — 쿠폰을 새로 만들지 않으면 `uq_coupon_issues_couple`
+  // (커플·쿠폰 1건)이 **먼저** 걸려 정작 보려던 것을 확인하지 못한다(함정 8).
+  //
+  // 막는 것은 셋이 겹쳐 있다: 트리거(`mark_coupon_issue_used`)가 먼저 발급분을 `used`
+  // 로 옮기고 두 번째를 거절하며, 그 뒤에 0032 의 UNIQUE 가 backstop 으로 선다.
+  // **어느 층에서 막히든 통과**로 본다 — 확인하려는 것은 "두 번 쓸 수 없다" 이지
+  // "어느 제약이 막느냐" 가 아니다.
+  check(
+    "**같은 발급분으로 두 번 쓸 수 없다** — 상태 값은 읽은 시점의 값이라 동시 요청을 못 막는다",
+    rejectedWith(/사용할 수 없는 쿠폰|coupon_redemptions_coupon_issue_id_key|23505/, () =>
+      sql(`begin;
+             insert into public.coupons (id, issuer_type, issuer_id, name, discount_type,
+                                         discount_value, max_discount_amount, min_order_amount,
+                                         issue_condition, status)
+               values ('11111111-0000-0000-0000-000000000001', 'platform', null, 'RLS중복시험',
+                       'amount', 1000, null, 0, 'manual_grant', 'active');
+             insert into public.coupon_issues (id, coupon_id, couple_id, status)
+               values ('11111111-2222-3333-4444-555555555555',
+                       '11111111-0000-0000-0000-000000000001', '${coupleId}', 'issued');
+             insert into public.coupon_redemptions (coupon_issue_id, discount_amount, borne_by)
+               values ('11111111-2222-3333-4444-555555555555', 1000, 'platform');
+             insert into public.coupon_redemptions (coupon_issue_id, discount_amount, borne_by)
+               values ('11111111-2222-3333-4444-555555555555', 1000, 'platform');
+           rollback;`),
+    ),
+  );
+  check(
+    "**결제 한 건에 쿠폰 한 장이다**(§7.4) — 두 장이 겹치면 부담 주체가 둘이 된다",
+    sql(`select count(*) from pg_indexes
+           where schemaname = 'public' and indexname = 'uq_coupon_redemptions_payment';`) === "1",
+  );
+  check(
+    "**결제에 붙은 사용은 예약도 가리킨다** — 비면 업체가 자기 정산에서 나간 돈을 못 본다",
+    rejectedWith(/coupon_redemptions_target_shape/, () =>
+      sql(`insert into public.coupon_redemptions
+             (coupon_issue_id, payment_id, discount_amount, borne_by)
+           values ('${issueId}', gen_random_uuid(), 1000, 'platform');`),
+    ),
+  );
+
+  // ── FIX-45: 업체 쿠폰이 남의 결제에 쓰이지 않는가 ────────────────────────
+  check(
+    "**업체 발행 쿠폰은 그 업체와의 거래에만 쓴다**(FIX-45) — 판정이 순수 함수에 있다",
+    readFileSync("lib/core/coupon/coupon.ts", "utf8").includes("other_vendor") &&
+      readFileSync("lib/core/coupon/coupon.ts", "utf8").includes("bookingVendorId"),
+  );
+  check(
+    "**결제 경로가 예약의 업체를 넘긴다** — 안 넘기면 판정이 있어도 안 돈다",
+    readFileSync("lib/payments/charge.ts", "utf8").includes("bookingVendorId: context.vendorId"),
+  );
+  check(
+    "**정산이 할인액을 예약의 업체에서 뺀다** — 그래서 발행 업체와 어긋나면 안 된다",
+    readFileSync("lib/settlements/actions.ts", "utf8").includes('from("coupon_redemptions")'),
+  );
+
+  // ── FIX-13: 회차 금액에 쿠폰이 반영되는가 ────────────────────────────────
+  check(
+    "**청구 금액이 할인 뒤 금액이다** — 안 그러면 회차마다 정가가 빠져 합계가 총액을 넘는다",
+    readFileSync("lib/payments/charge.ts", "utf8").includes("const chargeAmount ="),
+  );
+  check(
+    "**이미 쓴 할인을 잔액 계산에 넘긴다** — 안 넘기면 다 내고도 잔액이 남는다",
+    readFileSync("lib/payments/loader.ts", "utf8").includes("priorDiscountAmount") &&
+      readFileSync("lib/core/payment/checkout.ts", "utf8").includes("priorDiscountAmount"),
+  );
+  check(
+    "**화면이 금액을 보내지 않는다** — 발급분 id 만 보낸다(할인액을 클라이언트가 정하면 안 된다)",
+    readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+      "couponIssueId,",
+    ) &&
+      !readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+        "discountAmount:",
+      ),
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check("`/coupons` 화면이 실재한다", existsSync("app/(consumer)/coupons/page.tsx"));
+  check(
+    "**`/me` 가 쿠폰함을 가리킨다** — 하단 탭은 다섯 칸이 차서 여기가 진입점이다(D-55)",
+    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/coupons"'),
+  );
+  check(
+    "**결제 화면이 더는 '준비 중' 이라 말하지 않는다** — 다 만든 기능을 준비 중이라 적지 않는다",
+    readFileSync("lib/payments/loader.ts", "utf8").includes("featureReady: true"),
+  );
+  check(
+    "**못 쓰는 쿠폰도 결제 화면에 사유와 함께 남는다**(F-C-36)",
+    readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+      "coupon-blocked",
+    ),
+  );
+  check(
+    "쿠폰함이 캐시되지 않는다 (만료가 시계로 판정되는 화면이다)",
+    readFileSync("app/(consumer)/coupons/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+
+  // ── 픽스처 — **양쪽 갈래가 다 닿아야 검사가 뭔가를 본다**(함정 8) ────────
+  check(
+    "**쓸 수 있는 쿠폰과 못 쓰는 쿠폰이 둘 다 시드에 있다**",
+    Number(sql(`select count(*) from public.coupon_issues where expires_at > now();`)) >= 2 &&
+      Number(sql(`select count(*) from public.coupon_issues where expires_at < now();`)) >= 1,
+  );
+  check(
+    "**플랫폼 발행과 업체 발행이 둘 다 있다** — 부담 주체 분기를 둘 다 눈다",
+    sql(`select count(*) from public.coupons where issuer_type = 'platform';`) !== "0" &&
+      sql(`select count(*) from public.coupons where issuer_type = 'vendor';`) !== "0",
+  );
+  // 원문은 `coupon_redemptions` 가 **비어 있음**을 봤는데, 흐름 점검이 실제로 결제하면
+  // 행이 생겨 곧바로 깨진다 — 검사가 지키려던 것은 "빈 표" 가 아니라 **"시드가 쿠폰을
+  // 미리 써 두지 않는다"** 이므로 그 뜻대로 다시 쓴다(함정 8).
+  check(
+    "**시드가 쿠폰을 미리 써 두지 않는다** — 그러면 아무도 결제하지 않았는데 '이미 씀' 이 참이 된다",
+    Number(sql(`select count(*) from public.coupon_issues where status = 'issued';`)) >= 2,
+  );
+  check(
+    "**사용 기록이 있다면 전부 결제에 붙어 있다** — 결제 없이 쓰인 쿠폰은 없다(D-154)",
+    sql(`select count(*) from public.coupon_redemptions where payment_id is null;`) === "0",
+  );
+
+  // ── D-27: 리뷰 대가 금지가 여전히 스키마에 있는가 ────────────────────────
+  check(
+    "**발행 조건에 리뷰가 없다**(D-03 · §7.7) — 자유 문자열이면 '후기 쓰면 5천원' 이 들어온다",
+    !sql(`select pg_get_constraintdef(oid) from pg_constraint
+            where conname = 'coupons_issue_condition_values';`).match(/review|후기|평점/i),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0066 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

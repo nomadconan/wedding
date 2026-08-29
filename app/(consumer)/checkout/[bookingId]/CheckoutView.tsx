@@ -6,6 +6,8 @@ import { BrokerNotice } from "@/components/domain/BrokerNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { COUPON_STACKING_NOTICE } from "@/lib/core/coupon/coupon";
+import type { WalletEntry } from "@/lib/core/coupon/wallet";
 import {
   CHECKOUT_CONSENT_ITEMS,
   CHECKOUT_CONSENT_VERSION,
@@ -59,7 +61,14 @@ export type CheckoutData = {
   schedules: ScheduleItem[];
   progress: { paidAmount: number; remainingAmount: number; fullyPaid: boolean };
   next: { scheduleId: string; seq: number; amounts: CheckoutAmounts } | null;
-  coupon: { state: CouponSlotState; message: string; ownerTask: string };
+  coupon: {
+    state: CouponSlotState;
+    message: string;
+    ownerTask: string;
+    entries: WalletEntry[];
+    summary: { total: number; usable: number | null; expiringSoon: number };
+    stackingMode: "single" | "multiple";
+  };
 };
 
 type Result =
@@ -71,6 +80,8 @@ export function CheckoutView({ data, stubMode }: { data: CheckoutData; stubMode:
   const [agreed, setAgreed] = useState<ConsentKind[]>([]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result>(null);
+  // 고른 쿠폰. **금액을 여기 담지 않는다** — 서버가 결제 순간에 다시 센다(S5-12).
+  const [couponIssueId, setCouponIssueId] = useState<string | null>(null);
 
   const ready = consentComplete(agreed);
   const next = data.next;
@@ -91,7 +102,12 @@ export function CheckoutView({ data, stubMode }: { data: CheckoutData; stubMode:
       const response = await fetch("/api/payments/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scheduleId: next.scheduleId, consents: agreed }),
+        body: JSON.stringify({
+          scheduleId: next.scheduleId,
+          consents: agreed,
+          // **id 만 보낸다.** 할인액을 보내면 클라이언트가 금액을 정하는 것이다.
+          couponIssueId,
+        }),
       });
 
       const payload = (await response.json()) as {
@@ -150,7 +166,7 @@ export function CheckoutView({ data, stubMode }: { data: CheckoutData; stubMode:
 
       <ScheduleList items={data.schedules} />
 
-      <CouponSlot coupon={data.coupon} />
+      <CouponSlot coupon={data.coupon} selected={couponIssueId} onSelect={setCouponIssueId} />
 
       {next === null ? null : (
         <>
@@ -258,20 +274,96 @@ function ScheduleList({ items }: { items: ScheduleItem[] }) {
 }
 
 /**
- * 쿠폰 자리 (§6.2 · D-27).
+ * 쿠폰 자리 (§6.2 · D-27 · **S5-12 가 열었다**).
  *
- * **자리를 지우지 않는다.** 지우면 S5-12 가 화면을 다시 설계하게 되고, 그 사이
- * 고객은 "쿠폰을 못 쓰는 서비스" 로 이해한다. 대신 **'아직 없음' 과 '쿠폰 없음' 을
- * 구별해서** 적는다 — 같은 문구로 적으면 기능이 죽어 있다는 것을 아무도 모른다.
+ * ── 이 자리가 지키는 규칙 ───────────────────────────────────────────────────
+ * 1. **못 쓰는 쿠폰도 사유와 함께 보인다**(F-C-36). 감추면 "쿠폰이 없다" 로 읽히고,
+ *    최소 결제 금액을 조금 넘기면 쓸 수 있다는 사실을 영영 모른다.
+ * 2. **할인 전 · 할인액 · 할인 후를 함께 보인다**(D-18). 위의 금액 블록이 그 자리다.
+ * 3. **여기서 쓰이지 않는다.** 고르는 것은 계산일 뿐이고, 사용 처리는 결제가 승인되는
+ *    순간에 일어난다 — 그래야 결제가 실패했을 때 쿠폰만 사라지지 않는다.
  */
-function CouponSlot({ coupon }: { coupon: CheckoutData["coupon"] }) {
+function CouponSlot({
+  coupon,
+  selected,
+  onSelect,
+}: {
+  coupon: CheckoutData["coupon"];
+  selected: string | null;
+  onSelect: (issueId: string | null) => void;
+}) {
+  const usable = coupon.entries.filter((entry) => entry.usable === true);
+  const blocked = coupon.entries.filter((entry) => entry.usable === false);
+
   return (
-    <section className="rounded-xl border border-dashed border-border p-4">
+    <section className="rounded-xl border border-border p-4" data-testid="checkout-coupon">
       <h2 className="text-sm font-semibold text-foreground">쿠폰</h2>
-      <p className="mt-1 text-sm text-neutral-600">{COUPON_SLOT_MESSAGE[coupon.state]}</p>
-      {coupon.state === "unavailable" ? (
-        <p className="mt-1 text-xs text-neutral-500">준비 중인 기능 · {coupon.ownerTask}</p>
-      ) : null}
+
+      {coupon.entries.length === 0 ? (
+        <p className="mt-1 text-sm text-neutral-600">{COUPON_SLOT_MESSAGE.empty}</p>
+      ) : (
+        <>
+          <ul className="mt-3 space-y-2">
+            <li>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="coupon"
+                  className="mt-1"
+                  checked={selected === null}
+                  onChange={() => onSelect(null)}
+                />
+                <span className="text-neutral-700">쿠폰을 쓰지 않을게요</span>
+              </label>
+            </li>
+            {usable.map((entry) => (
+              <li key={entry.issueId}>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="coupon"
+                    className="mt-1"
+                    checked={selected === entry.issueId}
+                    onChange={() => onSelect(entry.issueId)}
+                    data-testid="coupon-option"
+                  />
+                  <span>
+                    <span className="font-medium text-foreground">{entry.name}</span>
+                    <span className="ml-1 tabular-nums text-neutral-700">
+                      −{(entry.discountAmount ?? 0).toLocaleString("ko-KR")}원
+                    </span>
+                    <span className="mt-0.5 block text-xs text-neutral-500">
+                      {entry.issuerType === "vendor"
+                        ? `${entry.issuerName ?? "업체"} 발행`
+                        : "웨딩클리어 발행"}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+
+          {blocked.length > 0 ? (
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="text-xs font-medium text-neutral-500">
+                지금 쓸 수 없는 쿠폰 {blocked.length}장
+              </p>
+              <ul className="mt-1 space-y-1" data-testid="coupon-blocked">
+                {blocked.map((entry) => (
+                  <li key={entry.issueId} className="text-xs text-neutral-500">
+                    <span className="text-neutral-600">{entry.name}</span> · {entry.blockedDetail}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <p className="mt-3 text-xs text-neutral-500">
+            {COUPON_STACKING_NOTICE} 사용 처리는 <strong>결제가 승인되는 순간</strong>에
+            이뤄집니다.
+          </p>
+        </>
+      )}
     </section>
   );
 }

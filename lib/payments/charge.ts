@@ -1,5 +1,8 @@
 import { readSetting } from "@/lib/app-settings";
 import { recordEvent } from "@/lib/audit/record";
+import type { CouponIssuer } from "@/lib/core/coupon/coupon";
+import { commitRedemption, previewRedemption } from "@/lib/coupons/redeem";
+import { readStackingMode } from "@/lib/coupons/settings";
 import {
   SETTLEMENT_DEFERRED_EVENT,
   canCancelPayment,
@@ -60,6 +63,8 @@ type ScheduleContext = {
   contractId: string;
   bookingId: string;
   coupleId: string;
+  /** 예약의 업체. 업체 발행 쿠폰이 그 업체와의 거래인지 판정하는 데 쓴다(FIX-45). */
+  vendorId: string;
   ownerId: string;
   contractStatus: string;
   contractTotal: number;
@@ -102,11 +107,11 @@ async function loadScheduleContext(scheduleId: string): Promise<ScheduleContext 
 
   const { data: bookingRow } = await admin
     .from("bookings")
-    .select("id, couple_id")
+    .select("id, couple_id, vendor_id")
     .eq("id", contract.booking_id)
     .maybeSingle();
 
-  const booking = bookingRow as { id: string; couple_id: string } | null;
+  const booking = bookingRow as { id: string; couple_id: string; vendor_id: string } | null;
   if (!booking) return null;
 
   const { data: coupleRow } = await admin
@@ -146,6 +151,7 @@ async function loadScheduleContext(scheduleId: string): Promise<ScheduleContext 
     contractId: contract.id,
     bookingId: contract.booking_id,
     coupleId: booking.couple_id,
+    vendorId: booking.vendor_id,
     ownerId: couple.owner_id,
     contractStatus: contract.status,
     contractTotal: contract.total_amount,
@@ -213,6 +219,13 @@ export async function chargeInstallment(input: {
   actorId: string;
   /** 명시적 재결제 회차. 자동 재시도에서는 올리지 않는다(멱등이 사라진다). */
   attempt?: number;
+  /**
+   * 쓸 쿠폰의 발급분 id (S5-12).
+   *
+   * **금액을 받지 않는다.** 할인액은 서버가 다시 센다 — 클라이언트가 정할 수
+   * 있으면 `borne_by='vendor'` 쿠폰에서 남의 정산을 비우는 경로가 된다.
+   */
+  couponIssueId?: string | null;
   now?: Date;
 }): Promise<ChargeOutcome | ChargeFailure> {
   const admin = createAdminClient();
@@ -283,6 +296,43 @@ export async function chargeInstallment(input: {
     }
   }
 
+  // ── 쿠폰 ── **금액을 정하기 전에 서버가 다시 판정한다** (S5-12 · FIX-13) ─────
+  //
+  // 판정은 하되 **기록은 아직 안 한다** — 결제가 실패하면 쿠폰만 사라진다.
+  // 기록은 승인 뒤에 `commitRedemption` 이 한다.
+  let coupon: { issueId: string; discountAmount: number; borneBy: CouponIssuer } | null = null;
+
+  if (input.couponIssueId) {
+    const stacking = await readStackingMode();
+    const verdict = await previewRedemption({
+      issueId: input.couponIssueId,
+      installmentAmount: context.amount,
+      // 이 결제에 이미 붙은 쿠폰 수. 회차당 한 장이므로 새 결제는 항상 0 이다.
+      appliedCount: 0,
+      // **업체 발행 쿠폰은 그 업체와의 거래에만**(FIX-45) — 정산은 할인액을
+      // 예약의 업체에서 빼므로, 안 맞추면 B 가 A 의 판촉비를 대신 낸다.
+      bookingVendorId: context.vendorId,
+      stackingMode: stacking,
+      now,
+    });
+
+    if (!verdict.ok) {
+      // **무시하고 정가로 청구하지 않는다.** 고객은 할인을 보고 눌렀고,
+      // 그대로 긁으면 본 금액과 다른 돈이 빠져나간다.
+      return failure(422, "PAY_COUPON_NOT_APPLICABLE", verdict.message);
+    }
+
+    coupon = {
+      issueId: input.couponIssueId,
+      discountAmount: verdict.discountAmount,
+      borneBy: verdict.borneBy,
+    };
+  }
+
+  // 실제로 청구할 금액. **할인이 여기까지 오지 않으면 회차마다 정가가 빠져
+  // 합계가 계약 총액을 넘는다**(FIX-13 이 말한 자리다).
+  const chargeAmount = context.amount - (coupon?.discountAmount ?? 0);
+
   const providerName = adapter().name;
   const attemptCount = (prior?.attempt_count ?? 0) + 1;
 
@@ -293,7 +343,9 @@ export async function chargeInstallment(input: {
       booking_id: context.bookingId,
       payment_schedule_id: context.scheduleId,
       purpose: purposeOfSeq(context.seq),
-      amount: context.amount,
+      // **실제로 받은 돈을 적는다.** 할인액은 `coupon_redemptions` 가 따로 갖고,
+      // 둘을 더하면 회차 금액이 된다.
+      amount: chargeAmount,
       status: "pending",
       // 실패한 이전 시도가 같은 열쇠를 점유하고 있으면 새 시도는 다른 열쇠여야 한다.
       idempotency_key: prior ? `${idempotencyKey}:r${attemptCount}` : idempotencyKey,
@@ -317,7 +369,7 @@ export async function chargeInstallment(input: {
   // ── 2) 어댑터 ─────────────────────────────────────────────────────────────
   const result = await adapter().charge({
     paymentScheduleId: context.scheduleId,
-    amount: context.amount,
+    amount: chargeAmount,
     currency: "KRW",
     idempotencyKey,
   });
@@ -400,7 +452,23 @@ export async function chargeInstallment(input: {
     memo: `seq=${context.seq} amount=${context.amount}`,
   });
 
-  await linkSettlement({ paymentId, actorId: input.actorId, amount: context.amount });
+  // **쓴 쿠폰을 여기서 확정한다** — 승인이 끝난 뒤이다(S5-12). 실패해도 결제를
+  // 되돌리지 않는다 — 고객은 이미 냈고, 되돌리면 그 돈이 어디에도 없는 상태가
+  // 된다(예치와 같은 판단). 증적을 남기고 운영이 본다.
+  if (coupon) {
+    await commitRedemption({
+      issueId: coupon.issueId,
+      bookingId: context.bookingId,
+      paymentId,
+      discountAmount: coupon.discountAmount,
+      borneBy: coupon.borneBy,
+      actorId: input.actorId,
+    });
+  }
+
+  // 정산은 **실제로 받은 돈**을 기준으로 연결한다. 할인액을 누가 부담하는지는
+  // `coupon_redemptions.borne_by` 가 갖고, 그것을 보는 것은 S5-07 이다.
+  await linkSettlement({ paymentId, actorId: input.actorId, amount: chargeAmount });
 
   // **잔금은 안전거래로 맡는다**(S5-09 · F-C-16). 계약금(1회차)은 계약 성립의 증표라
   // 바로 업체에 전달되고 잔금만 예치된다 — 판정은 `isEscrowTarget` 이 한다.
