@@ -18,6 +18,14 @@ export const CheckoutRequestSchema = z.object({
    * 멱등이 사라지고 재시도가 새 결제가 된다(`paymentIdempotencyKey`).
    */
   attempt: z.number().int().min(1).max(9).optional(),
+  /**
+   * 쓸 쿠폰의 발급분 id (S5-12).
+   *
+   * **금액을 받지 않는 것과 같은 이유로 id 만 받는다** — 할인액을 클라이언트가 정할 수
+   * 있으면 `borne_by='vendor'` 쿠폰에서 남의 정산을 비우는 경로가 된다. 서버가 결제
+   * 순간에 다시 판정하고 다시 센다.
+   */
+  couponIssueId: z.string().uuid().nullable().optional(),
 });
 
 export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;

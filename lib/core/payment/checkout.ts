@@ -415,8 +415,12 @@ export const COUPON_SLOT_OWNER_TASK = "S5-11~S5-14";
  * 고객은 그 숫자를 결제액으로 읽는다 — 20% 회차 화면에 총액만 크면 놀라서 이탈하고,
  * 총액 없이 회차만 크면 "이게 전부인 줄 알았다" 가 된다.
  *
- * 쿠폰이 붙으면 `discountAmount` 가 채워진다(S5-12). 지금은 언제나 0이며 그 사실을
- * 화면이 숨기지 않는다.
+ * 쿠폰이 붙으면 `discountAmount` 가 채워진다(S5-12).
+ *
+ * **이미 쓴 할인도 함께 받는다**(`priorDiscountAmount` · FIX-13). 안 받으면
+ * `remainingAfterThis` 가 **이미 깎인 만큼을 남은 빚으로 적는다** — 계약 총액은
+ * 쿠폰 전 금액이고 `paidAmount` 는 할인 뒤 실제로 난 돈이라, 둘을 그대로 빼면
+ * 차액이 사라지지 않고 마지막 회차까지 간 뒤에도 "아직 낼 것이 남았다" 가 된다.
  */
 export type CheckoutAmounts = {
   contractTotal: number;
@@ -432,11 +436,18 @@ export function checkoutAmounts(input: {
   installmentAmount: number;
   paidAmount: number;
   discountAmount?: number;
+  /** 앞선 회차에서 이미 쓴 할인액의 합. 없으면 0. */
+  priorDiscountAmount?: number;
 }): CheckoutAmounts {
   const discountAmount = input.discountAmount ?? 0;
+  const priorDiscountAmount = input.priorDiscountAmount ?? 0;
 
   if (!Number.isInteger(discountAmount) || discountAmount < 0) {
     throw new PaymentError(`할인 금액이 규약을 벗어났습니다: ${discountAmount}`);
+  }
+
+  if (!Number.isInteger(priorDiscountAmount) || priorDiscountAmount < 0) {
+    throw new PaymentError(`이미 쓴 할인 금액이 규약을 벗어났습니다: ${priorDiscountAmount}`);
   }
 
   if (discountAmount > input.installmentAmount) {
@@ -451,7 +462,12 @@ export function checkoutAmounts(input: {
     discountAmount,
     payableAmount,
     paidAmount: input.paidAmount,
-    remainingAfterThis: Math.max(0, input.contractTotal - input.paidAmount - payableAmount),
+    // **할인은 '낸 돈' 과 같은 자리에서 빠진다**(FIX-13). 계약 총액은 쿠폰 전
+    // 금액이므로, 깎인 만큼을 빼지 않으면 끝까지 낸 뒤에도 잔액이 남는다.
+    remainingAfterThis: Math.max(
+      0,
+      input.contractTotal - input.paidAmount - priorDiscountAmount - payableAmount - discountAmount,
+    ),
   };
 }
 

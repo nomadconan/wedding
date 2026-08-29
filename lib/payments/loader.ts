@@ -1,3 +1,6 @@
+import { loadWallet } from "@/lib/coupons/read";
+import { priorDiscountOf } from "@/lib/coupons/redeem";
+import type { WalletEntry, WalletSummary } from "@/lib/core/coupon/wallet";
 import {
   CHECKOUT_CONSENT_ITEMS,
   CHECKOUT_CONSENT_VERSION,
@@ -41,6 +44,8 @@ export type CheckoutSchedule = {
 };
 
 export type CheckoutPayload = {
+  /** 이 예약의 업체. 업체 발행 쿠폰의 적용 대상을 가르는 데 쓴다(FIX-45). */
+  vendorId: string | null;
   contract: {
     id: string;
     status: string;
@@ -52,7 +57,14 @@ export type CheckoutPayload = {
   progress: ReturnType<typeof paymentProgress>;
   next: { scheduleId: string; seq: number; amounts: CheckoutAmounts } | null;
   consent: { version: string; items: readonly ConsentItem[] };
-  coupon: { state: CouponSlotState; message: string; ownerTask: string };
+  coupon: {
+    state: CouponSlotState;
+    message: string;
+    ownerTask: string;
+    entries: WalletEntry[];
+    summary: WalletSummary;
+    stackingMode: "single" | "multiple";
+  };
 };
 
 export async function loadCheckout(
@@ -119,9 +131,33 @@ export async function loadCheckout(
   const progress = paymentProgress(schedules);
   const totalAmount = contract.total_amount ?? progress.totalAmount;
   const next = views.find((view) => view.payable) ?? null;
-  const coupon = couponSlotState({ featureReady: false, applicableCount: 0 });
+  // ── 쿠폰 ── **이제 실제로 열렸다**(S5-12). '준비 중' 을 지운다 ───────────
+  //
+  // **낼 회차를 놓고 판정한다.** 주문 금액 없이 재면 최소 주문 금액에 걸려 전부
+  // "못 쓴다" 가 되고, 그것은 틀린 답을 확신 있게 적는 일이다(함정 2).
+  // 이 예약의 업체. **업체 발행 쿠폰은 그 업체와의 거래에만 쓴다**(FIX-45).
+  const { data: bookingRow } = await client
+    .from("bookings")
+    .select("vendor_id")
+    .eq("id", bookingId)
+    .maybeSingle();
+  const vendorId = (bookingRow as { vendor_id: string } | null)?.vendor_id ?? null;
+
+  const wallet = await loadWallet({
+    orderAmount: next?.amount ?? null,
+    bookingVendorId: vendorId,
+    now,
+  });
+  // **이미 쓴 할인의 합.** 계약 총액은 쿠폰 전 금액이고 낸 돈은 할인 뒤 금액이라,
+  // 이것을 안 빼면 마지막 회차까지 낸 뒤에도 잔액이 남는다(FIX-13).
+  const priorDiscountAmount = await priorDiscountOf(bookingId);
+  const coupon = couponSlotState({
+    featureReady: true,
+    applicableCount: wallet.summary.usable ?? 0,
+  });
 
   return {
+    vendorId,
     contract: {
       id: contract.id,
       status: contract.status,
@@ -152,10 +188,20 @@ export async function loadCheckout(
               contractTotal: totalAmount,
               installmentAmount: next.amount,
               paidAmount: progress.paidAmount,
+              // **이미 쓴 할인을 넘긴다**(FIX-13) — 안 넘기면 다 낸 뒤에도 잔액이 남는다.
+              priorDiscountAmount,
             }),
           },
     consent: { version: CHECKOUT_CONSENT_VERSION, items: CHECKOUT_CONSENT_ITEMS },
-    // 쿠폰은 아직 없다(S5-11). '아직 없음' 과 '쿠폰 없음' 을 구별해 내려보낸다.
-    coupon: { state: coupon, message: COUPON_SLOT_MESSAGE[coupon], ownerTask: COUPON_SLOT_OWNER_TASK },
+    // **못 쓰는 쿠폰도 사유와 함께 내려보낸다**(F-C-36) — 감추면 "쿠폰이 없다" 로
+    // 읽히고, 최소 주문 금액을 조금 넘기면 쓸 수 있다는 사실을 영영 모른다.
+    coupon: {
+      state: coupon,
+      message: COUPON_SLOT_MESSAGE[coupon],
+      ownerTask: COUPON_SLOT_OWNER_TASK,
+      entries: wallet.entries,
+      summary: wallet.summary,
+      stackingMode: wallet.stackingMode,
+    },
   };
 }

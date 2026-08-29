@@ -543,6 +543,9 @@ const METRIC_INQUIRY_ID = "00000000-0000-0000-0000-00000000d003";
 const METRIC_BOOKING_ID = "00000000-0000-0000-0000-00000000d004";
 // S5-10. Still in `hold` with no vendor decision - the "pending" lane fixture.
 const PENDING_BOOKING_ID = "00000000-0000-0000-0000-0000000005a0";
+// S5-10. Fixed so re-running the seed sends the SAME value (the decision trigger
+// treats any change to accepted_at as an attempt to rewrite a decision).
+const ACCEPTED_AT_FIXTURE = "2026-07-01T00:00:00.000Z";
 const METRIC_DOCUMENT_ID = "00000000-0000-0000-0000-00000000d005";
 const METRIC_ANALYSIS_ID = "00000000-0000-0000-0000-00000000d006";
 
@@ -624,7 +627,11 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     // S5-10. A confirmed booking that was never accepted cannot happen through the
     // real flow any more - the vendor decides first. accepted_by stays null: we do
     // not invent who pressed it (the migration backfill does the same).
-    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
+    //
+    // FIXED timestamp on purpose: the decision trigger refuses to move accepted_at
+    // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
+    // fixture that only works on a clean database is a fixture that stops working.
+    accepted_at: ACCEPTED_AT_FIXTURE,
   });
 
   // S5-10. A booking still WAITING for the vendor's decision.
@@ -971,6 +978,194 @@ async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
   return "created";
 }
 
+
+// -- contract + installment fixture (S5-12) ----------------------------------
+const CONTRACT_ID = "00000000-0000-0000-0000-0000000005e1";
+const SCHEDULE_1_ID = "00000000-0000-0000-0000-0000000005e2";
+const SCHEDULE_2_ID = "00000000-0000-0000-0000-0000000005e3";
+// Fixed so re-running the seed sends the SAME values (contract snapshots are
+// immutable once set - a computed timestamp makes the second run fail).
+const CONTRACT_ISSUED_AT = "2026-07-02T00:00:00.000Z";
+const CONTRACT_ACTIVATED_AT = "2026-07-03T00:00:00.000Z";
+const SCHEDULE_1_DUE = "2026-07-10T00:00:00.000Z";
+const SCHEDULE_2_DUE = "2026-10-10T00:00:00.000Z";
+
+/**
+ * Active contract with two unpaid installments (S5-12).
+ *
+ * WHY THIS EXISTS: nothing seeded a contract or a payment_schedules row, so
+ * /checkout/[bookingId] had NOTHING to render - and the coupon slot that lives
+ * on that screen could not be reached at all. A check aimed at the coupon path
+ * would pass by hitting an empty screen (trap 8). docs/06 already recorded the
+ * gap ("시드가 만들지 않는다"); S5-12 needs it, so S5-12 fills it.
+ *
+ * Rates are the LOCAL DEMO rates (O-02 is undecided) - a contract cannot go
+ * active without a rate snapshot, and inventing one in code is exactly what
+ * D-49/FIX-11 forbid. These live only in the seed.
+ */
+async function seedContractFixture(bookingId, totalAmount) {
+  if (!bookingId) return "skipped";
+
+  const upsert = (table, row) =>
+    rest(`${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(row),
+    });
+
+  const template = await rest("contract_templates?select=id,version&limit=1");
+  if (!Array.isArray(template) || template.length === 0) return "skipped (no template)";
+
+  await upsert("contracts", {
+    id: CONTRACT_ID,
+    booking_id: bookingId,
+    template_id: template[0].id,
+    template_version: template[0].version,
+    clauses_json: { note: "local demo contract" },
+    status: "active",
+    issued_at: CONTRACT_ISSUED_AT,
+    activated_at: CONTRACT_ACTIVATED_AT,
+    // 64 hex chars - contracts_hash_shape enforces the shape, not the value.
+    content_hash: "a".repeat(64),
+    total_amount: totalAmount,
+    applied_fee_rate_bp: 700,
+    // 0 means "no planner", NOT "not snapshotted yet" (null would mean that).
+    applied_planner_fee_rate_bp: 0,
+  });
+
+  // Two rounds, 20/80. Round 1 is due (payable now), round 2 is later.
+  //
+  // BOTH IN ONE STATEMENT: a trigger checks that ratio_bp sums to 10000 per
+  // contract on every row, so inserting them one at a time fails on the first.
+  await upsert("payment_schedules", [
+    {
+      id: SCHEDULE_1_ID,
+      contract_id: CONTRACT_ID,
+      seq: 1,
+      ratio_bp: 2000,
+      due_anchor: "on_contract",
+      due_offset_days: 0,
+      due_at: SCHEDULE_1_DUE,
+      amount: Math.floor(totalAmount * 0.2),
+      status: "scheduled",
+      paid_at: null,
+    },
+    {
+      id: SCHEDULE_2_ID,
+      contract_id: CONTRACT_ID,
+      seq: 2,
+      ratio_bp: 8000,
+      due_anchor: "before_event",
+      due_offset_days: 30,
+      due_at: SCHEDULE_2_DUE,
+      amount: totalAmount - Math.floor(totalAmount * 0.2),
+      status: "scheduled",
+      paid_at: null,
+    },
+  ]);
+
+  return "created";
+}
+
+// -- coupon fixture (S5-12) --------------------------------------------------
+const COUPON_PLATFORM_ID = "00000000-0000-0000-0000-0000000005c1";
+const COUPON_VENDOR_ID = "00000000-0000-0000-0000-0000000005c2";
+const COUPON_EXPIRED_ID = "00000000-0000-0000-0000-0000000005c3";
+const ISSUE_PLATFORM_ID = "00000000-0000-0000-0000-0000000005d1";
+const ISSUE_VENDOR_ID = "00000000-0000-0000-0000-0000000005d2";
+const ISSUE_EXPIRED_ID = "00000000-0000-0000-0000-0000000005d3";
+
+/**
+ * Coupon wallet fixture (F-C-35/36 - S5-12).
+ *
+ * WHY THIS EXISTS: /coupons and the checkout coupon slot both split rows into
+ * "usable" and "blocked with a reason". With an empty wallet BOTH branches are
+ * unreachable and any check aimed at them passes by hitting nothing (trap 8).
+ *
+ * Three issues on purpose:
+ *   platform - usable, cost carried by the platform (no vendor settlement hit)
+ *   vendor   - usable ONLY on that vendor's booking (FIX-45)
+ *   expired  - blocked, and the screen must SAY it is expired rather than hide it
+ *
+ * No redemption row is seeded: using a coupon is a payment-time event and
+ * seeding one would make "already used" true before anyone paid.
+ */
+async function seedCouponFixture(vendorId, coupleId) {
+  if (!vendorId || !coupleId) return "skipped";
+
+  const daysFromNow = (n) => new Date(Date.now() + n * 86400 * 1000).toISOString();
+  const upsert = (table, row) =>
+    rest(`${table}?on_conflict=id`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(row),
+    });
+
+  await upsert("coupons", {
+    id: COUPON_PLATFORM_ID,
+    issuer_type: "platform",
+    issuer_id: null,
+    name: "첫 거래 5만원 할인",
+    discount_type: "amount",
+    discount_value: 50000,
+    max_discount_amount: null,
+    min_order_amount: 100000,
+    issue_condition: "first_purchase",
+    status: "active",
+  });
+
+  await upsert("coupons", {
+    id: COUPON_VENDOR_ID,
+    issuer_type: "vendor",
+    issuer_id: vendorId,
+    name: "업체 10% 할인",
+    discount_type: "rate",
+    // rate coupons REQUIRE a cap (0032 CHECK) - an uncapped rate wipes settlement.
+    discount_value: 1000,
+    max_discount_amount: 300000,
+    min_order_amount: 0,
+    issue_condition: "contract_completed",
+    status: "active",
+  });
+
+  await upsert("coupons", {
+    id: COUPON_EXPIRED_ID,
+    issuer_type: "platform",
+    issuer_id: null,
+    name: "지난달 이벤트",
+    discount_type: "amount",
+    discount_value: 20000,
+    max_discount_amount: null,
+    min_order_amount: 0,
+    issue_condition: "period_event",
+    status: "active",
+  });
+
+  await upsert("coupon_issues", {
+    id: ISSUE_PLATFORM_ID,
+    coupon_id: COUPON_PLATFORM_ID,
+    couple_id: coupleId,
+    status: "issued",
+    expires_at: daysFromNow(30),
+  });
+  await upsert("coupon_issues", {
+    id: ISSUE_VENDOR_ID,
+    coupon_id: COUPON_VENDOR_ID,
+    couple_id: coupleId,
+    status: "issued",
+    // 5 days out - also exercises the "expiring soon" count.
+    expires_at: daysFromNow(5),
+  });
+  await upsert("coupon_issues", {
+    id: ISSUE_EXPIRED_ID,
+    coupon_id: COUPON_EXPIRED_ID,
+    couple_id: coupleId,
+    status: "issued",
+    expires_at: daysFromNow(-3),
+  });
+
+  return "created";
+}
 
 // -- monitoring fixture (S8-13) ---------------------------------------------
 /**
@@ -1402,7 +1597,11 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     // S5-10. A confirmed booking that was never accepted cannot happen through the
     // real flow any more - the vendor decides first. accepted_by stays null: we do
     // not invent who pressed it (the migration backfill does the same).
-    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
+    //
+    // FIXED timestamp on purpose: the decision trigger refuses to move accepted_at
+    // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
+    // fixture that only works on a clean database is a fixture that stops working.
+    accepted_at: ACCEPTED_AT_FIXTURE,
   });
   await upsert("bookings", {
     id: REVIEW_BOOKING_C,
@@ -1415,7 +1614,11 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     // S5-10. A confirmed booking that was never accepted cannot happen through the
     // real flow any more - the vendor decides first. accepted_by stays null: we do
     // not invent who pressed it (the migration backfill does the same).
-    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
+    //
+    // FIXED timestamp on purpose: the decision trigger refuses to move accepted_at
+    // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
+    // fixture that only works on a clean database is a fixture that stops working.
+    accepted_at: ACCEPTED_AT_FIXTURE,
   });
 
   await upsert("reviews", {
@@ -1688,7 +1891,16 @@ async function main() {
   );
 
   const monitoringSeed = await seedMonitoringFixture();
+  const couponSeed = await seedCouponFixture(vendor.id, linkedCouple);
+  const contractSeed = await seedContractFixture(METRIC_BOOKING_ID, 12000000);
 
+  console.log(`  contract fixture (S5-12): ${contractSeed}`);
+  console.log("    active contract + 2 unpaid installments (20/80) on the metrics booking");
+  console.log("               -> /checkout/[bookingId] finally has something to render");
+  console.log(`  coupon fixture (S5-12): ${couponSeed}`);
+  console.log("    3 issues: platform(usable) / vendor(usable on that vendor only) / expired(blocked)");
+  console.log("               -> both branches of the wallet are reachable, so checks cannot pass by hitting nothing");
+  console.log("");
   console.log(`  monitoring fixture (S8-13): ${monitoringSeed}`);
   console.log("    job_runs   : sla-escalation succeeded (purge-documents stays failed)");
   console.log("               -> /admin/ops shows more than one state, so the split is testable");

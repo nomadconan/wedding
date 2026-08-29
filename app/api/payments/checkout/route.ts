@@ -19,6 +19,10 @@ import { createClient } from "@/lib/supabase/server";
  * 요청은 **어느 회차를** 만 말한다. 금액은 계약이 정한 회차 금액이며 서버가 읽는다 —
  * 클라이언트가 보낸 숫자를 쓰면 고객이 스스로 금액을 적을 수 있다.
  *
+ * **쿠폰도 같다**(S5-12) — 받는 것은 발급분 id 뿐이고 할인액과 부담 주체는 서버가
+ * 결제 직전에 다시 정한다. 쓰지 못하는 쿠폰이면 **정가로 청구하지 않고 422 로 막는다** —
+ * 고객은 할인을 보고 눌렀고, 그대로 긁으면 본 금액과 다른 돈이 빠져나간다.
+ *
  * ── 순서 ────────────────────────────────────────────────────────────────────
  *  1. 세션 확인 → 2. 입력 검증 → 3. **RLS 로 대상 확인**(읽히면 당사자다) →
  *  4. **동의 기록** → 5. 결제 실행.
@@ -75,6 +79,8 @@ export async function POST(request: NextRequest) {
     scheduleId: parsed.data.scheduleId,
     actorId: user.id,
     attempt: parsed.data.attempt,
+    // **id 만 넘긴다.** 할인액·부담 주체는 서버가 결제 직전에 다시 정한다(S5-12).
+    couponIssueId: parsed.data.couponIssueId ?? null,
   });
 
   if (isChargeFailure(result)) return fail(result.status, result.code, result.message);
