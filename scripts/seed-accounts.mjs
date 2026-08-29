@@ -541,6 +541,8 @@ const METRIC_PRODUCT_ID = "00000000-0000-0000-0000-00000000d001";
 const METRIC_CART_ID = "00000000-0000-0000-0000-00000000d002";
 const METRIC_INQUIRY_ID = "00000000-0000-0000-0000-00000000d003";
 const METRIC_BOOKING_ID = "00000000-0000-0000-0000-00000000d004";
+// S5-10. Still in `hold` with no vendor decision - the "pending" lane fixture.
+const PENDING_BOOKING_ID = "00000000-0000-0000-0000-0000000005a0";
 const METRIC_DOCUMENT_ID = "00000000-0000-0000-0000-00000000d005";
 const METRIC_ANALYSIS_ID = "00000000-0000-0000-0000-00000000d006";
 
@@ -619,6 +621,26 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     status: "confirmed",
     total_amount: 12000000,
     deposit_amount: 2400000,
+    // S5-10. A confirmed booking that was never accepted cannot happen through the
+    // real flow any more - the vendor decides first. accepted_by stays null: we do
+    // not invent who pressed it (the migration backfill does the same).
+    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
+  });
+
+  // S5-10. A booking still WAITING for the vendor's decision.
+  //
+  // WHY THIS EXISTS: /vendor/bookings splits four ways and the whole point of the
+  // task is the "pending" lane. With every seeded booking already confirmed, the
+  // approve/decline path is never exercised and a check aimed at it would pass by
+  // hitting nothing (trap 8). accepted_at/declined_at stay null on purpose.
+  await upsert("bookings", {
+    id: PENDING_BOOKING_ID,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    product_id: METRIC_PRODUCT_ID,
+    status: "hold",
+    total_amount: 3800000,
+    deposit_amount: 380000,
   });
 
   // purge_scheduled_at is REQUIRED (CLAUDE.md 5.1) - a documents row without it
@@ -1377,6 +1399,10 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     status: "fulfilled",
     total_amount: 9800000,
     deposit_amount: 1960000,
+    // S5-10. A confirmed booking that was never accepted cannot happen through the
+    // real flow any more - the vendor decides first. accepted_by stays null: we do
+    // not invent who pressed it (the migration backfill does the same).
+    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
   });
   await upsert("bookings", {
     id: REVIEW_BOOKING_C,
@@ -1386,6 +1412,10 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     status: "confirmed",
     total_amount: 11200000,
     deposit_amount: 2240000,
+    // S5-10. A confirmed booking that was never accepted cannot happen through the
+    // real flow any more - the vendor decides first. accepted_by stays null: we do
+    // not invent who pressed it (the migration backfill does the same).
+    accepted_at: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
   });
 
   await upsert("reviews", {

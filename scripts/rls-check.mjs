@@ -2590,14 +2590,20 @@ if (!vendorStaff || !adminUser) {
         rollback;`)),
   );
 
-  // ── 당사자는 자기 수수료율을 쓸 수 없다 (컬럼 수준 권한) ──────────────────
+  // ── 당사자는 예약을 직접 쓸 수 없다 (0065 · FIX-44) ───────────────────────
+  //
+  // **이 자리에 있던 검사가 구멍을 정상 동작으로 적고 있었다.** 원문은 "커플 소유자는
+  // 예약 상태를 바꿀 수 있다" 였고 실제로 통했다 — 그리고 그 길로 `status='confirmed'`
+  // 를 만들면 `reviews_insert` 가 검증 후기 자격을 내줬다. 검사가 지키던 것이 지켜야
+  // 할 것의 반대였던 셈이라, 뜻을 뒤집어 다시 쓴다.
   check(
-    "커플 소유자는 예약 상태를 바꿀 수 있다",
-    asUser(owner, `with u as (update public.bookings set status = 'cancelled'
-       where id = '${PB}' returning id) select count(*) from u;`, payFixture) === "1",
+    "**커플 소유자는 예약 상태를 바꿀 수 없다** (FIX-44 — 이 길로 후기 자격을 위조할 수 있었다)",
+    rejectedWith(/permission denied|row-level security|42501/i, () =>
+      asUser(owner, `update public.bookings set status = 'cancelled' where id = '${PB}';`,
+        payFixture)),
   );
   check(
-    "커플 소유자는 **요율 컬럼을 쓸 수 없다** (42501 — 정책이 아니라 컬럼 권한이 막는다)",
+    "커플 소유자는 **요율 컬럼도 쓸 수 없다** (0065 이후에는 표 전체가 닫혔다)",
     rejectedWith(/permission denied|42501/i, () =>
       asUser(owner, `update public.bookings set applied_fee_rate_bp = 0 where id = '${PB}';`,
         payFixture)),
@@ -10045,6 +10051,259 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0064 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S5-10 — 예약 승인·거절 (F-V-08 · 0065 · **FIX-44**)
+//
+// **이번 감사는 잠재된 구멍이 아니라 오늘 통하는 경로를 찾았다.** 커플 구성원이
+// 업체 동의 없이 `status='confirmed'` 예약을 만들 수 있었고, `reviews_insert` 가
+// 그 상태를 후기 자격으로 삼으므로 **거래한 적 없는 업체에 검증 후기를 남길 수
+// 있었다.** 아래 검사들이 그 길이 다시 열리지 않는지 본다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const outsiderId = idOf("couple-a@local.test");
+  const bookingVendorId = sql(`select vendor_id from public.bookings
+                                 where couple_id = '${coupleId}' limit 1;`);
+  // **상태별로 따로 잡는다.** 아무 예약이나 집으면 이미 승인된 행을 집어
+  // `bookings_decision_shape` 가 **먼저** 걸리고, 그러면 정작 보려던 CHECK 은 확인하지
+  // 못한 채 검사가 통과한다(함정 8 · S8-13 이 같은 자리에서 물렸다).
+  const pendingBookingId = sql(`select id from public.bookings
+                                  where accepted_at is null and declined_at is null limit 1;`);
+  const acceptedBookingId = sql(`select id from public.bookings
+                                   where accepted_at is not null limit 1;`);
+
+  // ── 층 1: 당사자 직접 쓰기가 걷혔는가 ─────────────────────────────────────
+  check(
+    "**bookings 에 authenticated 쓰기 권한이 없다** (INSERT·UPDATE·DELETE 전부)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'bookings'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**컬럼 권한도 남아 있지 않다** — `revoke` 를 표에만 걸면 컬럼 GRANT 가 따로 산다(FIX-36)",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'bookings'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**anon 은 SELECT 도 못 한다** — 정책이 없어 지금도 안 보이지만 GRANT 가 남으면 정책 한 줄로 열린다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'bookings'
+             and grantee = 'anon' and privilege_type = 'SELECT';`) === "0",
+  );
+  check(
+    "**쓰기 정책도 함께 걷었다** — GRANT 만 회수하고 정책을 남기면 같은 구멍이 조용히 되살아난다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'bookings'
+             and cmd in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+
+  // ── FIX-44 재현: 위조 경로가 실제로 막혔는가 ──────────────────────────────
+  check(
+    "**FIX-44 — 커플이 확정 예약을 스스로 만들 수 없다**(재현 확인된 경로다)",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(
+        owner,
+        `insert into public.bookings (couple_id, vendor_id, status, total_amount, deposit_amount)
+           values ('${coupleId}', '${bookingVendorId}', 'confirmed', 0, 0);`,
+      ),
+    ),
+  );
+  check(
+    "**커플이 자기 예약의 상태를 바꿀 수 없다** — 'fulfilled' 로 옮겨 후기 자격을 얻는 길도 막힌다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `update public.bookings set status = 'fulfilled';`),
+    ),
+  );
+  check(
+    "**업체도 예약 상태를 직접 못 바꾼다** — 승인은 서비스롤 경로가 사유·시각과 함께 남긴다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(vendorOwner, `update public.bookings set status = 'confirmed';`),
+    ),
+  );
+  check(
+    "**아무도 예약을 지우지 못한다** — cascade 가 계약·분쟁·에스크로·후기를 함께 지운다(D-23)",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(owner, `delete from public.bookings;`),
+    ) &&
+      rejectedWith(/permission denied|row-level security/i, () =>
+        asUser(vendorOwner, `delete from public.bookings;`),
+      ),
+  );
+  check(
+    "**cascade 를 쥔 자식 표를 센다** — 예약 하나가 지워지면 함께 사라지는 표가 다섯이다",
+    Number(sql(`select count(*) from pg_constraint
+                  where confrelid = 'public.bookings'::regclass and contype = 'f'
+                    and confdeltype = 'c';`)) >= 5,
+  );
+
+  // ── 읽기는 그대로 열려 있는가 (막기만 하고 못 읽게 하면 화면이 죽는다) ────
+  check(
+    "**커플은 자기 예약을 읽는다** — 걷은 것은 쓰기지 읽기가 아니다",
+    Number(asUser(owner, `select count(*) from public.bookings;`)) >= 1,
+  );
+  check(
+    "**업체는 자기 예약을 읽는다**",
+    Number(asUser(vendorOwner, `select count(*) from public.bookings;`)) >= 1,
+  );
+  check(
+    "**남은 남의 예약을 못 읽는다**",
+    asUser(outsiderId, `select count(*) from public.bookings;`) === "0",
+  );
+
+  // ── 층 2 (FIX-41): 정책이 부모의 정책에 기대는가 ──────────────────────────
+  check(
+    "**bookings_select 가 소유자 조건을 스스로 들고 있다** — 부모 표를 훑는 모양이 아니다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'bookings'
+             and coalesce(qual, '') like '%is_couple_member%'
+             and coalesce(qual, '') like '%is_vendor_member%';`) === "1",
+  );
+
+  // ── 결정 컬럼: 허용 조합만 선다 ───────────────────────────────────────────
+  check(
+    "**사유 없는 거절을 표가 거부한다**(D-24)",
+    rejectedWith(/bookings_decline_shape/, () =>
+      sql(`update public.bookings set declined_at = now(), status = 'cancelled'
+             where id = '${pendingBookingId}';`),
+    ),
+  );
+  check(
+    "**승인과 거절이 동시에 설 수 없다**",
+    rejectedWith(/bookings_decision_shape|bookings_declined_status_shape/, () =>
+      sql(`update public.bookings
+              set accepted_at = now(), accepted_by = null,
+                  declined_at = now(), decline_reason = '동시에 서는지 본다'
+            where id = '${pendingBookingId}';`),
+    ),
+  );
+  check(
+    "**거절해 두고 예약이 살아 있을 수 없다** — 진행 중으로 그려지고 재고도 잡힌 채 남는다",
+    rejectedWith(/bookings_declined_status_shape/, () =>
+      sql(`update public.bookings
+              set declined_at = now(), decline_reason = '상태를 안 옮기면 어떻게 되는지 본다'
+            where id = '${pendingBookingId}';`),
+    ),
+  );
+  check(
+    "**승인자 없이 승인 시각만 있는 것은 허용한다** — 0065 이관분이고 사람을 지어내지 않았다",
+    sql(`select count(*) from pg_constraint where conname = 'bookings_accept_shape';`) === "1",
+  );
+
+  // ── 결정은 되돌릴 수 없다 (서비스롤이 RLS 를 비켜 가므로 트리거가 마지막이다) ──
+  check(
+    "**이미 승인한 예약의 승인 시각을 바꿀 수 없다**(D-23) — 서비스롤로도 막힌다",
+    rejectedWith(/bookings_accept_immutable|바꿀 수 없습니다/, () =>
+      sql(`update public.bookings set accepted_at = now() - interval '10 days'
+             where id = '${acceptedBookingId}';`),
+    ),
+  );
+
+  // ── 이관이 실제로 됐는가 ──────────────────────────────────────────────────
+  check(
+    "**hold 를 지난 예약은 승인을 거친 것으로 이관됐다** — 안 하면 기존 예약이 전부 '승인 대기' 로 뜬다",
+    sql(`select count(*) from public.bookings
+           where status in ('confirmed', 'fulfilled') and accepted_at is null;`) === "0",
+  );
+  check(
+    "**이관분은 승인자를 비워 뒀다** — 누르지도 않은 승인을 누른 것으로 만들지 않는다",
+    Number(sql(`select count(*) from public.bookings
+                  where accepted_at is not null and accepted_by is null;`)) >= 1,
+  );
+
+  // ── 어휘가 코드와 표에서 같은가 ───────────────────────────────────────────
+  {
+    const consoleSrc = readFileSync("lib/core/booking/console.ts", "utf8");
+    const enumLabels = sql(`select string_agg(e.enumlabel, ',' order by e.enumsortorder)
+                              from pg_enum e join pg_type t on t.oid = e.enumtypid
+                             where t.typname = 'booking_status';`);
+
+    check(
+      "**코드의 상태 어휘가 열거형과 같다** — 갈리면 화면이 모르는 상태가 생긴다",
+      enumLabels
+        .split(",")
+        .every((label) => consoleSrc.includes(`"${label}"`)),
+    );
+    check(
+      "**후기 자격 목록이 예약 상태 안에 있다** — 정책과 코드가 같은 값을 본다",
+      readFileSync("lib/core/review/write.ts", "utf8").includes('["confirmed", "fulfilled"]'),
+    );
+  }
+
+  // ── 승인이 계약 발행의 선행인가 (승인 버튼이 장식이 아닌가) ───────────────
+  check(
+    "**승인 없이는 계약을 발행할 수 없다** — 이 문이 없으면 승인 버튼이 장식이다",
+    readFileSync("lib/contract/actions.ts", "utf8").includes("CONTRACT_BOOKING_NOT_ACCEPTED"),
+  );
+  check(
+    "**결정 자격을 순수 함수 하나가 판정한다** — 화면과 API 가 다른 답을 내면 버튼이 눌리지 않는다",
+    readFileSync("lib/bookings/vendor.ts", "utf8").includes("canDecide(") &&
+      readFileSync("app/(vendor)/vendor/bookings/page.tsx", "utf8").includes("row.canDecide"),
+  );
+
+  // ── 증적 ──────────────────────────────────────────────────────────────────
+  check(
+    "**승인·거절을 entity_events 에 남긴다** — 예약에는 지금까지 전이 기록이 아예 없었다",
+    readFileSync("lib/bookings/vendor.ts", "utf8").includes('entityType: "booking"') &&
+      readFileSync("lib/audit/record.ts", "utf8").includes('| "booking"'),
+  );
+  check(
+    "**거절 사유 본문을 이벤트에 담지 않는다**(§5.3) — 사유는 표가 갖고 이벤트는 사실만 남긴다",
+    !readFileSync("lib/bookings/vendor.ts", "utf8").includes("memo: reason"),
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check("`/bookings` 목록 화면이 실재한다", existsSync("app/(consumer)/bookings/page.tsx"));
+  check("`/bookings/[id]` 상세 화면이 실재한다", existsSync("app/(consumer)/bookings/[id]/page.tsx"));
+  check("`/vendor/bookings` 화면이 실재한다", existsSync("app/(vendor)/vendor/bookings/page.tsx"));
+  check(
+    "**`/me` 가 예약 목록을 가리킨다** — 하단 탭은 다섯 칸이 차서 여기가 진입점이다(D-55)",
+    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/bookings"'),
+  );
+  check(
+    "**예약 상세가 다섯 진입점을 전부 그린다** — 이 화면이 없어서 다섯이 도달 불가였다(FIX-25)",
+    ["contract", "checkout", "cancel", "escrow", "review"].every((key) =>
+      readFileSync("lib/core/booking/console.ts", "utf8").includes(`"${key}"`),
+    ),
+  );
+  check(
+    "**막힌 진입점에도 이유가 붙는다** — 감추면 '그런 기능이 없다' 로 읽힌다",
+    readFileSync("app/(consumer)/bookings/[id]/page.tsx", "utf8").includes("entry.blocked"),
+  );
+  check(
+    "예약 화면 셋이 캐시되지 않는다 (승인·결제 상태가 바뀌는 화면이다)",
+    ["app/(consumer)/bookings/page.tsx", "app/(consumer)/bookings/[id]/page.tsx",
+     "app/(vendor)/vendor/bookings/page.tsx"].every((path) =>
+      readFileSync(path, "utf8").includes('export const dynamic = "force-dynamic"'),
+    ),
+  );
+  check(
+    "**FIX-23 의 죽은 링크 하나가 사라졌다** — `VENDOR_NAV` 의 `/vendor/bookings` 가 이제 실재한다",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/bookings"') &&
+      existsSync("app/(vendor)/vendor/bookings/page.tsx"),
+  );
+
+  // ── 픽스처 — **이미 실패 상태인 것만 보면 검사가 통과한다**(함정 8) ───────
+  check(
+    "**승인 대기 예약이 시드에 있다** — 전부 확정 상태면 승인 경로가 도는지 확인할 수 없다",
+    Number(sql(`select count(*) from public.bookings
+                  where status = 'hold' and accepted_at is null and declined_at is null;`)) >= 1,
+  );
+  check(
+    "**상태가 두 갈래 이상이다** — 한 갈래뿐이면 보드가 갈라 그리는지 확인할 수 없다",
+    Number(sql(`select count(distinct status) from public.bookings;`)) >= 2,
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0065 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

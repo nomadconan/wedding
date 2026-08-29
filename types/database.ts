@@ -337,10 +337,14 @@ export type Database = {
       }
       bookings: {
         Row: {
+          accepted_at: string | null
+          accepted_by: string | null
           applied_fee_rate_bp: number | null
           applied_planner_fee_rate_bp: number | null
           couple_id: string
           created_at: string
+          decline_reason: string | null
+          declined_at: string | null
           deposit_amount: number
           id: string
           product_id: string | null
@@ -351,10 +355,14 @@ export type Database = {
           vendor_id: string
         }
         Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
           applied_fee_rate_bp?: number | null
           applied_planner_fee_rate_bp?: number | null
           couple_id: string
           created_at?: string
+          decline_reason?: string | null
+          declined_at?: string | null
           deposit_amount?: number
           id?: string
           product_id?: string | null
@@ -365,10 +373,14 @@ export type Database = {
           vendor_id: string
         }
         Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
           applied_fee_rate_bp?: number | null
           applied_planner_fee_rate_bp?: number | null
           couple_id?: string
           created_at?: string
+          decline_reason?: string | null
+          declined_at?: string | null
           deposit_amount?: number
           id?: string
           product_id?: string | null
