@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Star,
   Store,
+  Ticket,
   Tag,
   ToggleLeft,
   Activity,
@@ -77,6 +78,9 @@ const VENDOR_NAV: NavItem[] = [
   // 다음 화면이 자연스럽다. 커뮤니티 태그와 다르다: 그쪽은 미검증 경험담이고
   // 이쪽은 **거래가 확인된 평가**이며, 할 수 있는 일도 답변과 신고로 다르다(F-V-11).
   { href: "/vendor/reviews", label: "후기·평판", icon: Star },
+  // S5-13. **정산 바로 위**다 — 업체 쿠폰의 할인액은 **그 업체의 정산에서
+  // 빠진다**(D-27). 둘이 같은 돈을 다른 각도로 보는 화면이라 붙여 둔다.
+  { href: "/vendor/coupons", label: "쿠폰", icon: Ticket },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },
   { href: "/vendor/members", label: "멤버 관리", icon: Users },

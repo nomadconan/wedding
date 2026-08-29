@@ -10602,5 +10602,264 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// S5-13 — 업체 쿠폰 발행·관리 (F-V-19 · 0067)
+//
+// 이 태스크가 허용하는 것은 **자기 업체 이름으로 쿠폰을 만들고 고치는 일**이고,
+// 그 자격의 근거는 `is_vendor_owner(issuer_id)` → **`vendor_members`** 다.
+// 그래서 세 층을 각각 본다: 쿠폰 표의 권한 · 정책이 기대는 것 · **근거 표**.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = idOf("vendor@local.test");
+  const vendorStaffId = idOf("staff@local.test");
+  const seedVendorId = sql(`select id from public.vendors
+                              where id = (select vendor_id from public.vendor_members
+                                            where user_id = '${vendorOwner}' limit 1);`);
+  const frozenCouponId = sql(`select id from public.coupons
+                                where issuer_type = 'vendor' and issued_count > 0 limit 1;`);
+  const freshCouponId = sql(`select id from public.coupons
+                               where issuer_type = 'vendor' and issued_count = 0 limit 1;`);
+
+  // ── 층 3 (FIX-44): 자격의 근거가 되는 표를 스스로 쓸 수 있는가 ────────────
+  //
+  // `is_vendor_owner` 가 `vendor_members` 를 읽는다. 그 표에 자기를 대표로 써 넣을 수
+  // 있으면 **이 태스크의 모든 검사가 아무것도 검사하지 않는다.**
+  // **거절이 아니라 0행이다.** `vendor_members_update` 의 `using` 이 대표가 아닌
+  // 세션에게 그 행을 아예 안 보여주므로 UPDATE 는 **아무것도 안 바꾸고 성공한다** —
+  // 예외를 기대하면 막혀 있는데도 검사가 실패한다(실제로 그렇게 물렸다). 그래서
+  // **바뀌었는가**를 직접 본다: 그것이 이 검사가 확인하려던 사실이다.
+  check(
+    "**스태프가 자기를 대표로 승격할 수 없다** — 승격은 대표만 한다",
+    asUser(
+      vendorStaffId,
+      `update public.vendor_members set vendor_role = 'owner'
+         where user_id = '${vendorStaffId}';
+       select vendor_role from public.vendor_members where user_id = '${vendorStaffId}';`,
+    ) === "staff",
+  );
+  check(
+    "**스태프가 자기를 다른 업체의 대표로 넣을 수 없다**",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        vendorStaffId,
+        `insert into public.vendor_members (vendor_id, user_id, vendor_role)
+           values ('${seedVendorId}', '${vendorStaffId}', 'owner');`,
+      ),
+    ),
+  );
+  check(
+    "**남이 남의 업체에 스스로 들어갈 수 없다** — 첫 대표는 입점 심사가 만든다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.vendor_members (vendor_id, user_id, vendor_role)
+           values ('${seedVendorId}', '${owner}', 'owner');`,
+      ),
+    ),
+  );
+  check(
+    "**대표도 남의 업체로 멤버 행을 옮길 수 없다** — with check 가 바뀐 뒤의 행을 본다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        vendorOwner,
+        `update public.vendor_members set vendor_id = gen_random_uuid()
+           where user_id = '${vendorStaffId}';`,
+      ),
+    ),
+  );
+
+  // ── 층 1: 쿠폰 표의 권한 (0066 이 좁힌 것이 그대로인가) ───────────────────
+  check(
+    "**coupons 에 표 단위 INSERT·UPDATE 가 없다** — 있으면 컬럼 회수가 무효가 된다(FIX-36)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'coupons'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**issued_count 는 여전히 아무도 못 쓴다** — 0 으로 되돌리면 수량 제한이 무력해진다",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'coupons'
+             and column_name = 'issued_count' and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE');`) === "0",
+  );
+  check(
+    "**issuer_id·issuer_type 은 만들 때만 정한다** — 나중에 남의 업체로 비용을 넘길 수 없다",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'coupons'
+             and column_name in ('issuer_id', 'issuer_type')
+             and grantee = 'authenticated' and privilege_type = 'UPDATE';`) === "0",
+  );
+
+  // ── 적격성: "누구의 것인가" 가 빠지지 않았는가 (FIX-45 가 가르친 것) ──────
+  check(
+    "**남의 업체 이름으로 쿠폰을 만들 수 없다** — 할인액은 그 업체 정산에서 나간다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.coupons
+           (issuer_type, issuer_id, name, discount_type, discount_value,
+            max_discount_amount, min_order_amount, issue_condition, status)
+         values ('vendor', '${seedVendorId}', '남의이름', 'amount', 50000, null, 0,
+                 'first_purchase', 'active');`,
+      ),
+    ),
+  );
+  check(
+    "**스태프는 쿠폰을 만들 수 없다** — 대표만 한다(§3.9)",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        vendorStaffId,
+        `insert into public.coupons
+           (issuer_type, issuer_id, name, discount_type, discount_value,
+            max_discount_amount, min_order_amount, issue_condition, status)
+         values ('vendor', '${seedVendorId}', '스태프쿠폰', 'amount', 50000, null, 0,
+                 'first_purchase', 'active');`,
+      ),
+    ),
+  );
+  check(
+    "**업체가 플랫폼 이름으로 쿠폰을 만들 수 없다** — 비용을 플랫폼에 떠넘기는 길이다",
+    rejectedWith(/row-level security|permission denied|coupons_issuer_shape/i, () =>
+      asUser(
+        vendorOwner,
+        `insert into public.coupons
+           (issuer_type, issuer_id, name, discount_type, discount_value,
+            max_discount_amount, min_order_amount, issue_condition, status)
+         values ('platform', null, '플랫폼사칭', 'amount', 50000, null, 0,
+                 'first_purchase', 'active');`,
+      ),
+    ),
+  );
+
+  // ── 정산 차감액은 대표 전용인가 (§3.9 · 0067) ────────────────────────────
+  check(
+    "**스태프는 사용 기록(=금액)을 못 본다** — 행이 보이면 금액이 보인다",
+    asUser(vendorStaffId, `select count(*) from public.coupon_redemptions;`) === "0",
+  );
+  check(
+    "**스태프도 발급 현황은 본다** — 금액 없이 '쓰였는가' 는 답할 수 있어야 한다",
+    Number(asUser(vendorStaffId, `select count(*) from public.coupon_issues;`)) >= 1,
+  );
+  check(
+    "**업체 열람 정책이 대표 조건을 들고 있다**(0067)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'coupon_redemptions'
+             and policyname = 'coupon_redemptions_select_vendor'
+             and coalesce(qual, '') like '%is_vendor_owner%';`) === "1",
+  );
+
+  // ── 발급이 시작되면 돈에 관한 조건이 얼어붙는가 ──────────────────────────
+  check(
+    "**발급된 쿠폰의 할인액을 바꿀 수 없다** — 받은 사람이 본 약속이 달라진다",
+    rejectedWith(/발급된 쿠폰|coupons_terms_frozen/, () =>
+      sql(`update public.coupons set discount_value = 1 where id = '${frozenCouponId}';`),
+    ),
+  );
+  check(
+    "**최소 주문 금액도 얼어 있다** — 올리면 이미 받은 쿠폰이 조용히 못 쓰게 된다",
+    rejectedWith(/발급된 쿠폰|coupons_terms_frozen/, () =>
+      sql(`update public.coupons set min_order_amount = 99999999 where id = '${frozenCouponId}';`),
+    ),
+  );
+  check(
+    "**중단은 얼어 있어도 할 수 있다** — 새 발급을 멈출 뿐 받은 것은 그대로다",
+    sql(`begin;
+           update public.coupons set status = 'paused' where id = '${frozenCouponId}';
+         rollback; select 1;`) === "1",
+  );
+  check(
+    "**수량 증량·종료일 연장도 할 수 있다** — 받은 약속을 줄이지 않는다",
+    sql(`begin;
+           update public.coupons
+              set total_quantity = 9999, valid_to = now() + interval '90 days'
+            where id = '${frozenCouponId}';
+         rollback; select 1;`) === "1",
+  );
+  check(
+    "**아직 안 나간 쿠폰은 얼마든지 고친다** — 만들다 만 것까지 묶을 이유는 없다",
+    sql(`begin;
+           update public.coupons set discount_value = 12345 where id = '${freshCouponId}';
+         rollback; select 1;`) === "1",
+  );
+
+  // ── 리뷰 대가 금지가 세 층에서 같은가 (§7.7 · D-03) ──────────────────────
+  check(
+    "**DB CHECK 이 리뷰 조건을 막는다** (최종 경계)",
+    rejectedWith(/coupons_issue_condition_values/, () =>
+      sql(`insert into public.coupons
+             (issuer_type, issuer_id, name, discount_type, discount_value,
+              max_discount_amount, min_order_amount, issue_condition, status)
+           values ('vendor', '${seedVendorId}', '후기쿠폰', 'amount', 5000, null, 0,
+                   'review_written', 'active');`),
+    ),
+  );
+  check(
+    "**순수 함수가 리뷰 조건을 막는다** (화면·API 가 쓰는 층)",
+    readFileSync("lib/core/coupon/issue.ts", "utf8").includes("review_reward") &&
+      readFileSync("lib/core/coupon/issue.ts", "utf8").includes("isReviewRewardCondition"),
+  );
+  check(
+    "**업체 선택지에 리뷰도 manual_grant 도 없다** (화면 층)",
+    !readFileSync("lib/core/coupon/coupon.ts", "utf8").match(
+      /VENDOR_ISSUE_CONDITIONS[\s\S]{0,200}review/i,
+    ),
+  );
+  check(
+    "**정률에 상한이 없으면 DB 가 막는다** — 상한 없는 정률은 정산을 통째로 지운다",
+    rejectedWith(/coupons_max_discount_shape/, () =>
+      sql(`insert into public.coupons
+             (issuer_type, issuer_id, name, discount_type, discount_value,
+              max_discount_amount, min_order_amount, issue_condition, status)
+           values ('vendor', '${seedVendorId}', '상한없는정률', 'rate', 1000, null, 0,
+                   'first_purchase', 'active');`),
+    ),
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check("`/vendor/coupons` 화면이 실재한다", existsSync("app/(vendor)/vendor/coupons/page.tsx"));
+  check(
+    "**내비가 `/vendor/coupons` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/coupons"'),
+  );
+  check(
+    "쿠폰 화면이 캐시되지 않는다 (소진·만료가 시계로 판정되는 화면이다)",
+    readFileSync("app/(vendor)/vendor/coupons/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**발급 실행 경로가 없다는 사실이 API 응답 본문에 실린다**(함정 3 · FIX-46)",
+    readFileSync("lib/coupons/vendor.ts", "utf8").includes("issuanceWired: false"),
+  );
+  check(
+    "**못 보는 차감액을 0 으로 내려보내지 않는다**(함정 2) — 대표가 아니면 null 이다",
+    readFileSync("lib/coupons/vendor.ts", "utf8").includes("input.isOwner ?") &&
+      readFileSync("lib/coupons/vendor.ts", "utf8").includes("deductedAmount: input.isOwner"),
+  );
+  check(
+    "**issuer_id 를 입력으로 받지 않는다** — 세션이 정한다(비용을 지는 쪽과 만드는 쪽이 같다)",
+    !readFileSync("app/api/vendor/coupons/route.ts", "utf8").includes("issuerId"),
+  );
+
+  // ── 픽스처 — **양쪽 갈래가 다 닿아야 검사가 뭔가를 본다**(함정 8) ────────
+  check(
+    "**얼어붙은 쿠폰과 아직 안 나간 쿠폰이 둘 다 시드에 있다**",
+    frozenCouponId !== "" && freshCouponId !== "",
+  );
+  check(
+    "**업체 쿠폰과 플랫폼 쿠폰이 둘 다 있다** — 부담 주체 분기를 둘 다 눈다",
+    sql(`select count(*) from public.coupons where issuer_type = 'vendor';`) !== "0" &&
+      sql(`select count(*) from public.coupons where issuer_type = 'platform';`) !== "0",
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0067 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);
