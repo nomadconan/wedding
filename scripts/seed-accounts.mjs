@@ -1071,6 +1071,8 @@ async function seedContractFixture(bookingId, totalAmount) {
 const COUPON_PLATFORM_ID = "00000000-0000-0000-0000-0000000005c1";
 const COUPON_VENDOR_ID = "00000000-0000-0000-0000-0000000005c2";
 const COUPON_EXPIRED_ID = "00000000-0000-0000-0000-0000000005c3";
+// S5-13. Vendor coupon with no issues - exercises the editable (not frozen) branch.
+const COUPON_VENDOR_FRESH_ID = "00000000-0000-0000-0000-0000000005c4";
 const ISSUE_PLATFORM_ID = "00000000-0000-0000-0000-0000000005d1";
 const ISSUE_VENDOR_ID = "00000000-0000-0000-0000-0000000005d2";
 const ISSUE_EXPIRED_ID = "00000000-0000-0000-0000-0000000005d3";
@@ -1125,6 +1127,25 @@ async function seedCouponFixture(vendorId, coupleId) {
     max_discount_amount: 300000,
     min_order_amount: 0,
     issue_condition: "contract_completed",
+    status: "active",
+  });
+
+  // S5-13. A vendor coupon with NO issues yet - the "editable" branch.
+  //
+  // WHY: /vendor/coupons splits rows into frozen (issued_count > 0) and editable.
+  // COUPON_VENDOR_ID already has an issue, so without this row the editable
+  // branch is unreachable and a check aimed at it passes by hitting nothing.
+  await upsert("coupons", {
+    id: COUPON_VENDOR_FRESH_ID,
+    issuer_type: "vendor",
+    issuer_id: vendorId,
+    name: "재구매 감사 쿠폰",
+    discount_type: "amount",
+    discount_value: 30000,
+    max_discount_amount: null,
+    min_order_amount: 500000,
+    issue_condition: "repeat_purchase",
+    total_quantity: 50,
     status: "active",
   });
 
@@ -1898,7 +1919,8 @@ async function main() {
   console.log("    active contract + 2 unpaid installments (20/80) on the metrics booking");
   console.log("               -> /checkout/[bookingId] finally has something to render");
   console.log(`  coupon fixture (S5-12): ${couponSeed}`);
-  console.log("    3 issues: platform(usable) / vendor(usable on that vendor only) / expired(blocked)");
+  console.log("    4 coupons / 3 issues: platform(usable) / vendor(usable on that vendor only) / expired(blocked)");
+  console.log("               + 1 vendor coupon with NO issues -> the editable branch of /vendor/coupons");
   console.log("               -> both branches of the wallet are reachable, so checks cannot pass by hitting nothing");
   console.log("");
   console.log(`  monitoring fixture (S8-13): ${monitoringSeed}`);
