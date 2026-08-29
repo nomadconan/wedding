@@ -20,7 +20,10 @@ import {
   MEMBERSHIP_REASON_NOTE,
   daysLeft,
 } from "@/lib/core/membership/membership";
-import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
+import {
+  isOnboardingComplete,
+  type OnboardingQuestion,
+} from "@/lib/core/schemas/onboarding";
 import { findMyCouple } from "@/lib/couple/membership";
 import { loadMembership } from "@/lib/membership/actions";
 import { loadReviewableBookings } from "@/lib/reviews/read";
@@ -28,7 +31,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 
-import { OnboardingStepper, type SavedAnswer } from "../../(auth)/onboarding/OnboardingStepper";
+import {
+  OnboardingStepper,
+  type SavedAnswer,
+} from "../../(auth)/onboarding/OnboardingStepper";
 import { MeForms } from "./MeForms";
 
 export const metadata: Metadata = {
@@ -50,7 +56,15 @@ export default async function MePage() {
 
   return (
     <ConsumerShell title="마이페이지">
-      <Suspense fallback={<LoadingState label="내 정보를 불러오는 중" rows={4} variant="block" />}>
+      <Suspense
+        fallback={
+          <LoadingState
+            label="내 정보를 불러오는 중"
+            rows={4}
+            variant="block"
+          />
+        }
+      >
         <MeSection />
       </Suspense>
     </ConsumerShell>
@@ -90,11 +104,15 @@ async function MeSection() {
         .eq("couple_id", membership.coupleId)
     : { data: [] };
 
-  const answers = ((answerRows ?? []) as { question_key: string; answer_json: Record<string, unknown> }[])
-    .map((row) => ({
-      question: row.question_key as OnboardingQuestion,
-      ...row.answer_json,
-    })) as SavedAnswer[];
+  const answers = (
+    (answerRows ?? []) as {
+      question_key: string;
+      answer_json: Record<string, unknown>;
+    }[]
+  ).map((row) => ({
+    question: row.question_key as OnboardingQuestion,
+    ...row.answer_json,
+  })) as SavedAnswer[];
 
   const { data: consents } = await supabase
     .from("consents")
@@ -115,7 +133,9 @@ async function MeSection() {
   }[];
 
   // 후기 진입점(S8-11). 커플이 없으면 거래도 없다.
-  const reviewable = membership ? await loadReviewableBookings(membership.coupleId) : [];
+  const reviewable = membership
+    ? await loadReviewableBookings(membership.coupleId)
+    : [];
 
   const openRequest = allRequests.find(
     (row) => row.status === "pending" || row.status === "in_progress",
@@ -132,7 +152,9 @@ async function MeSection() {
           marketingOptIn: Boolean(profile?.marketing_opt_in),
         }}
         couple={
-          membership ? { role: membership.role, memberCount: memberCount ?? 0 } : null
+          membership
+            ? { role: membership.role, memberCount: memberCount ?? 0 }
+            : null
         }
         openRequest={
           openRequest
@@ -170,7 +192,10 @@ async function MeSection() {
                 {daysLeft(subscription.expiresAt, now.toISOString())}일 남았어요
               </p>
             ) : null}
-            <Link href="/membership" className="text-sm font-medium text-brand-600">
+            <Link
+              href="/membership"
+              className="text-sm font-medium text-brand-600"
+            >
               멤버십 보기
             </Link>
           </CardContent>
@@ -183,7 +208,9 @@ async function MeSection() {
           여기서 고친 값은 홈의 D-day 와 탐색 필터 기본값으로 바로 이어진다.
           그래서 저장 경로를 온보딩과 하나로 둔다(`POST /api/onboarding`). */}
       <section className="space-y-2" data-testid="me-onboarding">
-        <h2 className="text-base font-semibold text-foreground">결혼 준비 정보</h2>
+        <h2 className="text-base font-semibold text-foreground">
+          결혼 준비 정보
+        </h2>
 
         {membership === null ? (
           <p className="text-sm text-muted-foreground">
@@ -197,7 +224,9 @@ async function MeSection() {
             <CardContent className="pt-5">
               <OnboardingStepper
                 answers={answers}
-                complete={isOnboardingComplete(answers.map((answer) => answer.question))}
+                complete={isOnboardingComplete(
+                  answers.map((answer) => answer.question),
+                )}
               />
             </CardContent>
           </Card>
@@ -206,22 +235,49 @@ async function MeSection() {
 
       <Separator />
 
+      {/* ── 내 예약 (F-C-14·15 · S5-10) ──
+          **여기가 `/bookings` 의 진입점이다.** 하단 탭은 다섯 칸이 찼고(D-55)
+          예약은 매일 여는 화면이 아니라 내 정보에서 찾는 화면이다. 예약 상세가
+          계약·결제·해지·안전거래·후기 다섯의 진입점이다(S5-10). */}
+      <section className="space-y-2" data-testid="me-bookings">
+        <h2 className="text-base font-semibold text-foreground">내 예약</h2>
+        <p className="text-caption text-muted-foreground">
+          진행 상황·결제 회차·계약서를 한자리에서 보실 수 있어요.
+        </p>
+        <Link
+          href="/bookings"
+          className="text-caption font-medium text-brand-600"
+        >
+          예약 목록 열기
+        </Link>
+      </section>
+
+      <Separator />
+
       {/* ── 후기 쓸 수 있는 거래 (F-C-17 · S8-11) ────────────────
-          **여기가 `/reviews/new/[bookingId]` 의 진입점이다.** §6.2 가 진입점으로
-          삼을 만한 `/bookings/[id]`(예약 상세)는 아직 만들어지지 않았고(S5-06 잔여),
-          화면을 만들고 가리키는 곳을 두지 않는 것이 이 리포에서 반복된 실수다(FIX-25).
-          예약 상세가 생기면 거기서도 들어오게 하고 이 자리는 남겨 둔다. */}
+          `/reviews/new/[bookingId]` 로 가는 **두 길 중 하나**다. S8-11 이 이 자리를
+          임시로 만들 때는 §6.2 가 진입점으로 삼는 `/bookings/[id]` 가 없었고,
+          **S5-10 이 그것을 세우면서 그쪽에서도 들어올 수 있게 됐다.** 이 자리는
+          남겨 둔다 — 쓸 수 있는 것이 모여 보이는 곳이 따로 있는 편이 낫고,
+          두 곳에서 들어와도 되는 종류의 화면이다. */}
       {reviewable.length > 0 ? (
         <section className="space-y-2" data-testid="me-reviewable">
-          <h2 className="text-base font-semibold text-foreground">후기 쓸 수 있는 거래</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            후기 쓸 수 있는 거래
+          </h2>
           <p className="text-caption text-muted-foreground">
-            계약이 확정된 거래에만 쓸 수 있는 <strong>검증 후기</strong>입니다. 실지출
-            금액 공개는 선택이며 기본은 비공개입니다.
+            계약이 확정된 거래에만 쓸 수 있는 <strong>검증 후기</strong>입니다.
+            실지출 금액 공개는 선택이며 기본은 비공개입니다.
           </p>
           <ul className="space-y-2">
             {reviewable.map((row) => (
-              <li key={row.bookingId} className="rounded-lg border border-border p-3">
-                <p className="text-sm font-medium text-foreground">{row.vendorName}</p>
+              <li
+                key={row.bookingId}
+                className="rounded-lg border border-border p-3"
+              >
+                <p className="text-sm font-medium text-foreground">
+                  {row.vendorName}
+                </p>
                 <Link
                   href={`/reviews/new/${row.bookingId}`}
                   className="text-caption font-medium text-brand-600"
@@ -242,12 +298,15 @@ async function MeSection() {
         <h2 className="text-base font-semibold text-foreground">문의·신고</h2>
         <Card>
           <CardContent className="space-y-1 pt-5">
-            <Link href="/support" className="text-sm font-medium text-brand-600">
+            <Link
+              href="/support"
+              className="text-sm font-medium text-brand-600"
+            >
               문의 보내기·처리 상태 보기
             </Link>
             <p className="text-caption text-muted-foreground">
-              계정·결제·업체 관련 문의를 받습니다. 게시물·후기 신고는 그 글에서 직접
-              신고해 주세요 — 처리 절차가 달라 따로 받습니다.
+              계정·결제·업체 관련 문의를 받습니다. 게시물·후기 신고는 그 글에서
+              직접 신고해 주세요 — 처리 절차가 달라 따로 받습니다.
             </p>
           </CardContent>
         </Card>
@@ -258,15 +317,19 @@ async function MeSection() {
         <h2 className="text-base font-semibold text-foreground">동의 이력</h2>
 
         {(consents ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">아직 기록된 동의가 없어요.</p>
+          <p className="text-sm text-muted-foreground">
+            아직 기록된 동의가 없어요.
+          </p>
         ) : (
           <ul className="space-y-2">
-            {((consents ?? []) as {
-              id: string;
-              consent_type: string;
-              version: string;
-              agreed_at: string;
-            }[]).map((consent) => (
+            {(
+              (consents ?? []) as {
+                id: string;
+                consent_type: string;
+                version: string;
+                agreed_at: string;
+              }[]
+            ).map((consent) => (
               <li
                 key={consent.id}
                 className="rounded-lg border border-border p-3"
@@ -274,8 +337,11 @@ async function MeSection() {
                 data-withdrawable={isWithdrawable(consent.consent_type)}
               >
                 <p className="text-sm text-foreground">
-                  {CONSENT_TYPE_LABEL[consent.consent_type] ?? consent.consent_type}
-                  <span className="ml-1 text-caption text-muted-foreground">{consent.version}</span>
+                  {CONSENT_TYPE_LABEL[consent.consent_type] ??
+                    consent.consent_type}
+                  <span className="ml-1 text-caption text-muted-foreground">
+                    {consent.version}
+                  </span>
                 </p>
                 <p className="text-caption text-muted-foreground">
                   {consent.agreed_at.slice(0, 10)} 동의
@@ -295,7 +361,9 @@ async function MeSection() {
       {/* ── 지난 삭제 요청 ─────────────────────────────────────────────── */}
       {allRequests.length > 0 ? (
         <section className="space-y-2" data-testid="me-request-history">
-          <h2 className="text-base font-semibold text-foreground">삭제 요청 이력</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            삭제 요청 이력
+          </h2>
           <ul className="space-y-1">
             {allRequests.map((row) => (
               <li key={row.id} className="text-caption text-muted-foreground">
@@ -308,7 +376,9 @@ async function MeSection() {
 
       {/* ── 아직 없는 것 ───────────────────────────────────────────────── */}
       <section className="space-y-2">
-        <h2 className="text-base font-semibold text-foreground">준비 중인 기능</h2>
+        <h2 className="text-base font-semibold text-foreground">
+          준비 중인 기능
+        </h2>
         <div className="space-y-2" data-testid="me-pending">
           {ME_PENDING_SECTIONS.map((section) => (
             <MetricTile

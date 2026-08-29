@@ -20,9 +20,17 @@ import {
   resolveSplitPlans,
   splitAmount,
 } from "@/lib/core/payment/payment";
-import { PLANNER_FEE_SCOPE_ORDER, resolveRate, type RateRecord } from "@/lib/core/pricing/rates";
+import {
+  PLANNER_FEE_SCOPE_ORDER,
+  resolveRate,
+  type RateRecord,
+} from "@/lib/core/pricing/rates";
 import { sendNotification } from "@/lib/notify/send";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
+import {
+  ISSUE_BLOCK_MESSAGE,
+  canIssueContract,
+} from "@/lib/core/booking/console";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { contentHash } from "./hash";
@@ -49,12 +57,21 @@ import { verifyIdentity } from "./verification";
  */
 export type ContractFailure = { status: number; code: string; message: string };
 
-function failure(status: number, code: string, message: string): ContractFailure {
+function failure(
+  status: number,
+  code: string,
+  message: string,
+): ContractFailure {
   return { status, code, message };
 }
 
 export function isFailure(value: unknown): value is ContractFailure {
-  return typeof value === "object" && value !== null && "code" in value && "status" in value;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    "status" in value
+  );
 }
 
 // =============================================================================
@@ -78,7 +95,9 @@ export async function issueContract(input: {
 
   const { data: bookingRow } = await admin
     .from("bookings")
-    .select("id, couple_id, vendor_id, total_amount, status")
+    .select(
+      "id, couple_id, vendor_id, total_amount, status, accepted_at, declined_at",
+    )
     .eq("id", input.bookingId)
     .maybeSingle();
 
@@ -88,9 +107,35 @@ export async function issueContract(input: {
     vendor_id: string;
     total_amount: number;
     status: string;
+    accepted_at: string | null;
+    declined_at: string | null;
   } | null;
 
-  if (!booking) return failure(404, "CONTRACT_BOOKING_NOT_FOUND", "예약을 찾을 수 없습니다.");
+  if (!booking)
+    return failure(
+      404,
+      "CONTRACT_BOOKING_NOT_FOUND",
+      "예약을 찾을 수 없습니다.",
+    );
+
+  // **승인이 발행의 선행이다**(S5-10 · D-36). 이 문을 걸지 않으면 `/vendor/bookings`
+  // 의 승인 버튼이 **눌러도 다음이 달라지지 않는 장식**이 된다. 승인·거절 판정은
+  // 순수 함수 하나가 하며 화면·API 가 같은 답을 낸다.
+  const gate = canIssueContract({
+    status: booking.status as Parameters<typeof canIssueContract>[0]["status"],
+    acceptedAt: booking.accepted_at,
+    declinedAt: booking.declined_at,
+    // 살아 있는 계약 여부는 바로 아래에서 따로 본다(부분 유니크가 최종 경계다).
+    hasLiveContract: false,
+  });
+
+  if (!gate.allowed && gate.reason !== null) {
+    return failure(
+      409,
+      "CONTRACT_BOOKING_NOT_ACCEPTED",
+      ISSUE_BLOCK_MESSAGE[gate.reason],
+    );
+  }
 
   // 예약당 유효 계약은 하나다(D-21). 부분 유니크가 최종 경계이지만, 여기서 먼저
   // 답해야 화면이 "왜 안 되는가" 를 말할 수 있다.
@@ -102,7 +147,11 @@ export async function issueContract(input: {
     .maybeSingle();
 
   if (existing) {
-    return failure(409, "CONTRACT_ALREADY_EXISTS", "이 예약에는 이미 유효한 계약이 있어요.");
+    return failure(
+      409,
+      "CONTRACT_ALREADY_EXISTS",
+      "이 예약에는 이미 유효한 계약이 있어요.",
+    );
   }
 
   // ── 총액 ──────────────────────────────────────────────────────────────────
@@ -121,7 +170,12 @@ export async function issueContract(input: {
       valid_until: string | null;
     } | null;
 
-    if (!quote) return failure(404, "CONTRACT_QUOTE_NOT_FOUND", "견적을 찾을 수 없습니다.");
+    if (!quote)
+      return failure(
+        404,
+        "CONTRACT_QUOTE_NOT_FOUND",
+        "견적을 찾을 수 없습니다.",
+      );
 
     const eligible = quoteEligibility({
       status: quote.status,
@@ -130,7 +184,12 @@ export async function issueContract(input: {
       hasActiveContract: false,
     });
 
-    if (!eligible.ok) return failure(422, `CONTRACT_QUOTE_${eligible.reason.toUpperCase()}`, eligible.detail);
+    if (!eligible.ok)
+      return failure(
+        422,
+        `CONTRACT_QUOTE_${eligible.reason.toUpperCase()}`,
+        eligible.detail,
+      );
 
     totalAmount = contractTotalFromQuote({ totalAmount: quote.total_amount });
   }
@@ -143,7 +202,12 @@ export async function issueContract(input: {
     .maybeSingle();
 
   const vendor = vendorRow as { category: string } | null;
-  if (!vendor) return failure(404, "CONTRACT_VENDOR_NOT_FOUND", "업체를 찾을 수 없습니다.");
+  if (!vendor)
+    return failure(
+      404,
+      "CONTRACT_VENDOR_NOT_FOUND",
+      "업체를 찾을 수 없습니다.",
+    );
 
   const commission = await resolveVendorCommission(admin as never, {
     vendorId: booking.vendor_id,
@@ -190,14 +254,22 @@ export async function issueContract(input: {
   } | null;
 
   if (!template) {
-    return failure(422, "CONTRACT_TEMPLATE_MISSING", "발행할 계약서 판본이 없어요.");
+    return failure(
+      422,
+      "CONTRACT_TEMPLATE_MISSING",
+      "발행할 계약서 판본이 없어요.",
+    );
   }
 
   // ── 회차 ──────────────────────────────────────────────────────────────────
   const plans = resolveSplitPlans(await readSetting("payment.split_ratios_bp"));
 
   if (!plans.ok) {
-    return failure(422, "CONTRACT_SPLIT_UNRESOLVED", `분할 회차 설정이 없습니다. ${plans.detail}`);
+    return failure(
+      422,
+      "CONTRACT_SPLIT_UNRESOLVED",
+      `분할 회차 설정이 없습니다. ${plans.detail}`,
+    );
   }
 
   const { data: coupleRow } = await admin
@@ -206,7 +278,8 @@ export async function issueContract(input: {
     .eq("id", booking.couple_id)
     .maybeSingle();
 
-  const eventDate = (coupleRow as { wedding_date: string | null } | null)?.wedding_date ?? null;
+  const eventDate =
+    (coupleRow as { wedding_date: string | null } | null)?.wedding_date ?? null;
   const issuedAt = now.toISOString();
   const installments = splitAmount(totalAmount, plans.plans);
 
@@ -229,7 +302,10 @@ export async function issueContract(input: {
     },
   };
 
-  const signingDeadlineDays = await readIntSetting("contract.signing_deadline_days", "days");
+  const signingDeadlineDays = await readIntSetting(
+    "contract.signing_deadline_days",
+    "days",
+  );
 
   const { data: created, error: createError } = await admin
     .from("contracts")
@@ -250,13 +326,19 @@ export async function issueContract(input: {
       signing_deadline_at:
         signingDeadlineDays === null
           ? null
-          : new Date(now.getTime() + signingDeadlineDays * 86_400_000).toISOString(),
+          : new Date(
+              now.getTime() + signingDeadlineDays * 86_400_000,
+            ).toISOString(),
     })
     .select("id")
     .maybeSingle();
 
   if (createError || !created) {
-    return failure(500, "CONTRACT_CREATE_FAILED", "계약을 발행하지 못했습니다.");
+    return failure(
+      500,
+      "CONTRACT_CREATE_FAILED",
+      "계약을 발행하지 못했습니다.",
+    );
   }
 
   const contractId = (created as { id: string }).id;
@@ -270,7 +352,11 @@ export async function issueContract(input: {
       due_anchor: item.anchor,
       due_offset_days: item.offsetDays,
       due_at: dueAtOf(
-        { ratioBp: item.ratioBp, anchor: item.anchor, offsetDays: item.offsetDays },
+        {
+          ratioBp: item.ratioBp,
+          anchor: item.anchor,
+          offsetDays: item.offsetDays,
+        },
         { contractIssuedAt: issuedAt, eventDate },
       ),
       status: "scheduled",
@@ -282,7 +368,11 @@ export async function issueContract(input: {
     // 고객이 서명할 대상이 "금액은 있는데 낼 방법이 없는" 문서가 된다.
     await admin.from("contracts").delete().eq("id", contractId);
 
-    return failure(500, "CONTRACT_SCHEDULE_FAILED", "결제 회차를 만들지 못했습니다.");
+    return failure(
+      500,
+      "CONTRACT_SCHEDULE_FAILED",
+      "결제 회차를 만들지 못했습니다.",
+    );
   }
 
   await recordEvent({
@@ -334,17 +424,21 @@ async function resolvePlannerFeeRateBp(input: {
 
   const { data } = await createAdminClient()
     .from("planner_fee_rates")
-    .select("id, scope_type, scope_key, service_level, fee_rate_bp, effective_from, effective_to");
+    .select(
+      "id, scope_type, scope_key, service_level, fee_rate_bp, effective_from, effective_to",
+    );
 
-  const records: RateRecord[] = ((data ?? []) as Record<string, unknown>[]).map((row) => ({
-    id: row.id as string,
-    scopeType: row.scope_type as RateRecord["scopeType"],
-    scopeKey: (row.scope_key as string | null) ?? null,
-    serviceLevel: (row.service_level as string | null) ?? null,
-    feeRateBp: row.fee_rate_bp as number,
-    effectiveFrom: row.effective_from as string,
-    effectiveTo: (row.effective_to as string | null) ?? null,
-  }));
+  const records: RateRecord[] = ((data ?? []) as Record<string, unknown>[]).map(
+    (row) => ({
+      id: row.id as string,
+      scopeType: row.scope_type as RateRecord["scopeType"],
+      scopeKey: (row.scope_key as string | null) ?? null,
+      serviceLevel: (row.service_level as string | null) ?? null,
+      feeRateBp: row.fee_rate_bp as number,
+      effectiveFrom: row.effective_from as string,
+      effectiveTo: (row.effective_to as string | null) ?? null,
+    }),
+  );
 
   const resolved = resolveRate(records, {
     scopeCandidates: PLANNER_FEE_SCOPE_ORDER,
@@ -402,9 +496,13 @@ export async function signContract(input: {
     applied_planner_fee_rate_bp: number;
   } | null;
 
-  if (!contract) return failure(404, "CONTRACT_NOT_FOUND", "계약을 찾을 수 없습니다.");
+  if (!contract)
+    return failure(404, "CONTRACT_NOT_FOUND", "계약을 찾을 수 없습니다.");
 
-  if (input.expectedContentHash && input.expectedContentHash !== contract.content_hash) {
+  if (
+    input.expectedContentHash &&
+    input.expectedContentHash !== contract.content_hash
+  ) {
     return failure(
       409,
       "CONTRACT_CONTENT_CHANGED",
@@ -412,10 +510,16 @@ export async function signContract(input: {
     );
   }
 
-  const required = requiredSignerRoles({ plannerParty: contract.planner_id !== null });
+  const required = requiredSignerRoles({
+    plannerParty: contract.planner_id !== null,
+  });
 
   if (!required.includes(input.role)) {
-    return failure(422, "CONTRACT_ROLE_NOT_PARTY", "이 계약의 당사자가 아닌 역할입니다.");
+    return failure(
+      422,
+      "CONTRACT_ROLE_NOT_PARTY",
+      "이 계약의 당사자가 아닌 역할입니다.",
+    );
   }
 
   const { data: signatureRows } = await admin
@@ -423,9 +527,12 @@ export async function signContract(input: {
     .select("signer_role, signed_at")
     .eq("contract_id", contract.id);
 
-  const signatures = ((signatureRows ?? []) as { signer_role: string; signed_at: string | null }[]).map(
-    (row) => ({ signerRole: row.signer_role as SignerRole, signedAt: row.signed_at }),
-  );
+  const signatures = (
+    (signatureRows ?? []) as { signer_role: string; signed_at: string | null }[]
+  ).map((row) => ({
+    signerRole: row.signer_role as SignerRole,
+    signedAt: row.signed_at,
+  }));
 
   const before = signingProgress(signatures, required);
   const state = signingState({
@@ -444,7 +551,10 @@ export async function signContract(input: {
   }
 
   // ── 본인확인이 먼저다 (D-28) ──────────────────────────────────────────────
-  const verified = await verifyIdentity({ userId: input.actorId, contractId: contract.id });
+  const verified = await verifyIdentity({
+    userId: input.actorId,
+    contractId: contract.id,
+  });
 
   if (!verified.ok) {
     return failure(422, "CONTRACT_VERIFICATION_FAILED", verified.reason);
@@ -493,7 +603,8 @@ export async function signContract(input: {
 }
 
 function signStateMessage(state: string): string {
-  if (state === "expired") return "서명 기한이 지났어요. 업체가 계약을 다시 발행해야 합니다.";
+  if (state === "expired")
+    return "서명 기한이 지났어요. 업체가 계약을 다시 발행해야 합니다.";
   if (state === "active") return "이미 확정된 계약이에요.";
   if (state === "cancelled") return "취소된 계약이에요.";
 
@@ -545,7 +656,9 @@ async function activateContract(input: {
     .eq("id", input.contract.booking_id);
 
   if (input.contract.planner_id !== null) {
-    const graceDays = resolveGraceDays(await readSetting("planner.payout_grace_days"));
+    const graceDays = resolveGraceDays(
+      await readSetting("planner.payout_grace_days"),
+    );
 
     // 유예 값이 없으면 원장을 만들지 않는다 — payable_at 을 지어내면 회수할 수 없는
     // 돈이 유예 없이 나갈 수 있다(0028 의 유예 트리거와 같은 취지).
@@ -588,7 +701,8 @@ async function activateContract(input: {
     .eq("id", input.contract.booking_id)
     .maybeSingle();
 
-  const coupleId = (bookingRow as { couple_id: string } | null)?.couple_id ?? null;
+  const coupleId =
+    (bookingRow as { couple_id: string } | null)?.couple_id ?? null;
 
   if (coupleId) {
     const { data: coupleRow } = await admin
@@ -597,7 +711,8 @@ async function activateContract(input: {
       .eq("id", coupleId)
       .maybeSingle();
 
-    const ownerId = (coupleRow as { owner_id: string } | null)?.owner_id ?? null;
+    const ownerId =
+      (coupleRow as { owner_id: string } | null)?.owner_id ?? null;
 
     if (ownerId) {
       await sendNotification({
