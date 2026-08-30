@@ -10861,5 +10861,217 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// S5-14 — 플랫폼 쿠폰 관리 (F-A-19 · 0068 · **FIX-47**)
+//
+// 이 태스크의 자격은 `is_operator()` 이고 그 근거 표는 **`profiles`** 다.
+// 그 표에 자기 역할을 스스로 쓸 수 있으면 **운영자 콘솔 전체가 열린다** —
+// 아래 첫 묶음이 그것을 본다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const consumerId = idOf("couple-a@local.test");
+  const vendorOwnerId = idOf("vendor@local.test");
+  const platformCouponId = sql(`select id from public.coupons
+                                  where issuer_type = 'platform' limit 1;`);
+  const vendorCouponId = sql(`select id from public.coupons
+                                where issuer_type = 'vendor' limit 1;`);
+
+  // ── 층 3 (FIX-44/FIX-47): 자격의 근거가 되는 표 ──────────────────────────
+  check(
+    "**아무도 자기 역할을 바꿀 수 없다**(FIX-47) — 한 줄로 운영자가 되는 길이었다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(consumerId, `update public.profiles set role = 'admin' where user_id = '${consumerId}';`),
+    ),
+  );
+  check(
+    "**업체 대표도 자기를 운영자로 만들 수 없다**",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(vendorOwnerId, `update public.profiles set role = 'ops' where user_id = '${vendorOwnerId}';`),
+    ),
+  );
+  check(
+    "**남의 역할도 못 바꾼다**",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(consumerId, `update public.profiles set role = 'consumer' where user_id = '${adminUser}';`),
+    ),
+  );
+  check(
+    "**가입할 때도 역할을 스스로 못 적는다** — 첫 행부터 admin 으로 만들 수 없다",
+    rejectedWith(/permission denied|row-level security/i, () =>
+      asUser(
+        consumerId,
+        `insert into public.profiles (user_id, display_name, role)
+           values (gen_random_uuid(), '위조', 'admin');`,
+      ),
+    ),
+  );
+  check(
+    "**표 단위 INSERT·UPDATE 가 없다** — 있으면 컬럼 회수가 무효가 된다(FIX-36)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'profiles'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**role 컬럼에 쓰기 권한이 아무에게도 없다**",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'profiles'
+             and column_name = 'role' and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE');`) === "0",
+  );
+  check(
+    "**프로필을 지울 수 있는 사람이 없다** — actor_id 가 가리키던 사람이 사라지면 증적이 무너진다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'profiles'
+             and grantee in ('anon', 'authenticated') and privilege_type = 'DELETE';`) === "0",
+  );
+
+  // 본인이 고치던 칸은 그대로 열려 있어야 한다 — 막기만 하고 못 쓰게 하면 화면이 죽는다.
+  check(
+    "**본인은 표시 이름을 여전히 고친다** — 걷은 것은 역할이지 프로필이 아니다",
+    asUser(
+      consumerId,
+      `update public.profiles set display_name = 'RLS이름' where user_id = '${consumerId}';
+       select display_name from public.profiles where user_id = '${consumerId}';`,
+    ) === "RLS이름",
+  );
+
+  // 역할 변경이 어느 경로로든 증적에 남는가
+  check(
+    "**역할 변경이 entity_events 에 남는다** — 앱 코드가 아니라 트리거가 남긴다",
+    sql(`begin;
+           update public.profiles set role = 'ops' where user_id = '${consumerId}';
+           select count(*) from public.entity_events
+            where entity_type = 'profile' and entity_id = '${consumerId}'
+              and event_type = 'profile_role_changed';
+         rollback;`).split("\n").pop() !== "0",
+  );
+
+  // ── 층 1·2: 쿠폰 표 (S5-12·S5-13 이 좁힌 것이 그대로인가) ────────────────
+  check(
+    "**coupons 에 표 단위 쓰기가 없다**",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'coupons'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**플랫폼 쓰기 정책이 자기 조건을 스스로 말한다**(층 2 · FIX-41)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'coupons'
+             and policyname in ('coupons_write_platform', 'coupons_update_platform')
+             and coalesce(with_check, '') like '%is_operator%';`) === "2",
+  );
+
+  // ── T-00e: 운영자가 업체 쿠폰을 만들 수 있는가 ───────────────────────────
+  check(
+    "**운영자가 업체 이름으로 쿠폰을 만들 수 없다**(T-00e) — 남의 정산에서 깎는 쿠폰이 된다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        adminUser,
+        `insert into public.coupons
+           (issuer_type, issuer_id, name, discount_type, discount_value,
+            max_discount_amount, min_order_amount, issue_condition, status)
+         values ('vendor', '${sql(`select id from public.vendors limit 1;`)}', '운영자가만든업체쿠폰',
+                 'amount', 50000, null, 0, 'first_purchase', 'active');`,
+      ),
+    ),
+  );
+  check(
+    "**운영자가 업체 쿠폰을 고칠 수도 없다**",
+    asUser(
+      adminUser,
+      `update public.coupons set name = '운영자가고침' where id = '${vendorCouponId}';
+       select name from public.coupons where id = '${vendorCouponId}';`,
+    ) !== "운영자가고침",
+  );
+  check(
+    "**운영자는 플랫폼 쿠폰을 만들 수 있다** — 막기만 하면 기능이 없는 것이다",
+    asUser(
+      adminUser,
+      `insert into public.coupons
+         (issuer_type, issuer_id, name, discount_type, discount_value,
+          max_discount_amount, min_order_amount, issue_condition, status)
+       values ('platform', null, 'RLS플랫폼쿠폰', 'amount', 10000, null, 0,
+               'period_event', 'active') returning 1;`,
+    ) === "1",
+  );
+  check(
+    "**업체 대표는 플랫폼 쿠폰을 만들 수 없다** — 비용을 플랫폼에 떠넘기는 길이다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        vendorOwnerId,
+        `insert into public.coupons
+           (issuer_type, issuer_id, name, discount_type, discount_value,
+            max_discount_amount, min_order_amount, issue_condition, status)
+         values ('platform', null, '업체가만든플랫폼쿠폰', 'amount', 50000, null, 0,
+                 'first_purchase', 'active');`,
+      ),
+    ),
+  );
+  check(
+    "**issuer_id 를 채운 플랫폼 쿠폰은 CHECK 이 막는다** — 부담 주체가 둘이 될 수 없다",
+    rejectedWith(/coupons_issuer_shape|row-level security/, () =>
+      sql(`insert into public.coupons
+             (issuer_type, issuer_id, name, discount_type, discount_value,
+              max_discount_amount, min_order_amount, issue_condition, status)
+           values ('platform', '${sql(`select id from public.vendors limit 1;`)}', '주체둘',
+                   'amount', 10000, null, 0, 'period_event', 'active');`),
+    ),
+  );
+
+  // ── 발급 뒤 동결이 플랫폼 쿠폰에도 걸리는가 (한쪽만 느슨하면 우회로가 된다) ──
+  check(
+    "**플랫폼 쿠폰도 발급이 시작되면 얼어붙는다**(D-159) — 업체 면과 같은 규칙이다",
+    rejectedWith(/발급된 쿠폰|coupons_terms_frozen/, () =>
+      sql(`update public.coupons set discount_value = 1 where id = '${platformCouponId}';`),
+    ),
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check("`/admin/coupons` 화면이 실재한다", existsSync("app/(admin)/admin/coupons/page.tsx"));
+  check(
+    "**내비가 `/admin/coupons` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/coupons"'),
+  );
+  check(
+    "플랫폼 쿠폰 화면이 캐시되지 않는다",
+    readFileSync("app/(admin)/admin/coupons/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**issuer_type 을 입력으로 받지 않는다** — 여기서 만드는 것은 언제나 플랫폼 쿠폰이다",
+    !readFileSync("app/api/admin/coupons/route.ts", "utf8").includes("issuerType"),
+  );
+  check(
+    "**비용이 전액 플랫폼 손익이라는 사실이 API 본문에 실린다**(함정 3)",
+    readFileSync("lib/coupons/admin.ts", "utf8").includes('costBearer: "platform"'),
+  );
+  check(
+    "**세그먼트를 만들지 않았다는 사실도 본문에 실린다**(D-143 계열)",
+    readFileSync("lib/coupons/admin.ts", "utf8").includes("segmentTargeting") &&
+      readFileSync("lib/coupons/admin.ts", "utf8").includes("available: false"),
+  );
+  check(
+    "**두 면이 같은 순수 함수로 판정한다** — 한쪽만 느슨하면 그쪽이 우회로가 된다",
+    readFileSync("lib/coupons/admin.ts", "utf8").includes("validateCouponForm") &&
+      readFileSync("lib/coupons/vendor.ts", "utf8").includes("validateCouponForm"),
+  );
+
+  // ── 픽스처 ───────────────────────────────────────────────────────────────
+  check(
+    "**플랫폼 쿠폰과 업체 쿠폰이 둘 다 시드에 있다** — 경계를 양쪽에서 눈다",
+    platformCouponId !== "" && vendorCouponId !== "",
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0068 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

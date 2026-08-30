@@ -95,6 +95,9 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/admin", label: "대시보드", icon: LayoutDashboard },
   { href: "/admin/vendors", label: "입점 심사", icon: ShieldCheck },
   // S8-10 이 이 링크를 살렸다 — 오래 죽어 있던 자리다(FIX-23).
+  // S5-14. **가격 바로 위**다 — 둘 다 고객이 실제로 내는 금액을 움직이는
+  // 화면이고, 쿠폰은 그중 **플랫폼 손익으로 나가는** 쪽이다(F-A-19).
+  { href: "/admin/coupons", label: "플랫폼 쿠폰", icon: Ticket },
   { href: "/admin/prices", label: "가격 큐레이션", icon: Tag },
   // S8-07 이 이 화면을 세웠다. **경로가 내비와 명세가 서로 달랐다** — 내비는
   // `/admin/quality` 를 가리켰고 §6.4 는 `/admin/ai-quality` 를 적었다(FIX-23 가 그 사실을
