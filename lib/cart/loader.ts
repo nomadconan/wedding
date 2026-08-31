@@ -10,7 +10,7 @@ import {
   type CartChoice,
   type CategoryFill,
 } from "@/lib/core/cart/multi-cart";
-import { PLANNER_FEE_SCOPE_ORDER, resolveRate, type RateRecord } from "@/lib/core/pricing/rates";
+import { loadPlannerRateRecords, resolvePlannerRateBp, selectedPlannerByCategory } from "@/lib/planners/rates";
 import {
   ADDED_BY_TEXT,
   addedByLabelOf,
@@ -404,7 +404,7 @@ export function pickCart(view: CartsView, cartId: string | null): CartView | nul
 async function buildItemViews(
   publicClient: SupabaseClient,
   items: ItemRow[],
-  params: { viewerId: string; memberIds: string[] },
+  params: { viewerId: string; memberIds: string[]; coupleId: string },
 ): Promise<{ views: CartItemView[]; rates: Map<string, number | null> }> {
   if (items.length === 0) return { views: [], rates: new Map() };
 
@@ -463,7 +463,14 @@ async function buildItemViews(
     trigger_condition: Record<string, unknown> | null;
   }[];
 
-  const plannerRates = await loadPlannerRates(createAdminClient());
+  // **누구를 골랐는지가 판정에 들어간다**(S6-03 · FIX-52). 예전에는 플래너 키 없이
+  // 카테고리 → 전역으로만 풀었는데, §3.8 은 좁은 범위가 이긴다고 정했으므로 플래너
+  // 전용 요율이 있으면 **화면 금액과 계약 금액이 달라진다.** 카테고리별로 고른
+  // 플래너가 `planner_scopes` 에 있으므로 이제 그 값을 쓴다.
+  const [plannerRates, selectedPlanners] = await Promise.all([
+    loadPlannerRateRecords(),
+    selectedPlannerByCategory(params.coupleId),
+  ]);
   const at = new Date().toISOString();
   const rates = new Map<string, number | null>();
 
@@ -476,7 +483,14 @@ async function buildItemViews(
       : ({ kind: "unknown" } as const);
 
     const addedBy = addedByLabelOf(item.added_by, params.viewerId, params.memberIds);
-    const rate = product ? resolvePlannerRate(plannerRates, product.category, at) : null;
+    const rate = product
+      ? resolvePlannerRateBp({
+          records: plannerRates,
+          category: product.category,
+          plannerId: selectedPlanners.get(product.category) ?? null,
+          at,
+        })
+      : null;
 
     rates.set(item.id, rate);
 
@@ -571,44 +585,6 @@ function totalsOf(
   return { total, totalWithoutPlanner, excludedCount: views.length - priceable.length };
 }
 
-/** 플래너 요율 후보. 소비자 세션으로는 볼 수 없으므로 서비스롤이 읽는다(§3.9). */
-async function loadPlannerRates(admin: SupabaseClient): Promise<RateRecord[]> {
-  const { data } = await admin
-    .from("planner_fee_rates")
-    .select("id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to");
-
-  return ((data ?? []) as {
-    id: string;
-    scope_type: string;
-    scope_key: string | null;
-    fee_rate_bp: number;
-    effective_from: string;
-    effective_to: string | null;
-  }[]).map((row) => ({
-    id: row.id,
-    scopeType: row.scope_type as RateRecord["scopeType"],
-    scopeKey: row.scope_key,
-    feeRateBp: row.fee_rate_bp,
-    effectiveFrom: row.effective_from,
-    effectiveTo: row.effective_to,
-  }));
-}
-
-/**
- * 카테고리에 적용되는 플래너 요율.
- *
- * 플래너를 아직 고르지 않았으므로 `planner` 스코프 키가 없다 — 해석은 카테고리 → 전역
- * 순으로 내려간다. **없으면 null 이다.** 임의 기본값을 만들면 고객이 본 금액과 계약
- * 금액이 달라진다(S2-03 에서 세운 원칙).
- */
-function resolvePlannerRate(records: RateRecord[], category: string, at: string): number | null {
-  if (records.length === 0) return null;
-
-  const resolved = resolveRate(records, {
-    scopeCandidates: PLANNER_FEE_SCOPE_ORDER,
-    ...(category === "" ? {} : { scopeKeys: { category } }),
-    at,
-  });
-
-  return resolved.ok ? resolved.feeRateBp : null;
-}
+// 플래너 요율의 적재·해석은 **`lib/planners/rates.ts` 하나가 든다**(S6-03).
+// 여기에 두 번째 해석이 있으면 장바구니와 계약이 서로 다른 답을 낸다 — 실제로
+// 그랬다(FIX-52).

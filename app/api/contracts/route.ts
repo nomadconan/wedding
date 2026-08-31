@@ -52,11 +52,13 @@ export async function POST(request: NextRequest) {
     return fail(403, "CONTRACT_NOT_VENDOR", "계약 발행은 업체가 합니다.");
   }
 
+  // **`plannerId` 를 넘기지 않는다**(S6-03 · FIX-53). 발행은 업체가 하는데 플래너를
+  // 본문으로 받으면 **고객이 고른 적 없는 플래너**가 계약 당사자가 되고 고객이 그
+  // 수수료를 낸다. 누구에게 맡겼는가는 `planner_scopes` 가 정한다(F-C-31).
   const result = await issueContract({
     bookingId: parsed.data.bookingId,
     actorId: user.id,
     quoteId: parsed.data.quoteId ?? null,
-    plannerId: parsed.data.plannerId ?? null,
   });
 
   if (isFailure(result)) return fail(result.status, result.code, result.message);

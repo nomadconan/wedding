@@ -115,10 +115,17 @@ async function Section() {
         </ul>
       </section>
 
-      {/* 두 축을 잇는 유일한 자리다(D-43). 자동으로 끄지 않고 경로를 안내한다. */}
+      {/* 두 축을 잇는 자리다(D-43). 자동으로 끄지 않고 경로를 안내한다.
+          **S6-03 이 그 경로를 실제 화면으로 만들었다** — 그 전까지는 문장뿐이었다. */}
       <section className="rounded-xl border border-border p-4">
         <p className="text-xs text-neutral-700">{CROSS_AXIS_NOTICE}</p>
         <p className="mt-2 text-xs text-neutral-500">{NO_FEE_FROM_DELEGATION_NOTICE}</p>
+        <Link
+          href="/planners/scopes"
+          className="mt-2 inline-block text-xs font-medium text-brand-600"
+        >
+          카테고리별 이용 범위 설정으로 가기
+        </Link>
       </section>
     </div>
   );

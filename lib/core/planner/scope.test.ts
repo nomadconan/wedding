@@ -7,12 +7,23 @@ import {
   FEE_TIMING_NOTICE,
   PLANNER_CATEGORIES,
   PLANNER_CATEGORY_LABEL,
-  PLANNER_VISIBILITY,
+  AMOUNT_UNKNOWN,
   RANKING_BASIS_NOTICE,
   RANKING_FORMULA_PENDING_NOTICE,
   RANKING_METRICS,
+  SCOPE_CHANGE_ERRORS,
+  SCOPE_CHANGE_MESSAGE,
+  SCOPE_CROSS_AXIS_NOTICE,
+  SCOPE_ENFORCED_AT,
+  SCOPE_ENFORCEMENT_NOTICE,
+  SCOPE_RATE_UNKNOWN_NOTICE,
   SCOPE_STATUSES,
+  diffScopes,
   isPlannerCategory,
+  isUnknownAmount,
+  scopeFeeLine,
+  scopeFeeTotal,
+  validateScopeSelection,
   plannerFeeApplies,
   rankingMetricAvailability,
   releaseImpact,
@@ -148,36 +159,22 @@ describe("해제 — 이미 성사된 계약은 건드리지 않는다 (D-16 · 
   });
 });
 
-describe("위임 후 볼 수 있는 것 — 이미 갈라 둔 경계", () => {
-  it("장바구니는 읽기만이다 (S3-04)", () => {
-    const rule = PLANNER_VISIBILITY.find((item) => item.scope === "carts");
+// 위임 범위의 어휘는 **`delegation.ts` 하나가 든다**(S6-03 이 여기서 지웠다).
+// 같은 사실을 두 파일이 다르게 적고 있었고 화면은 저쪽만 쓰고 있었다 —
+// 읽히지 않는 목록이 진실 행세를 하던 상태다. 그쪽 테스트가 정책과 대조한다.
+describe("위임 범위 어휘를 이 파일이 들지 않는다 (D-43 — 과금 축만 든다)", () => {
+  it("모듈이 위임 목록을 내보내지 않는다", async () => {
+    const scope = await import("./scope");
 
-    expect(rule?.access).toBe("read");
-    expect(rule?.origin).toBe("S3-04");
+    expect("PLANNER_VISIBILITY" in scope).toBe(false);
+    expect("VISIBILITY_NOTICE" in scope).toBe(false);
   });
 
-  it("채팅은 막혀 있다 (S4-01)", () => {
-    const rule = PLANNER_VISIBILITY.find((item) => item.scope === "chat_rooms");
+  it("위임 목록은 delegation.ts 가 든다", async () => {
+    const delegation = await import("./delegation");
 
-    expect(rule?.access).toBe("none");
-    expect(rule?.reason).toContain("대화 참여가 아닙니다");
-  });
-
-  it("상담은 열려 있다 (S4-07)", () => {
-    expect(PLANNER_VISIBILITY.find((item) => item.scope === "consultations")?.access).toBe("read");
-  });
-
-  it("결제·계약은 위임만으로 열리지 않는다", () => {
-    for (const scope of ["payments", "contracts"]) {
-      expect(PLANNER_VISIBILITY.find((item) => item.scope === scope)?.access).toBe("none");
-    }
-  });
-
-  it("모든 항목이 근거 태스크를 밝힌다", () => {
-    for (const rule of PLANNER_VISIBILITY) {
-      expect(rule.origin).toMatch(/^S\d/);
-      expect(rule.reason.length).toBeGreaterThan(10);
-    }
+    expect(delegation.DELEGATABLE_SCOPES.length).toBe(11);
+    expect(delegation.CLOSED_SCOPES.length).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -227,5 +224,236 @@ describe("수수료 발생 시점 문구 (D-17)", () => {
   it("상담만으로는 발생하지 않는다는 것을 말한다", () => {
     expect(FEE_TIMING_NOTICE).toContain("계약이 성사된 뒤");
     expect(FEE_TIMING_NOTICE).toContain("상담만 받고 계약하지 않으면");
+  });
+});
+
+// =============================================================================
+// S6-03 — 선택의 변경과 총액 영향 (F-C-31)
+// =============================================================================
+
+describe("선택 판정 — 위임이 전제다", () => {
+  const delegated = ["p1", "p2"];
+
+  it("위임받은 플래너면 통과한다", () => {
+    expect(
+      validateScopeSelection([{ category: "dress", plannerId: "p1" }], delegated),
+    ).toEqual({ ok: true });
+  });
+
+  it("**위임 없는 플래너는 막는다** — 보지도 못하는 플래너에게 수수료가 붙는다", () => {
+    const result = validateScopeSelection([{ category: "dress", plannerId: "p9" }], delegated);
+
+    expect(result).toEqual({ ok: false, errors: ["planner_not_delegated"] });
+  });
+
+  it("판매가가 없는 카테고리는 고를 수 없다", () => {
+    const result = validateScopeSelection(
+      [{ category: "helper" as never, plannerId: "p1" }],
+      delegated,
+    );
+
+    expect(result).toEqual({ ok: false, errors: ["category_unknown"] });
+  });
+
+  it("**한 카테고리에 둘을 지정할 수 없다** — 같은 항목에 수수료가 두 번 붙는다", () => {
+    const result = validateScopeSelection(
+      [
+        { category: "dress", plannerId: "p1" },
+        { category: "dress", plannerId: "p2" },
+      ],
+      delegated,
+    );
+
+    expect(result).toEqual({ ok: false, errors: ["category_duplicated"] });
+  });
+
+  it("빈 선택은 정상이다 — 아무 카테고리도 안 쓰는 상태가 있다(D-43)", () => {
+    expect(validateScopeSelection([], delegated)).toEqual({ ok: true });
+  });
+
+  it("모든 오류 코드에 문구가 있다", () => {
+    for (const code of SCOPE_CHANGE_ERRORS) {
+      expect(SCOPE_CHANGE_MESSAGE[code].length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("차이 — 무엇을 켜고 무엇을 끄는가", () => {
+  const current: ScopeRow[] = [
+    row({ category: "dress", plannerId: "p1" }),
+    row({ category: "makeup", plannerId: "p1" }),
+    // 이력이다 — 세지 않는다.
+    row({ category: "hall", plannerId: "p2", status: "released", releasedAt: "2026-08-02T00:00:00.000Z" }),
+  ];
+
+  it("새로 고른 것만 select 로 나온다", () => {
+    const diff = diffScopes(current, [
+      { category: "dress", plannerId: "p1" },
+      { category: "makeup", plannerId: "p1" },
+      { category: "studio", plannerId: "p1" },
+    ]);
+
+    expect(diff.select).toEqual([{ category: "studio", plannerId: "p1" }]);
+    expect(diff.release).toEqual([]);
+    expect(diff.unchanged).toHaveLength(2);
+  });
+
+  it("뺀 것만 release 로 나온다", () => {
+    const diff = diffScopes(current, [{ category: "dress", plannerId: "p1" }]);
+
+    expect(diff.release).toEqual([{ category: "makeup", plannerId: "p1" }]);
+    expect(diff.select).toEqual([]);
+  });
+
+  it("**플래너를 바꾸면 해제 + 새 선택이다** — 한 행에 두 사람을 적지 않는다(D-23)", () => {
+    const diff = diffScopes(current, [
+      { category: "dress", plannerId: "p2" },
+      { category: "makeup", plannerId: "p1" },
+    ]);
+
+    expect(diff.release).toEqual([{ category: "dress", plannerId: "p1" }]);
+    expect(diff.select).toEqual([{ category: "dress", plannerId: "p2" }]);
+  });
+
+  it("해제된 이력은 지금 상태로 세지 않는다", () => {
+    const diff = diffScopes(current, [
+      { category: "dress", plannerId: "p1" },
+      { category: "makeup", plannerId: "p1" },
+    ]);
+
+    // hall 은 이미 released 이므로 다시 뺄 것이 없다.
+    expect(diff.release).toEqual([]);
+  });
+
+  it("아무것도 안 고르면 전부 해제다", () => {
+    const diff = diffScopes(current, []);
+
+    expect(diff.release.map((item) => item.category).sort()).toEqual(["dress", "makeup"]);
+    expect(diff.select).toEqual([]);
+  });
+
+  it("결과의 순서는 카테고리 목록 순서다 — 화면이 매번 다르게 그리지 않는다", () => {
+    const diff = diffScopes([], [
+      { category: "makeup", plannerId: "p1" },
+      { category: "hall", plannerId: "p1" },
+    ]);
+
+    expect(diff.select.map((item) => item.category)).toEqual(["hall", "makeup"]);
+  });
+});
+
+describe("총액 영향 — 0과 미정을 가른다 (함정 2)", () => {
+  it("고르지 않은 카테고리는 **0원**이다", () => {
+    const line = scopeFeeLine({
+      category: "dress",
+      selected: false,
+      plannerId: null,
+      itemCount: 1,
+      salePriceTotal: 3_000_000,
+      rateBp: 900,
+    });
+
+    expect(line.fee).toBe(0);
+  });
+
+  it("고른 카테고리는 판매가에 요율을 곱한다", () => {
+    const line = scopeFeeLine({
+      category: "dress",
+      selected: true,
+      plannerId: "p1",
+      itemCount: 1,
+      salePriceTotal: 3_000_000,
+      rateBp: 900,
+    });
+
+    expect(line.fee).toBe(270_000);
+  });
+
+  it("**요율이 없으면 0이 아니라 미정이다** — 0으로 접으면 '플래너가 공짜' 로 읽힌다", () => {
+    const line = scopeFeeLine({
+      category: "dress",
+      selected: true,
+      plannerId: "p1",
+      itemCount: 1,
+      salePriceTotal: 3_000_000,
+      rateBp: null,
+    });
+
+    expect(line.fee).toBe(AMOUNT_UNKNOWN);
+    expect(isUnknownAmount(line.fee)).toBe(true);
+  });
+
+  it("담긴 항목이 없으면 0원이다 — 그것은 '모른다' 가 아니다", () => {
+    const line = scopeFeeLine({
+      category: "dress",
+      selected: true,
+      plannerId: "p1",
+      itemCount: 0,
+      salePriceTotal: 0,
+      rateBp: 900,
+    });
+
+    expect(line.fee).toBe(0);
+  });
+
+  it("합계는 한 줄이라도 미정이면 미정이다", () => {
+    const lines = [
+      scopeFeeLine({
+        category: "dress",
+        selected: true,
+        plannerId: "p1",
+        itemCount: 1,
+        salePriceTotal: 3_000_000,
+        rateBp: 900,
+      }),
+      scopeFeeLine({
+        category: "hall",
+        selected: true,
+        plannerId: "p1",
+        itemCount: 1,
+        salePriceTotal: 20_000_000,
+        rateBp: null,
+      }),
+    ];
+
+    expect(isUnknownAmount(scopeFeeTotal(lines))).toBe(true);
+  });
+
+  it("전부 알면 합계도 숫자다", () => {
+    const lines = [
+      scopeFeeLine({
+        category: "dress",
+        selected: true,
+        plannerId: "p1",
+        itemCount: 1,
+        salePriceTotal: 3_000_000,
+        rateBp: 900,
+      }),
+      scopeFeeLine({
+        category: "hall",
+        selected: false,
+        plannerId: null,
+        itemCount: 1,
+        salePriceTotal: 20_000_000,
+        rateBp: 900,
+      }),
+    ];
+
+    expect(scopeFeeTotal(lines)).toBe(270_000);
+  });
+});
+
+describe("집행 시점과 문구", () => {
+  it("**집행은 계약 발행이다** — 화면이 그것을 적는다(D-17)", () => {
+    expect(SCOPE_ENFORCED_AT).toBe("contract_issue");
+    expect(SCOPE_ENFORCEMENT_NOTICE).toContain("계약");
+  });
+
+  it("요율 미정 문구가 '0원이 아니다' 를 말한다(함정 2)", () => {
+    expect(SCOPE_RATE_UNKNOWN_NOTICE).toContain("0원");
+  });
+
+  it("두 축이 다르다는 문구를 이 파일도 든다(D-43)", () => {
+    expect(SCOPE_CROSS_AXIS_NOTICE).toContain("다른 축");
   });
 });

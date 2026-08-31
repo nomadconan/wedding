@@ -31,6 +31,11 @@ import {
   ISSUE_BLOCK_MESSAGE,
   canIssueContract,
 } from "@/lib/core/booking/console";
+import {
+  loadPlannerRateRecords,
+  resolvePlannerRateBp,
+  selectedPlannerByCategory,
+} from "@/lib/planners/rates";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { contentHash } from "./hash";
@@ -80,18 +85,29 @@ export function isFailure(value: unknown): value is ContractFailure {
 
 export type IssueResult = { contractId: string; scheduleCount: number };
 
+/**
+ * 계약을 발행한다.
+ *
+ * **`plannerId` 를 입력으로 받지 않는다**(S6-03 · FIX-53). 발행은 **업체**가 하는데,
+ * 플래너를 본문으로 받으면 업체가 **고객이 고른 적 없는 플래너**를 계약 당사자로
+ * 앉힐 수 있었다 — 그러면 그 플래너가 서명 당사자가 되고(F-C-15) `planner_settlements`
+ * 행이 생겨 **고객이 수수료를 낸다.** 반대로 비워 보내면 고객이 고른 플래너가
+ * 아무것도 못 받았다. 어느 쪽이든 "누구의 것인가" 가 판정에서 빠져 있었다
+ * (FIX-45 와 같은 자리).
+ *
+ * 이제 **`planner_scopes` 가 정한다** — 그 표가 F-C-31 의 "카테고리별 부분 선택" 이고,
+ * 이 자리가 그 선택의 **집행 지점**이다(D-17 — 상담만으로는 발생하지 않고 계약이
+ * 성사돼야 한다).
+ */
 export async function issueContract(input: {
   bookingId: string;
   actorId: string;
-  /** 플래너가 서명 당사자인가(D-21). null 이면 2자 계약이다. */
-  plannerId?: string | null;
   /** 견적에서 넘어온 계약이면 그 견적. 총액의 출처가 분쟁의 첫 질문이다. */
   quoteId?: string | null;
   now?: Date;
 }): Promise<IssueResult | ContractFailure> {
   const admin = createAdminClient();
   const now = input.now ?? new Date();
-  const plannerId = input.plannerId ?? null;
 
   const { data: bookingRow } = await admin
     .from("bookings")
@@ -225,6 +241,10 @@ export async function issueContract(input: {
       "적용 수수료율이 설정되지 않아 계약을 발행할 수 없어요. 운영자에게 문의해 주세요.",
     );
   }
+
+  // **고객이 이 카테고리를 누구에게 맡겼는가.** 업체가 고르는 것이 아니다(F-C-31).
+  // 고르지 않았으면 null 이고 2자 계약이며 플래너 수수료는 0이다(D-17).
+  const plannerId = (await selectedPlannerByCategory(booking.couple_id)).get(vendor.category) ?? null;
 
   const plannerFeeRateBp = await resolvePlannerFeeRateBp({
     plannerId,
@@ -415,38 +435,27 @@ export async function issueContract(input: {
  * 뜻이므로 둘을 같은 값으로 적으면 "미선택" 과 "요율을 못 찾음" 이 구별되지 않는다
  * (0028 근거 4). 그래서 이 함수는 **미선택이면 0, 못 찾으면 null** 을 돌려준다.
  */
+/**
+ * 적용 플래너 요율.
+ *
+ * **해석은 `lib/planners/rates.ts` 하나가 든다**(S6-03). 예전에는 이 파일과
+ * 장바구니가 각자 해석했고 **답이 달랐다** — 장바구니는 플래너 키 없이 풀어서
+ * 플래너 전용 요율을 못 봤다(FIX-52).
+ */
 async function resolvePlannerFeeRateBp(input: {
   plannerId: string | null;
   category: string;
   at: string;
 }): Promise<number | null> {
+  // 고른 플래너가 없으면 2자 계약이고 플래너 수수료는 0이다(D-17).
   if (input.plannerId === null) return 0;
 
-  const { data } = await createAdminClient()
-    .from("planner_fee_rates")
-    .select(
-      "id, scope_type, scope_key, service_level, fee_rate_bp, effective_from, effective_to",
-    );
-
-  const records: RateRecord[] = ((data ?? []) as Record<string, unknown>[]).map(
-    (row) => ({
-      id: row.id as string,
-      scopeType: row.scope_type as RateRecord["scopeType"],
-      scopeKey: (row.scope_key as string | null) ?? null,
-      serviceLevel: (row.service_level as string | null) ?? null,
-      feeRateBp: row.fee_rate_bp as number,
-      effectiveFrom: row.effective_from as string,
-      effectiveTo: (row.effective_to as string | null) ?? null,
-    }),
-  );
-
-  const resolved = resolveRate(records, {
-    scopeCandidates: PLANNER_FEE_SCOPE_ORDER,
-    scopeKeys: { planner: input.plannerId, category: input.category },
+  return resolvePlannerRateBp({
+    records: await loadPlannerRateRecords(),
+    category: input.category,
+    plannerId: input.plannerId,
     at: input.at,
   });
-
-  return resolved.ok ? resolved.feeRateBp : null;
 }
 
 // =============================================================================

@@ -31,6 +31,11 @@
  *  2. **랭킹 가중치.** O-13 미결이며 **가중치를 지어내지 않는다**(아래 참조).
  */
 
+import { AMOUNT_UNKNOWN, sumAmounts, type Amount } from "../pricing/amount";
+import { calculatePlannerFee } from "../pricing/rates";
+
+export { AMOUNT_UNKNOWN, isUnknownAmount, type Amount } from "../pricing/amount";
+
 /** 입력이 규약을 벗어날 때 던진다. */
 export class PlannerScopeError extends Error {
   constructor(message: string) {
@@ -210,77 +215,18 @@ export function releaseImpact(): ReleaseImpact {
 export const RELEASE_CONFIRM_TITLE = "이 카테고리에서 플래너를 빼시겠어요?";
 
 // =============================================================================
-// 위임 후 볼 수 있는 것과 없는 것 — 이미 갈라 둔 경계를 코드로 고정한다
+// 위임 후 볼 수 있는 것과 없는 것 — **이 파일에 두지 않는다**
+// -----------------------------------------------------------------------------
+// S6-01 이 여기 `PLANNER_VISIBILITY` 여섯 줄을 두었는데, S6-04 가 위임 화면을 만들며
+// **정책에서 뽑은 열한 개**를 `lib/core/planner/delegation.ts` 에 세웠다. 두 목록이
+// 같은 사실을 다르게 적고 있었고(이쪽은 여섯 · 저쪽은 열한 개 + 막힌 것 다섯), 화면은
+// 저쪽만 쓰고 있었다 — **읽히지 않는 목록이 진실 행세를 하던 상태**다.
+//
+// S6-03 이 이 목록을 지운다. **위임 범위의 어휘는 `delegation.ts` 하나가 든다**
+// (`DELEGATABLE_SCOPES` · `CLOSED_SCOPES` · `VISIBILITY_NOTICE`)이며, 그쪽은
+// `db:rls` 가 정책·DB CHECK 과 매번 대조한다. 이 파일은 **과금 축**만 든다(D-43).
 // =============================================================================
 
-export type VisibilityRule = {
-  scope: string;
-  label: string;
-  access: "read" | "none";
-  reason: string;
-  /** 이 경계를 세운 태스크. 화면이 근거를 밝힐 수 있게 남긴다. */
-  origin: string;
-};
-
-/**
- * 위임받은 플래너가 볼 수 있는 것.
- *
- * **새로 정하지 않는다.** S3-04(장바구니 읽기만)·S4-01(채팅 불가)·S4-07(상담 열람)이
- * 이미 갈라 놓았고, 이 목록은 그 경계를 **한자리에 모아 화면이 그대로 보여줄 수 있게**
- * 한 것이다. RLS 가 최종 경계이며 이 상수는 설명이다(§5.5).
- *
- * **채팅이 막힌 이유**(S4-01) — 대화는 고객과 업체 사이의 것이고, 위임은 데이터
- * 열람이지 **대화 참여**가 아니다. 플래너가 대화에 들어가면 누가 말했는지가 흐려지고
- * 그 기록이 분쟁의 근거로 쓰이지 못한다.
- */
-export const PLANNER_VISIBILITY: readonly VisibilityRule[] = [
-  {
-    scope: "couples",
-    label: "결혼 준비 정보",
-    access: "read",
-    reason: "예식일·예산·지역을 알아야 제안을 할 수 있어요.",
-    origin: "S3-01",
-  },
-  {
-    scope: "carts",
-    label: "장바구니",
-    access: "read",
-    reason: "무엇을 담았는지 보되 **담거나 빼지는 못해요.** 고르는 것은 고객의 몫이에요.",
-    origin: "S3-04",
-  },
-  {
-    scope: "consultations",
-    label: "상담·탐방 일정",
-    access: "read",
-    reason: "일정을 함께 보되 이행 확인은 당사자만 합니다.",
-    origin: "S4-07",
-  },
-  {
-    scope: "chat_rooms",
-    label: "업체와의 대화",
-    access: "none",
-    reason: "대화는 고객과 업체 사이의 것이에요. 위임은 데이터 열람이지 대화 참여가 아닙니다.",
-    origin: "S4-01",
-  },
-  {
-    scope: "payments",
-    label: "결제·정산",
-    access: "none",
-    reason: "돈이 오가는 기록은 위임 대상이 아니에요.",
-    origin: "S5-06",
-  },
-  {
-    scope: "contracts",
-    label: "계약서",
-    access: "none",
-    reason:
-      "플래너가 **서명 당사자로 지정된 계약**만 볼 수 있어요(D-21). 위임만으로는 열리지 않습니다.",
-    origin: "S5-04",
-  },
-];
-
-export const VISIBILITY_NOTICE =
-  "위임하면 아래 항목을 **읽을 수만** 있어요. 대신 담거나 결제하거나 대화에 들어가지는 못합니다.";
 
 // =============================================================================
 // 랭킹 지표 — 지금 셀 수 있는 것과 아직 못 세는 것 (D-25 · O-13)
@@ -406,3 +352,189 @@ export const SCOPE_EMPTY_BODY =
  */
 export const FEE_TIMING_NOTICE =
   "선택하면 총액에 플래너 수수료가 함께 표시돼요. 실제로 발생하는 것은 **계약이 성사된 뒤**이며, 상담만 받고 계약하지 않으면 수수료는 없습니다.";
+
+// =============================================================================
+// 선택의 변경 — 무엇을 켜고 무엇을 끄는가 (S6-03 · F-C-31)
+// =============================================================================
+
+/** 고객이 원하는 상태. "어느 카테고리를 누구에게" 다. **요율은 없다**(D-16). */
+export type ScopeSelection = { category: PlannerCategory; plannerId: string };
+
+export const SCOPE_CHANGE_ERRORS = [
+  "category_unknown",
+  "category_duplicated",
+  "planner_not_delegated",
+] as const;
+
+export type ScopeChangeError = (typeof SCOPE_CHANGE_ERRORS)[number];
+
+export const SCOPE_CHANGE_MESSAGE: Record<ScopeChangeError, string> = {
+  category_unknown:
+    "고를 수 없는 카테고리가 섞여 있어요. 판매가가 있는 항목에만 플래너 수수료가 붙습니다.",
+  category_duplicated: "한 카테고리에 플래너를 둘 지정할 수 없어요.",
+  planner_not_delegated:
+    "먼저 그 플래너에게 열람 권한을 위임해 주세요. 보지도 못하는 플래너에게 수수료가 붙으면 안 됩니다.",
+};
+
+export type ScopeChangeValidation = { ok: true } | { ok: false; errors: ScopeChangeError[] };
+
+/**
+ * 원하는 선택이 성립하는가.
+ *
+ * **위임을 전제로 본다**(0036 트리거가 최종 경계다). 두 축은 독립이지만(D-43) 선택의
+ * **전제**로는 위임이 필요하다 — 없으면 보지도 못하는 플래너에게 수수료가 붙는다.
+ * 여기서 먼저 판정하는 이유는 화면이 **왜** 막혔는지 말할 수 있어야 하기 때문이다.
+ */
+export function validateScopeSelection(
+  desired: readonly ScopeSelection[],
+  delegatedPlannerIds: readonly string[],
+): ScopeChangeValidation {
+  const errors: ScopeChangeError[] = [];
+  const seen = new Set<string>();
+
+  for (const item of desired) {
+    if (!isPlannerCategory(item.category)) {
+      if (!errors.includes("category_unknown")) errors.push("category_unknown");
+      continue;
+    }
+
+    if (seen.has(item.category)) {
+      if (!errors.includes("category_duplicated")) errors.push("category_duplicated");
+    }
+    seen.add(item.category);
+
+    if (!delegatedPlannerIds.includes(item.plannerId)) {
+      if (!errors.includes("planner_not_delegated")) errors.push("planner_not_delegated");
+    }
+  }
+
+  return errors.length === 0 ? { ok: true } : { ok: false, errors };
+}
+
+export type ScopeDiff = {
+  /** 새 행으로 만들 것. */
+  select: ScopeSelection[];
+  /** `released` 로 옮길 것. **행을 지우지 않는다**(D-23). */
+  release: ScopeSelection[];
+  /** 그대로 두는 것. */
+  unchanged: ScopeSelection[];
+};
+
+/**
+ * 지금 상태와 원하는 상태의 차이.
+ *
+ * **플래너를 바꾸는 것은 해제 + 새 선택이다.** 같은 행의 `planner_id` 를 갈아 끼우면
+ * "언제부터 언제까지 **누구에게** 맡겼는가" 가 하나의 행에 두 번 적히게 되고,
+ * 정산 분쟁에서 그 구간을 나눌 수 없다(D-23 · 0070 트리거가 최종 경계다).
+ */
+export function diffScopes(
+  current: readonly ScopeRow[],
+  desired: readonly ScopeSelection[],
+): ScopeDiff {
+  const now = new Map<PlannerCategory, string>();
+
+  for (const row of current) {
+    if (row.status !== "selected" || !isPlannerCategory(row.category)) continue;
+    now.set(row.category as PlannerCategory, row.plannerId);
+  }
+
+  const want = new Map<PlannerCategory, string>();
+  for (const item of desired) {
+    if (!isPlannerCategory(item.category)) continue;
+    want.set(item.category, item.plannerId);
+  }
+
+  const diff: ScopeDiff = { select: [], release: [], unchanged: [] };
+
+  for (const category of PLANNER_CATEGORIES) {
+    const before = now.get(category) ?? null;
+    const after = want.get(category) ?? null;
+
+    if (before === null && after === null) continue;
+
+    if (before === after && before !== null) {
+      diff.unchanged.push({ category, plannerId: before });
+      continue;
+    }
+
+    if (before !== null) diff.release.push({ category, plannerId: before });
+    if (after !== null) diff.select.push({ category, plannerId: after });
+  }
+
+  return diff;
+}
+
+// =============================================================================
+// 총액 영향 — **선택 즉시 반영**한다 (F-C-31)
+// =============================================================================
+
+/**
+ * 카테고리 한 줄의 과금 미리보기.
+ *
+ * **`fee` 가 0인 것과 미정인 것은 다르다**(함정 2). 고르지 않았으면 0이고, 요율이
+ * 해석되지 않으면 **미정**이다 — 미정을 0으로 접으면 총액이 실제보다 작게 보이고,
+ * 고객은 "플래너를 써도 공짜" 로 읽는다.
+ */
+export type ScopeFeeLine = {
+  category: PlannerCategory;
+  selected: boolean;
+  plannerId: string | null;
+  /** 이 카테고리로 담긴 항목 수. */
+  itemCount: number;
+  /** 담긴 항목의 판매가 합계. */
+  salePriceTotal: number;
+  /** 적용될 요율. **없으면 null 이며 0으로 접지 않는다**(O-02 · §3.8). */
+  rateBp: number | null;
+  fee: Amount;
+};
+
+export function scopeFeeLine(input: {
+  category: PlannerCategory;
+  selected: boolean;
+  plannerId: string | null;
+  itemCount: number;
+  salePriceTotal: number;
+  rateBp: number | null;
+}): ScopeFeeLine {
+  const fee: Amount = !input.selected
+    ? 0
+    : input.rateBp === null
+      ? AMOUNT_UNKNOWN
+      : calculatePlannerFee({
+          salePrice: input.salePriceTotal,
+          feeRateBp: input.rateBp,
+          selected: true,
+        });
+
+  return { ...input, fee };
+}
+
+/** 선택한 카테고리의 수수료 합계. 한 줄이라도 미정이면 합계도 미정이다. */
+export function scopeFeeTotal(lines: readonly ScopeFeeLine[]): Amount {
+  return sumAmounts(lines.map((line) => line.fee));
+}
+
+/**
+ * **집행은 계약 발행 시점에 일어난다.**
+ *
+ * 이 선택은 화면의 표시가 아니라 **계약이 읽는 값**이다 — 계약 발행이 이 표를 보고
+ * 플래너를 정하고, 그 순간 `bookings.applied_planner_fee_rate_bp` 로 요율이 스냅샷된다
+ * (D-16 · D-17). 그래서 화면이 "언제 실제로 걸리는가" 를 적는다.
+ */
+export const SCOPE_ENFORCED_AT = "contract_issue" as const;
+
+export const SCOPE_ENFORCEMENT_NOTICE =
+  "여기서 고른 카테고리는 **계약을 발행할 때 그대로 적용돼요.** 업체가 계약서를 만들 때 이 설정을 읽어 플래너를 정하고, 그 시점의 요율이 계약에 박힙니다.";
+
+/** 요율이 없을 때. **0원이라고 적지 않는다**(함정 2 · O-02). */
+export const SCOPE_RATE_UNKNOWN_NOTICE =
+  "플래너 수수료율이 아직 설정되지 않아 금액을 계산할 수 없어요. 0원이라는 뜻이 아닙니다.";
+
+export const SCOPE_NO_DELEGATION_TITLE = "먼저 플래너에게 권한을 위임해 주세요";
+
+export const SCOPE_NO_DELEGATION_BODY =
+  "카테고리를 맡기려면 그 플래너가 우리 정보를 볼 수 있어야 해요. 보지도 못하는 플래너에게 수수료가 붙으면 안 되기 때문입니다.";
+
+/** 두 축을 잇는 문구. 위임 화면의 짝이다(D-43). */
+export const SCOPE_CROSS_AXIS_NOTICE =
+  "열람 위임과 이 설정은 서로 다른 축이에요. 위임을 거둬도 여기서 고른 카테고리는 그대로 남고, 반대로 여기서 빼도 열람 권한은 그대로입니다.";
