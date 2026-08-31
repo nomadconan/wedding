@@ -61,6 +61,14 @@ export function PlannerMarketView({ data }: { data: MarketData }) {
           정렬 기준 · {MARKET_SORT_LABEL[sort]}
         </p>
         <p className="mt-0.5 text-xs text-neutral-600">{MARKET_SORT_BASIS_NOTICE}</p>
+        {/* S6-06. **근거를 읽을 자리로 잇는다.** 배지 한 줄로는 "왜 이 지표뿐인가" 를
+            답할 수 없고, 답하지 않는 순서는 광고와 구별되지 않는다(D-25). */}
+        <Link
+          href="/planners/ranking"
+          className="mt-1 inline-block text-xs font-medium text-brand-600"
+        >
+          순서가 정해지는 기준 보기
+        </Link>
       </div>
 
       {/* S6-04. **이미 위임한 사람이 돌아오는 자리다.** 목록만 있고 관리 화면으로

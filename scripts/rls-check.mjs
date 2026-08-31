@@ -12490,5 +12490,122 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S6-06 — 플래너 랭킹 (F-C-18 · D-03 · D-25 · O-13)
+//
+// **표를 만들지 않은 태스크다.** 순서는 S6-02 의 마켓이 이미 만들고 있고, 이 태스크가
+// 더하는 것은 **그 순서의 근거를 공개하는 것**이다. 그래서 여기서 볼 것은 셋이다 —
+// (가) 근거가 실제 순서와 같은가, (나) 지어내지 않은 것을 지어내지 않았는가,
+// (다) 그 순서를 떠받치는 표가 여전히 당사자에게 닫혀 있는가(층 3 재확인).
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const rankingSource = readFileSync("lib/core/planner/ranking.ts", "utf8");
+  const rankingPage = readFileSync("app/(consumer)/planners/ranking/page.tsx", "utf8");
+  const marketApi = readFileSync("app/api/planners/route.ts", "utf8");
+  const marketView = readFileSync("app/(consumer)/planners/PlannerMarketView.tsx", "utf8");
+
+  // ── 층 3 재확인: 순서를 떠받치는 표를 당사자가 쓸 수 있는가 ──────────────
+  // 마켓의 유일한 실적 지표는 `planner_contract_count` 이고 그 함수는
+  // `planner_settlements` 를 센다. **그 표를 플래너가 쓸 수 있으면 순위를 스스로
+  // 올릴 수 있다** — S6-05 가 닫았고, 여기서 다시 못 박는다.
+  check(
+    "**실적의 근거 표에 쓰기 GRANT 가 없다** — 있으면 순위를 스스로 올릴 수 있다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_settlements'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**쓰기 정책도 없다** — GRANT 를 되돌려도 열리지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_settlements'
+             and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL');`) === "0",
+  );
+  check(
+    "**실적 집계는 여전히 개수만 돌려주는 함수다** — 뷰였다면 남의 정산이 새어 나간다",
+    sql(`select count(*) from pg_proc
+           where proname = 'planner_contract_count' and prosecdef;`) === "1",
+  );
+  check(
+    "**공개 상태를 스스로 켤 수 없다**(FIX-54) — 켤 수 있으면 순위 이전에 목록에 든다",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'planners'
+             and grantee = 'authenticated' and privilege_type = 'INSERT'
+             and column_name = 'status';`) === "0",
+  );
+
+  // ── 공개한 기준이 실제 순서와 같은가 ─────────────────────────────────────
+  check(
+    "**순서를 만드는 함수가 하나다** — 기준 화면이 목록을 다시 계산하지 않는다",
+    !rankingPage.includes("sortMarket") && !rankingPage.includes("loadMarket"),
+  );
+  check(
+    "**기준 목록을 지어내지 않는다** — S6-01·S6-02 의 판정을 그대로 읽는다",
+    rankingSource.includes("rankingMetricAvailability") &&
+      rankingSource.includes("MARKET_SORTS"),
+  );
+  check(
+    "**S6-01 이 만들어 둔 판정 함수를 읽는 화면이 생겼다** — 그전까지 쓰는 곳이 없었다",
+    rankingPage.includes("rankingDisclosure"),
+  );
+
+  // ── 지어내지 않은 것 ─────────────────────────────────────────────────────
+  check(
+    "**종합 점수를 만들지 않았다는 사실이 값으로 나간다**(함정 3 · O-13)",
+    rankingSource.includes("compositeScore: false"),
+  );
+  check(
+    "**추천·프리미엄 정렬이 어휘에 없다**(D-03 · §2.2)",
+    ["recommended", "sponsored", "premium", "featured"].every(
+      (word) => !readFileSync("lib/core/planner/profile.ts", "utf8").includes(`"${word}"`),
+    ),
+  );
+  check(
+    "**콜드스타트에 대응하지 않고 물음만 든다**",
+    rankingSource.includes("COLD_START_NOTE") && !rankingSource.includes("boost"),
+  );
+  check(
+    "**못 세는 이유를 두 종류로 가른다** — '곧 생긴다' 와 '생길 수 없다' 는 다른 말이다",
+    readFileSync("lib/core/planner/scope.ts", "utf8").includes('kind: "not_distinct"') &&
+      readFileSync("lib/core/planner/scope.ts", "utf8").includes('kind: "pending"'),
+  );
+
+  // ── 화면·API 가 이어져 있다 ──────────────────────────────────────────────
+  check(
+    "`/planners/ranking` 화면이 실재한다",
+    existsSync("app/(consumer)/planners/ranking/page.tsx"),
+  );
+  check(
+    "**마켓이 기준 화면으로 잇는다** — 배지 한 줄로는 '왜 이 지표뿐인가' 를 못 답한다",
+    marketView.includes("/planners/ranking"),
+  );
+  check(
+    "**플래너 상세도 잇는다** — '아직 세지 않아요' 를 읽은 사람이 다음에 묻는 자리다",
+    readFileSync("app/(consumer)/planners/[id]/page.tsx", "utf8").includes("/planners/ranking"),
+  );
+  check(
+    "**플래너 콘솔도 잇는다** — 본인이 무엇으로 평가되는지 알아야 한다",
+    readFileSync("app/(planner)/pro/page.tsx", "utf8").includes("/planners/ranking"),
+  );
+  check(
+    "**근거가 목록 응답과 함께 나간다**(§2.2 · D-25) — 결과와 기준은 같이 다닌다",
+    marketApi.includes("ranking: rankingDisclosure()"),
+  );
+
+  // ── 비로그인도 근거를 읽는가 (고르기 전에 읽는 것이다) ───────────────────
+  check(
+    "**마켓은 여전히 비로그인이 본다** — 순서의 근거도 로그인 뒤에 숨지 않는다",
+    asAnon(`select count(*) from public.planners where status = 'active';`) !== "0",
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · S6-06 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

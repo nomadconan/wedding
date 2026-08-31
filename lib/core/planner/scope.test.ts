@@ -186,14 +186,35 @@ describe("랭킹 — 못 세는 것을 0으로 적지 않는다 (D-25 · O-13)",
     expect(result.available === true && result.source).toBe("planner_settlements");
   });
 
-  it("나머지 지표는 담당 태스크와 함께 보류된다", () => {
-    for (const metric of ["consultations", "bookings", "reviews", "profile_views"] as const) {
+  it("채우는 경로가 없는 지표는 **담당 태스크와 함께** 보류된다", () => {
+    for (const metric of ["consultations", "reviews", "profile_views"] as const) {
       const result = rankingMetricAvailability(metric);
 
       expect(result.available).toBe(false);
-      expect(result.available === false && result.owner).toMatch(/^S\d/);
+      expect(result.available === false && result.kind).toBe("pending");
+      expect(result.available === false && result.kind === "pending" && result.owner).toMatch(
+        /^S\d/,
+      );
       expect(result.available === false && result.reason.length).toBeGreaterThan(5);
     }
+  });
+
+  // S6-06. **"곧 생긴다" 와 "생길 수 없다" 를 같은 문장으로 적지 않는다.**
+  it("**예약 건수는 따로 셀 수 없는 지표다** — 계약 건수와 같은 행을 센다", () => {
+    const result = rankingMetricAvailability("bookings");
+
+    expect(result.available).toBe(false);
+    expect(result.available === false && result.kind).toBe("not_distinct");
+    expect(result.available === false && result.kind === "not_distinct" && result.sameAs).toBe(
+      "contracts",
+    );
+  });
+
+  // FIX-51 이 담당을 옮겼다 — S6-04 는 그 값을 채우지 않기로 했다.
+  it("상담 지표의 담당이 캘린더 연동(S4-11)으로 옮겨져 있다", () => {
+    const result = rankingMetricAvailability("consultations");
+
+    expect(result.available === false && result.kind === "pending" && result.owner).toBe("S4-11");
   });
 
   it("지금 쓸 수 있는 지표는 하나뿐이다 — 종합 점수를 만들 수 없다", () => {

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { AdminShell } from "@/components/layout/AdminShell";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -46,6 +47,15 @@ export default async function PlannerConsolePage() {
             : "프로필과 공개 상태를 관리합니다. 요금은 요율 설정에서 다뤄요."
         }
       >
+        {/* S6-06. **플래너가 가장 먼저 묻는 것**이 "나는 무엇으로 평가되는가" 다.
+            기준을 감추면 그 자리를 추측과 소문이 채운다(D-25). */}
+        <p className="mb-4 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-neutral-700">
+          마켓의 순서는 실적 지표와 사실 정보로만 정해요.{" "}
+          <Link href="/planners/ranking" className="font-medium text-brand-600">
+            무엇을 세고 무엇을 안 세는지 보기
+          </Link>
+        </p>
+
         <ProfileForm
           data={{
             planner:
