@@ -6,6 +6,7 @@ import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { loadCarts, pickCartBySeq } from "@/lib/cart/loader";
+import { SCOPE_MISMATCH_NOTICE, scopeMismatch, type ScopeRow } from "@/lib/core/planner/scope";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -89,5 +90,55 @@ async function CartSection({ seq }: { seq: number | null }) {
     memberIds: (members ?? []).map((row) => (row as { user_id: string }).user_id),
   });
 
-  return <CartWorkspace view={view} selected={pickCartBySeq(view, seq)} />;
+  // S6-03. **카테고리 설정과 항목 토글이 어긋날 수 있다**(F-C-31 · D-17). 어느 쪽이
+  // 이기는가는 이미 정해져 있다 — **항목 토글이 이긴다**(장바구니마다 다른 조합을
+  // 비교할 수 있어야 하기 때문이다). 그러면 카테고리 화면에서 "드레스는 플래너" 라고
+  // 정한 사람이 **여기서는 다르게 계산된 총액**을 보게 되는데, 그 사실을 말하지 않으면
+  // 어느 쪽이 진짜인지 알 수 없다. 판정은 순수 함수가 한다(`scopeMismatch`).
+  const { data: scopeRows } = await supabase
+    .from("planner_scopes")
+    .select("category, planner_id, status, selected_at, released_at")
+    .eq("couple_id", membership.coupleId)
+    .eq("status", "selected");
+
+  const scopes: ScopeRow[] = ((scopeRows ?? []) as Record<string, unknown>[]).map((row) => ({
+    category: row.category as string,
+    plannerId: row.planner_id as string,
+    status: "selected",
+    selectedAt: row.selected_at as string,
+    releasedAt: (row.released_at as string | null) ?? null,
+  }));
+
+  const selectedCart = pickCartBySeq(view, seq);
+
+  const mismatch = scopeMismatch({
+    items: (selectedCart?.items ?? [])
+      .filter((item) => item.category !== null)
+      .map((item) => ({ category: item.category as string, plannerSelected: item.plannerSelected })),
+    scopes,
+  });
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-border px-3 py-2">
+        <p className="text-caption text-neutral-700">
+          카테고리별 플래너 이용은 <strong>이용 범위 설정</strong>이 기본값을 정하고, 항목마다
+          따로 켜고 끌 수 있어요.
+        </p>
+        {mismatch.length > 0 ? (
+          <p className="mt-1 text-caption text-warning" data-testid="scope-mismatch">
+            {SCOPE_MISMATCH_NOTICE}
+          </p>
+        ) : null}
+        <Link
+          href="/planners/scopes"
+          className="mt-1 inline-block text-caption font-medium text-brand-600"
+        >
+          플래너 이용 범위 설정
+        </Link>
+      </section>
+
+      <CartWorkspace view={view} selected={selectedCart} />
+    </div>
+  );
 }

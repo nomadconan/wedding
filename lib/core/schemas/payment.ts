@@ -30,10 +30,20 @@ export const CheckoutRequestSchema = z.object({
 
 export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
 
+/**
+ * 계약 발행 요청.
+ *
+ * **`plannerId` 를 받지 않는다**(S6-03 · FIX-53). 발행하는 쪽은 **업체**인데 플래너를
+ * 본문으로 받으면 고객이 고른 적 없는 플래너를 계약 당사자로 앉힐 수 있고, 그 순간
+ * 그 플래너가 서명 당사자가 되며(F-C-15) 고객이 수수료를 낸다. 반대로 비워 보내면
+ * 고객이 고른 플래너가 아무것도 못 받는다 — 어느 쪽이든 **"누구의 것인가" 가 판정에서
+ * 빠진 것**이다(FIX-45 와 같은 자리).
+ *
+ * 누구에게 맡겼는가는 **고객의 선택**이며 `planner_scopes` 가 든다(F-C-31 · S6-03).
+ */
 export const IssueContractRequestSchema = z.object({
   bookingId: z.string().uuid("예약 식별자가 올바르지 않습니다."),
   quoteId: z.string().uuid().nullable().optional(),
-  plannerId: z.string().uuid().nullable().optional(),
 });
 
 export type IssueContractRequest = z.infer<typeof IssueContractRequestSchema>;

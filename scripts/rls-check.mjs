@@ -4063,12 +4063,15 @@ if (!vendorStaff || !adminUser) {
            ${scopeFixture}
            select count(*) from public.planner_scopes; rollback;`) === "2",
     );
+    // S6-03(0070) 이후로는 **짝이 어긋난 행을 만들 수조차 없다** — 트리거가 해제
+    // 시각을 채우기 때문이다. 예전에는 CHECK 이 거절하는 것을 봤는데, 지금은 그보다
+    // 앞에서 서버가 값을 넣는다. 확인할 것도 바뀐다: **거절**이 아니라 **채워졌는가**다.
     check(
-      "해제 상태와 시각의 짝이 어긋나면 거절한다 (언제 뺐는가가 쟁점이다)",
-      rejectedWith(/planner_scopes_released_pair/, () =>
-        sql(`begin; ${scopeFixture}
-          update public.planner_scopes set status = 'released';
-          rollback;`)),
+      "해제하면 시각을 서버가 채운다 (짝이 어긋난 행을 만들 수 없다 · 0070)",
+      sql(`begin; ${scopeFixture}
+        update public.planner_scopes set status = 'released';
+        select (released_at is not null)::text from public.planner_scopes;
+        rollback;`) === "true",
     );
     check(
       "판매가가 없는 카테고리는 지정할 수 없다 (수수료가 붙을 자리가 없다)",
@@ -4086,9 +4089,11 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "**배우자도 카테고리를 고를 수 있다** (결제·서명과 다른 층 — 구성 선택이다)",
+      // `selected_by` 를 넘기지 않는다 — 0070 이 그 칸의 쓰기 권한을 걷었고
+      // 트리거가 `auth.uid()` 로 채운다(위조 케이스는 S6-03 구역이 따로 본다).
       asUser(partner, `with i as (insert into public.planner_scopes
-         (couple_id, planner_id, category, selected_by)
-         values ('${coupleId}', '${PLANNER_ID}', 'dress', '${partner}') returning id)
+         (couple_id, planner_id, category)
+         values ('${coupleId}', '${PLANNER_ID}', 'dress') returning id)
          select count(*) from i;`) === "1",
     );
     check(
@@ -4107,8 +4112,9 @@ if (!vendorStaff || !adminUser) {
       asUser(outsider, `select count(*) from public.planner_scopes;`, scopeFixture) === "0",
     );
     check(
-      "비로그인은 카테고리 선택을 못 본다",
-      asAnon(`select count(*) from public.planner_scopes;`, scopeFixture) === "0",
+      "비로그인은 카테고리 선택 표에 닿지도 못한다 (0070 이 GRANT 를 걷었다)",
+      rejectedWith(/permission denied/i, () =>
+        asAnon(`select count(*) from public.planner_scopes;`, scopeFixture)),
     );
     check(
       "**선택 이력은 지울 수 없다** (언제부터 언제까지 썼는가가 남아야 한다 · D-23)",
@@ -11651,6 +11657,436 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0069 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S6-03 — 카테고리별 부분 선택 과금 (F-C-31 · 0070)
+//
+// 이 태스크의 자격은 `is_couple_member(couple_id)` 이고 그 근거 표는
+// **`couple_members`** 다. 그리고 선택의 **전제**는 트리거가 읽는
+// **`planner_engagements`** 다. 자격을 얻으려는 사람은 둘 — 남의 커플에 끼어들려는
+// 사람과, 자기를 카테고리에 붙이려는 플래너다. 아래 첫 묶음이 그것을 본다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const SEEDED_PLANNER = "00000000-0000-0000-0000-00000000c0b1";
+  const S603_PLANNER = "00000000-0000-0000-0000-0000000006b1";
+
+  /** 이미 고른 카테고리 하나. 시드 위임(활성)이 전제를 채운다. */
+  const scopeFixture = `
+    insert into public.planner_scopes (couple_id, planner_id, category, selected_by)
+      values ('${coupleId}', '${SEEDED_PLANNER}', 'dress', '${owner}');
+  `;
+
+  /** 기간이 지난 위임을 가진 플래너. 전제 판정이 **기간까지** 보는지 확인한다. */
+  const expiredFixture = `
+    insert into public.planners (id, user_id, status, profile_json, regions)
+      values ('${S603_PLANNER}', '${outsider}', 'active',
+              '{"headline":"만료 픽스처","categories":["hall"]}'::jsonb, array['서울']);
+    insert into public.planner_engagements
+      (planner_id, couple_id, scope_json, status, valid_from, valid_to, responded_at)
+      values ('${S603_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb, 'active',
+              now() - interval '30 days', now() - interval '1 day', now() - interval '30 days');
+  `;
+
+  // ── 층 3 (FIX-44 · FIX-47): 자격의 근거가 되는 표 ────────────────────────
+  check(
+    "**남이 우리 커플 구성원이 될 수 없다** — 되면 카테고리 과금을 남이 정한다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(
+        outsider,
+        `insert into public.couple_members (couple_id, user_id, member_role)
+           values ('${coupleId}', '${outsider}', 'partner');`,
+      ),
+    ),
+  );
+  check(
+    "**배우자가 스스로 소유자가 될 수 없다** — 값이 바뀌었는지 직접 본다(함정 9)",
+    asUser(
+      partner,
+      `update public.couple_members set member_role = 'owner'
+        where couple_id = '${coupleId}' and user_id = '${partner}';
+       select member_role from public.couple_members
+        where couple_id = '${coupleId}' and user_id = '${partner}';`,
+    ) === "partner",
+  );
+  check(
+    "**남의 커플 행을 만들어 끼어들 수도 없다** — 부트스트랩은 자기가 만든 커플에만 걸린다",
+    asUser(
+      outsider,
+      `with i as (insert into public.couple_members (couple_id, user_id, member_role)
+                    select '${coupleId}', '${outsider}', 'owner'
+                     where public.owns_couple_record('${coupleId}')
+                  returning id)
+       select count(*) from i;`,
+    ) === "0",
+  );
+  check(
+    "**플래너는 자기를 카테고리에 붙일 수 없다** — 그것이 곧 자기 수수료를 늘리는 행위다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        plannerAccount ?? outsider,
+        `insert into public.planner_scopes (couple_id, planner_id, category)
+           values ('${coupleId}', '${SEEDED_PLANNER}', 'hall');`,
+      ),
+    ),
+  );
+  check(
+    "**커플 구성원 판정이 자기 조건을 스스로 든다**(층 2 · FIX-41)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'couple_members'
+             and policyname in ('couple_members_insert', 'couple_members_update',
+                                'couple_members_delete')
+             and coalesce(qual, '') || coalesce(with_check, '') like '%couple%';`) === "3",
+  );
+  check(
+    "**카테고리 조회 정책도 소유자 조건을 스스로 든다**(층 2)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_scopes'
+             and policyname = 'planner_scopes_select'
+             and qual like '%p.user_id = auth.uid()%';`) === "1",
+  );
+
+  // ── 층 1: 정책 아래의 권한 ───────────────────────────────────────────────
+  check(
+    "**planner_scopes 에 표 단위 INSERT·UPDATE 가 없다**(FIX-36)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_scopes'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**고를 때 담는 칸은 셋뿐이다** — status·시각·행위자는 넣을 수 없다",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'planner_scopes'
+            and grantee = 'authenticated' and privilege_type = 'INSERT';`) ===
+      "category,couple_id,planner_id",
+  );
+  check(
+    "**고칠 수 있는 칸은 status 하나뿐이다**",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'planner_scopes'
+            and grantee = 'authenticated' and privilege_type = 'UPDATE';`) === "status",
+  );
+  check(
+    "**해제는 삭제가 아니다** — DELETE 정책도 권한도 없다(D-23)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_scopes' and cmd = 'DELETE';`) === "0" &&
+      sql(`select count(*) from information_schema.role_table_grants
+             where table_schema = 'public' and table_name = 'planner_scopes'
+               and grantee in ('anon', 'authenticated') and privilege_type = 'DELETE';`) === "0",
+  );
+  check(
+    "**비로그인에게 SELECT GRANT 가 남아 있지 않다**",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_scopes'
+             and grantee = 'anon' and privilege_type = 'SELECT';`) === "0",
+  );
+
+  // ── 위조 — 당사자가 직접 못 넣어야 할 칸 ─────────────────────────────────
+  check(
+    "**고른 사람을 위조하는 칸을 아예 적을 수 없다** — 배우자 이름을 넣는 길이 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category, selected_by)
+           values ('${coupleId}', '${SEEDED_PLANNER}', 'hall', '${partner}');`,
+      ),
+    ),
+  );
+  check(
+    "**대신 서버가 고른 사람을 적는다** — 막기만 하면 그 칸이 비어 버린다",
+    asUser(
+      owner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'hall');
+       select selected_by from public.planner_scopes
+        where couple_id = '${coupleId}' and category = 'hall' and status = 'selected';`,
+    ) === owner,
+  );
+  check(
+    "**선택 시각도 적을 수 없다** — 2020년으로 지어내는 길이 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category, selected_at)
+           values ('${coupleId}', '${SEEDED_PLANNER}', 'hall', '2020-01-01T00:00:00Z');`,
+      ),
+    ),
+  );
+  check(
+    "**대신 서버가 지금으로 적는다**",
+    asUser(
+      owner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'hall');
+       select (selected_at > now() - interval '1 minute')::text
+         from public.planner_scopes
+        where couple_id = '${coupleId}' and category = 'hall' and status = 'selected';`,
+    ) === "true",
+  );
+  check(
+    "**해제 시각을 직접 넣을 수 없다** — 권한 자체가 없다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `update public.planner_scopes set released_at = now() - interval '30 days'
+          where couple_id = '${coupleId}' and category = 'dress';`,
+        scopeFixture,
+      ),
+    ),
+  );
+  check(
+    "**해제하면 시각은 서버가 적는다**",
+    asUser(
+      owner,
+      `update public.planner_scopes set status = 'released'
+        where couple_id = '${coupleId}' and category = 'dress';
+       select (released_at is not null)::text from public.planner_scopes
+        where couple_id = '${coupleId}' and category = 'dress';`,
+      scopeFixture,
+    ) === "true",
+  );
+  check(
+    "**카테고리·플래너를 갈아 끼울 수 없다** — 증적과 행이 다른 말을 하게 된다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `update public.planner_scopes set category = 'hall'
+          where couple_id = '${coupleId}' and category = 'dress';`,
+        scopeFixture,
+      ),
+    ),
+  );
+  check(
+    "**해제한 카테고리를 되살릴 수 없다** — 재선택은 새 행이다(D-23)",
+    rejectedWith(/planner_scopes_transition|바꿀 수 없습니다/, () =>
+      asUser(
+        owner,
+        `update public.planner_scopes set status = 'selected'
+          where couple_id = '${coupleId}' and category = 'dress';`,
+        `${scopeFixture}
+         update public.planner_scopes set status = 'released'
+          where couple_id = '${coupleId}' and category = 'dress';`,
+      ),
+    ),
+  );
+  check(
+    "**해제 상태로 시작하는 행을 만들 수 없다** — 일어난 적 없는 해제를 적는 것이다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category, status)
+           values ('${coupleId}', '${SEEDED_PLANNER}', 'hall', 'released');`,
+      ),
+    ),
+  );
+
+  // ── 선택의 전제 — 위임이 있어야 하고 **기간 안이어야** 한다 ──────────────
+  check(
+    "**위임이 없는 플래너를 지정할 수 없다**(0036 의 불변식이 그대로다)",
+    rejectedWith(/planner_scopes_no_engagement|위임이 활성/, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category)
+           values ('${coupleId}', '${S603_PLANNER}', 'hall');`,
+        `insert into public.planners (id, user_id, status, profile_json, regions)
+           values ('${S603_PLANNER}', '${outsider}', 'active',
+                   '{"headline":"위임 없음","categories":["hall"]}'::jsonb, array['서울']);`,
+      ),
+    ),
+  );
+  check(
+    "**기간이 지난 위임의 플래너도 지정할 수 없다** — 상태만 보지 않는다",
+    rejectedWith(/planner_scopes_no_engagement|위임이 활성/, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category)
+           values ('${coupleId}', '${S603_PLANNER}', 'hall');`,
+        expiredFixture,
+      ),
+    ),
+  );
+  check(
+    "**활성 위임이 있으면 고를 수 있다** — 막기만 하면 기능이 없는 것이다",
+    asUser(
+      owner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'hall');
+       select status from public.planner_scopes
+        where couple_id = '${coupleId}' and category = 'hall';`,
+    ) === "selected",
+  );
+  check(
+    "**배우자도 고를 수 있다** — 구성 선택이지 돈을 움직이는 확정이 아니다(0036)",
+    asUser(
+      partner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'snap');
+       select count(*) from public.planner_scopes
+        where couple_id = '${coupleId}' and category = 'snap';`,
+    ) === "1",
+  );
+  check(
+    "**한 카테고리에 동시에 선택된 것은 하나다** — 둘이면 수수료가 두 번 붙는다",
+    rejectedWith(/uq_planner_scopes_selected/, () =>
+      asUser(
+        owner,
+        `insert into public.planner_scopes (couple_id, planner_id, category)
+           values ('${coupleId}', '${SEEDED_PLANNER}', 'dress');`,
+        scopeFixture,
+      ),
+    ),
+  );
+
+  // ── 격리 ─────────────────────────────────────────────────────────────────
+  // **운영자를 '남' 으로 쓰지 않는다**(FIX-09 가 지적한 함정). `planner_scopes_select`
+  // 에는 `is_operator()` 갈래가 있어 운영자에게는 보이는 것이 정상이고, 그 계정으로
+  // 격리를 재면 검사가 엉뚱한 이유로 결론을 낸다.
+  check(
+    "**남은 남의 선택을 보지 못한다**",
+    asUser(outsider, `select count(*) from public.planner_scopes
+                       where couple_id = '${coupleId}';`, scopeFixture) === "0",
+  );
+  check(
+    "**운영자에게는 보인다** — 정산 분쟁을 조율하려면 무엇을 맡겼는지 알아야 한다",
+    asUser(adminUser, `select count(*) from public.planner_scopes
+                        where couple_id = '${coupleId}';`, scopeFixture) === "1",
+  );
+  check(
+    "**비로그인은 표에 닿지도 못한다**",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.planner_scopes;`, scopeFixture),
+    ),
+  );
+  if (plannerAccount) {
+    check(
+      "**맡은 플래너는 자기가 어느 카테고리를 맡았는지 읽는다** — 모르면 일을 못 한다",
+      asUser(
+        plannerAccount,
+        `select count(*) from public.planner_scopes where couple_id = '${coupleId}';`,
+        scopeFixture,
+      ) === "1",
+    );
+  }
+
+  // ── 두 축이 독립이다 (D-43) ──────────────────────────────────────────────
+  check(
+    "**카테고리를 빼도 열람 위임은 그대로다**",
+    asUser(
+      owner,
+      `select count(*) from public.planner_engagements
+        where couple_id = '${coupleId}' and status = 'active';`,
+      `${scopeFixture}
+       update public.planner_scopes set status = 'released'
+        where couple_id = '${coupleId}' and category = 'dress';`,
+    ) === "1",
+  );
+
+  // ── 집행 — 이 선택을 실제로 읽는 코드가 있는가 (FIX-46 이 드러낸 것) ─────
+  check(
+    "**계약 발행이 planner_scopes 를 읽는다** — 안 읽으면 화면이 아무것도 바꾸지 않는다",
+    readFileSync("lib/contract/actions.ts", "utf8").includes("selectedPlannerByCategory"),
+  );
+  check(
+    "**계약 발행이 plannerId 를 입력으로 받지 않는다**(FIX-53) — 업체가 고객의 플래너를 정할 수 없다",
+    !readFileSync("lib/core/schemas/payment.ts", "utf8").includes("plannerId: z.string()") &&
+      !readFileSync("app/api/contracts/route.ts", "utf8").includes("plannerId:"),
+  );
+  check(
+    "**요율 해석이 한 곳이다**(FIX-52) — 장바구니와 계약이 다른 답을 내지 않는다",
+    readFileSync("lib/cart/loader.ts", "utf8").includes("resolvePlannerRateBp") &&
+      readFileSync("lib/contract/actions.ts", "utf8").includes("resolvePlannerRateBp"),
+  );
+  check(
+    "**장바구니 요율 해석에 플래너가 들어간다** — 누구의 것인가가 판정에 있다",
+    readFileSync("lib/cart/loader.ts", "utf8").includes("selectedPlannerByCategory"),
+  );
+
+  // ── 화면·API 가 이어져 있다 ──────────────────────────────────────────────
+  check(
+    "`/planners/scopes` 화면이 실재한다",
+    existsSync("app/(consumer)/planners/scopes/page.tsx"),
+  );
+  check(
+    "**장바구니가 이용 범위 설정으로 잇는다** — 총액을 보는 자리에서 들어간다",
+    readFileSync("app/(consumer)/cart/page.tsx", "utf8").includes("/planners/scopes"),
+  );
+  check(
+    "**위임 관리가 카테고리 설정으로 잇는다**(D-43 — 두 축을 화면이 잇는다)",
+    readFileSync("app/(consumer)/planners/delegations/page.tsx", "utf8").includes(
+      "/planners/scopes",
+    ),
+  );
+  check(
+    "이용 범위 화면이 캐시되지 않는다 (함정 4)",
+    readFileSync("app/(consumer)/planners/scopes/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**coupleId 를 입력으로 받지 않는다** — 세션이 정한다(FIX-45 와 같은 자리)",
+    !readFileSync("app/api/planner-scopes/route.ts", "utf8").includes("coupleId: z."),
+  );
+  check(
+    "**집행 지점이 API 본문에 실린다**(함정 3) — 표시일 뿐이라고 읽지 않게 한다",
+    readFileSync("lib/planners/scopes.ts", "utf8").includes('enforcedAt: "contract_issue"'),
+  );
+  check(
+    "**두 축이 연동되지 않는다는 사실도 본문에 실린다**",
+    readFileSync("lib/planners/scopes.ts", "utf8").includes("delegationAxisLinked: false"),
+  );
+  check(
+    "**장바구니가 어긋남을 알린다** — 어느 쪽이 이기는지 화면이 말한다",
+    readFileSync("app/(consumer)/cart/page.tsx", "utf8").includes("scopeMismatch"),
+  );
+
+  // ── 증적 ─────────────────────────────────────────────────────────────────
+  check(
+    "**표를 직접 두드린 선택도 증적에 남는다** — 앱 경로만 믿지 않는다",
+    asUser(
+      owner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'video');
+       select count(*) from public.entity_events e
+        join public.planner_scopes s on s.id = e.entity_id
+        where e.entity_type = 'planner_scope' and s.category = 'video'
+          and e.event_type = 'planner_scope_selected';`,
+    ) === "1",
+  );
+  check(
+    "**증적에 금액을 담지 않는다** — 카테고리만 남긴다(§7.3)",
+    asUser(
+      owner,
+      `insert into public.planner_scopes (couple_id, planner_id, category)
+         values ('${coupleId}', '${SEEDED_PLANNER}', 'video');
+       select e.memo from public.entity_events e
+        join public.planner_scopes s on s.id = e.entity_id
+        where e.entity_type = 'planner_scope' and s.category = 'video';`,
+    ) === "category=video",
+  );
+
+  // ── 어휘 정합 ────────────────────────────────────────────────────────────
+  check(
+    "**카테고리 어휘가 코드와 DB CHECK 에서 같다**",
+    sql(`select count(*) from pg_constraint
+           where conrelid = 'public.planner_scopes'::regclass
+             and conname = 'planner_scopes_category_values';`) === "1" &&
+      readFileSync("lib/core/planner/scope.ts", "utf8").includes('"invitation",'),
+  );
+  check(
+    "**위임 범위 목록을 scope.ts 가 들지 않는다** — 같은 사실을 두 곳이 적고 있었다",
+    !readFileSync("lib/core/planner/scope.ts", "utf8").includes("export const PLANNER_VISIBILITY"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0070 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",
