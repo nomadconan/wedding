@@ -31,8 +31,8 @@ afterEach(() => {
 });
 
 const request = {
-  settlementId: "11111111-1111-1111-1111-111111111111",
-  vendorId: "22222222-2222-2222-2222-222222222222",
+  ledgerId: "11111111-1111-1111-1111-111111111111",
+  payee: { type: "vendor", vendorId: "22222222-2222-2222-2222-222222222222" } as const,
   amount: 9_500_000,
   currency: "KRW",
   idempotencyKey: "settlement:s1:payout:1",

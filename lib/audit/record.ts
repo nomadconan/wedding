@@ -59,6 +59,10 @@ export type EntityType =
   | "payment_schedule"
   | "settlement"
   | "planner_settlement"
+  // S6-05. 플래너 지급 시도. **실패 사유 문안을 memo 에 넣지 않는다**(§7.3) — 행이
+  // 갖고 있다. 남길 사실은 "보냈다·실패했다" 라는 전이와 금액·재시도 가능 여부이며,
+  // 그것이 "언제 얼마가 나갔는가" 의 답이 된다(D-23). 계좌·예금주는 담지 않는다.
+  | "planner_payout"
   // S5-10. 예약 승인·거절. **지금까지 예약에는 전이 기록이 없었다** — 당사자가
   // 표를 직접 써서 남길 사건이 없는 것처럼 보였기 때문이다(FIX-44). memo 에 거절 사유
   // 본문을 넣지 않는다 — 사유는 `bookings.decline_reason` 이 갖고, 여기엔 그것이
@@ -189,7 +193,15 @@ export type RecordEventInput = {
   entityId: string;
   /** 무슨 일이 있었는지. `<도메인>_<동사 과거형>` 으로 적는다. */
   eventType: string;
-  actor: { id: string; role?: string | null };
+  /**
+   * 행위자.
+   *
+   * **`id` 가 null 일 수 있다**(S6-05 가 열었다). 배치가 옮긴 상태 전이에는 **사람이
+   * 없다** — 그 자리에 운영 계정을 빌려 넣으면 증적이 "운영자가 눌렀다" 고 거짓말을
+   * 한다. 컬럼도 처음부터 nullable 이었고(`entity_events.actor_id`), 그때는
+   * `source: "system"` 이 누가 했는지를 말한다.
+   */
+  actor: { id: string | null; role?: string | null };
   /** 상태 전이. 값 자체를 적고 설명을 적지 않는다. */
   beforeState?: string | null;
   afterState?: string | null;
@@ -205,7 +217,7 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
     entity_type: input.entityType,
     entity_id: input.entityId,
     event_type: input.eventType,
-    actor_id: input.actor.id,
+    actor_id: input.actor.id ?? null,
     actor_role: input.actor.role ?? null,
     before_state: input.beforeState ?? null,
     after_state: input.afterState ?? null,

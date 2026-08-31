@@ -31,6 +31,7 @@ export const JOB_ROUTE_NAMES = [
   "consultation-confirm-request",
   "consultation-resolve",
   "dday-notifications",
+  "planner-payout-due",
   "price-anomaly-scan",
   "price-index-refresh",
   "purge-documents",

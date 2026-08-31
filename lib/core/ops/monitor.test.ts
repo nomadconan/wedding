@@ -79,7 +79,8 @@ describe("buildBatchRows", () => {
   it("라우트가 없는 배치는 cron 도 없다 (명세 §4.5 를 그대로 옮겼다)", () => {
     const noCron = BATCH_SPECS.filter((spec) => spec.cron === null).map((spec) => spec.name);
 
-    expect(noCron).toEqual(["settlement-aggregate", "planner-payout-due", "wishlist-price-watch"]);
+    // S6-05 가 `planner-payout-due` 의 라우트를 만들고 등록해 목록에서 빠졌다.
+    expect(noCron).toEqual(["settlement-aggregate", "wishlist-price-watch"]);
   });
 
   it("배치 열 종이 각각 **안 돌면 무엇이 깨지는지**를 적는다", () => {

@@ -2744,13 +2744,14 @@ if (!vendorStaff || !adminUser) {
     asUser(outsider, `select count(*) from public.planner_settlements;`, payFixture) === "0",
   );
   check(
-    "비로그인은 플래너 정산을 못 본다",
-    asAnon(`select count(*) from public.planner_settlements;`, payFixture) === "0",
+    "비로그인은 플래너 정산 표에 닿지도 못한다 (0071 이 GRANT 를 걷었다)",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.planner_settlements;`, payFixture)),
   );
   check(
-    "플래너도 자기 정산을 고칠 수 없다 (지급은 서비스롤의 일이다)",
-    asUser(owner, `with u as (update public.planner_settlements set status = 'paid' returning id)
-       select count(*) from u;`, payFixture) === "0",
+    "플래너도 자기 정산을 고칠 수 없다 (지급은 서비스롤의 일이다 · 0071 이 GRANT 까지 걷었다)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(owner, `update public.planner_settlements set status = 'paid';`, payFixture)),
   );
   check(
     "유예가 지나지 않은 정산은 지급 대상이 될 수 없다",
@@ -4225,17 +4226,20 @@ if (!vendorStaff || !adminUser) {
           insert into public.planners (user_id, status) values ('${partner}', 'LISTED');
           rollback;`)),
     );
+    // **셀 것이 있는 상태에서 잰다.** S6-05 가 정산 픽스처 둘을 시드에 넣기 전까지 이
+    // 검사는 0 을 0 과 견주고 있었다 — 통과했지만 아무것도 확인하지 않았다(함정 8).
     check(
       "**실적 집계는 개수만 돌려준다** (뷰였다면 남의 정산이 새어 나간다)",
-      sql(`select public.planner_contract_count('${PLANNER_ID}');`) === "0",
+      sql(`select public.planner_contract_count('${PLANNER_ID}');`) === "2",
     );
     check(
       "실적 집계 함수는 비로그인도 부를 수 있다 (마켓이 쓴다)",
-      asAnon(`select public.planner_contract_count('${PLANNER_ID}');`) === "0",
+      asAnon(`select public.planner_contract_count('${PLANNER_ID}');`) === "2",
     );
     check(
-      "**정산 표 자체는 여전히 남에게 닫혀 있다**",
-      asAnon(`select count(*) from public.planner_settlements;`) === "0",
+      "**정산 표 자체는 여전히 남에게 닫혀 있다** — 함수만 열려 있고 표는 GRANT 도 없다",
+      rejectedWith(/permission denied/i, () =>
+        asAnon(`select count(*) from public.planner_settlements;`)),
     );
 
     // ── 코드 ↔ DB 정합 ──────────────────────────────────────────────────────
@@ -12087,6 +12091,399 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0070 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S6-05 — 플래너 정산·지급 유예 (§3.4 · §4.5 · 0071 · **FIX-49 · FIX-54**)
+//
+// 이 원장의 주인은 `planners.user_id = auth.uid()` 가 정한다. 그러므로 층 3 의 물음은
+// "**돈을 받으려는 사람이 `planners` 를 직접 쓸 수 있는가**" 다 — 아래 첫 묶음이
+// 그것을 본다. FIX-54 가 거기서 나왔다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const SEEDED_PLANNER = "00000000-0000-0000-0000-00000000c0b1";
+  const PAYABLE_SETTLEMENT = "00000000-0000-0000-0000-00000000c0b3";
+  const GRACE_SETTLEMENT = "00000000-0000-0000-0000-00000000c0b4";
+
+  // ── 층 3 (FIX-44 · FIX-47): 자격의 근거가 되는 표 ────────────────────────
+  check(
+    "**아무나 처음부터 공개 플래너로 등록할 수 없다**(FIX-54) — 심사를 건너뛰는 길이었다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        outsider,
+        `insert into public.planners (user_id, status, profile_json, regions)
+           values ('${outsider}', 'active',
+                   '{"headline":"자가 공개","categories":["hall"],"careerYears":1}'::jsonb,
+                   array['서울']);`,
+      ),
+    ),
+  );
+  check(
+    "**대신 등록은 여전히 된다** — 막기만 하면 아무도 플래너가 될 수 없다",
+    asUser(
+      outsider,
+      `insert into public.planners (user_id, profile_json, regions)
+         values ('${outsider}',
+                 '{"headline":"정상 등록","categories":["hall"],"careerYears":1}'::jsonb,
+                 array['서울']);
+       select status from public.planners where user_id = '${outsider}';`,
+    ) === "pending",
+  );
+  check(
+    "**등록할 때 담는 칸은 셋뿐이다** — status·id 는 넣을 수 없다",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'planners'
+            and grantee = 'authenticated' and privilege_type = 'INSERT';`) ===
+      "profile_json,regions,user_id",
+  );
+  check(
+    "**남의 프로필을 자기 것으로 옮길 수 없다** — user_id 를 고칠 칸이 없다",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'planners'
+             and grantee = 'authenticated' and privilege_type = 'UPDATE'
+             and column_name in ('user_id', 'id');`) === "0",
+  );
+  check(
+    "**본인 프로필 수정은 여전히 된다** — 값이 바뀌었는지 직접 본다(함정 9)",
+    asUser(
+      plannerAccount ?? outsider,
+      `update public.planners set regions = array['RLS점검'] where user_id = '${plannerAccount ?? outsider}';
+       select regions[1] from public.planners where user_id = '${plannerAccount ?? outsider}';`,
+    ) === "RLS점검",
+  );
+  check(
+    "**스스로 공개 상태로 올리는 것은 여전히 트리거가 막는다**(0037)",
+    rejectedWith(/planners_self_activate|공개 상태로는 직접/, () =>
+      asUser(
+        plannerAccount ?? outsider,
+        `update public.planners set status = 'active' where user_id = '${plannerAccount ?? outsider}';`,
+        `update public.planners set status = 'paused' where user_id = '${plannerAccount ?? outsider}';`,
+      ),
+    ),
+  );
+
+  // ── 층 1 (FIX-49): 지급 원장의 쓰기 ──────────────────────────────────────
+  check(
+    "**planner_settlements 에 쓰기 GRANT 가 없다**(FIX-49) — 자기 지급액을 적을 수 없다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_settlements'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**쓰기 정책도 없다** — GRANT 를 되돌려도 열리지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_settlements'
+             and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL');`) === "0",
+  );
+  check(
+    "**플래너가 자기 지급액을 못 고친다** — 반영된 행 수로 본다(함정 9)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        plannerAccount ?? outsider,
+        `update public.planner_settlements set fee_amount = 99999999
+          where id = '${PAYABLE_SETTLEMENT}';`,
+      ),
+    ),
+  );
+  check(
+    "**스스로 지급 완료로 적을 수도 없다**",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        plannerAccount ?? outsider,
+        `update public.planner_settlements set status = 'paid', paid_at = now()
+          where id = '${PAYABLE_SETTLEMENT}';`,
+      ),
+    ),
+  );
+  check(
+    "**행을 새로 만들 수도 없다** — 실적(계약 건수)의 근거이기도 하다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        plannerAccount ?? outsider,
+        `insert into public.planner_settlements
+           (planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
+         values ('${SEEDED_PLANNER}',
+                 (select id from public.bookings limit 1),
+                 10000000, 300, 300000, now(), now());`,
+      ),
+    ),
+  );
+  check(
+    "**비로그인은 지급 원장에 닿지도 못한다**",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.planner_settlements;`),
+    ),
+  );
+
+  // ── 읽기 경계 ────────────────────────────────────────────────────────────
+  if (plannerAccount) {
+    check(
+      "**플래너는 자기 원장을 읽는다** — 막기만 하면 기능이 없는 것이다",
+      asUser(plannerAccount, `select count(*) from public.planner_settlements;`) === "2",
+    );
+  }
+  check(
+    "**남은 남의 원장을 못 읽는다**",
+    asUser(outsider, `select count(*) from public.planner_settlements;`) === "0",
+  );
+  check(
+    "**운영자는 읽는다** — 지급을 집행하고 이의에 답해야 한다",
+    asUser(adminUser, `select count(*) from public.planner_settlements;`) === "2",
+  );
+
+  // ── planner_payouts (신설 표) ────────────────────────────────────────────
+  check(
+    "**planner_payouts 에 쓰기 GRANT 가 없다** — 지급 기록은 서버가 쓴다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_payouts'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE');`) === "0",
+  );
+  check(
+    "**anon 에게는 SELECT 도 없다**",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_payouts'
+             and grantee = 'anon';`) === "0",
+  );
+  check(
+    "**조회 정책이 소유자 조건을 스스로 든다**(층 2 · FIX-41) — 부모가 넓어져도 안 열린다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_payouts'
+             and policyname = 'planner_payouts_select'
+             and qual like '%p.user_id = auth.uid()%';`) === "1",
+  );
+
+  const payoutFixture = `
+    insert into public.planner_payouts
+      (planner_settlement_id, amount, status, idempotency_key, provider)
+      values ('${PAYABLE_SETTLEMENT}', 360000, 'pending',
+              'planner_settlement:${PAYABLE_SETTLEMENT}:payout:1', 'stub');
+  `;
+
+  if (plannerAccount) {
+    check(
+      "**플래너는 자기 지급 시도를 읽는다** — 왜 실패했는지 알아야 한다",
+      asUser(plannerAccount, `select count(*) from public.planner_payouts;`, payoutFixture) === "1",
+    );
+  }
+  check(
+    "**남은 남의 지급 시도를 못 읽는다**",
+    asUser(outsider, `select count(*) from public.planner_payouts;`, payoutFixture) === "0",
+  );
+  check(
+    "**운영자는 읽는다**",
+    asUser(adminUser, `select count(*) from public.planner_payouts;`, payoutFixture) === "1",
+  );
+  check(
+    "**진행 중인 지급은 원장당 하나다** — 둘이 승인되면 같은 수수료가 두 번 나간다",
+    rejectedWith(/uq_planner_payouts_pending/, () =>
+      sql(`begin; ${payoutFixture}
+           insert into public.planner_payouts
+             (planner_settlement_id, amount, status, idempotency_key)
+             values ('${PAYABLE_SETTLEMENT}', 360000, 'pending', 'other-key');
+           rollback;`),
+    ),
+  );
+  check(
+    "**같은 멱등 열쇠로 두 번 요청할 수 없다** — 돈이 두 번 나간다",
+    rejectedWith(/planner_payouts_idempotency_key_key|23505/, () =>
+      sql(`begin; ${payoutFixture}
+           insert into public.planner_payouts
+             (planner_settlement_id, amount, status, idempotency_key)
+             values ('${GRACE_SETTLEMENT}', 100, 'pending',
+                     'planner_settlement:${PAYABLE_SETTLEMENT}:payout:1');
+           rollback;`),
+    ),
+  );
+  check(
+    "**0원은 지급 행으로 만들 수 없다**",
+    rejectedWith(/planner_payouts_amount_positive/, () =>
+      sql(`insert into public.planner_payouts
+             (planner_settlement_id, amount, status, idempotency_key)
+             values ('${PAYABLE_SETTLEMENT}', 0, 'pending', 'zero-key');`),
+    ),
+  );
+  check(
+    "**상태와 시각의 짝이 어긋난 행을 만들 수 없다**",
+    rejectedWith(/planner_payouts_paid_pair/, () =>
+      sql(`insert into public.planner_payouts
+             (planner_settlement_id, amount, status, idempotency_key)
+             values ('${PAYABLE_SETTLEMENT}', 100, 'paid', 'pair-key');`),
+    ),
+  );
+  check(
+    "**지급 기록은 부모를 따라 사라지지 않는다** — FK 가 restrict 다(cascade 아님)",
+    sql(`select confdeltype from pg_constraint
+           where conrelid = 'public.planner_payouts'::regclass
+             and conname = 'planner_payouts_planner_settlement_id_fkey';`) === "r",
+  );
+
+  // ── 지급 완료는 근거를 요구한다 ──────────────────────────────────────────
+  // **먼저 지급 대상으로 옮겨 놓고 잰다.** `earned` 인 채로 `paid` 를 시도하면 전이
+  // 규칙에 **먼저** 걸려, 지급 근거를 요구하는 규칙은 한 번도 실행되지 않는다
+  // (함정 8 — 다른 CHECK 에 먼저 걸려도 검사는 통과한다).
+  check(
+    "**성공한 지급 기록 없이 지급 완료로 적을 수 없다** — 나가지 않은 돈이 나갔다고 적힌다",
+    rejectedWith(/성공한 지급 기록 없이/, () =>
+      sql(`begin;
+             update public.planner_settlements set status = 'payable'
+              where id = '${PAYABLE_SETTLEMENT}';
+             update public.planner_settlements set status = 'paid', paid_at = now()
+              where id = '${PAYABLE_SETTLEMENT}';
+           rollback;`),
+    ),
+  );
+  check(
+    "**성공한 지급이 있으면 옮길 수 있다** — 막기만 하면 지급이 끝나지 않는다",
+    sql(`begin;
+           update public.planner_settlements set status = 'payable' where id = '${PAYABLE_SETTLEMENT}';
+           insert into public.planner_payouts
+             (planner_settlement_id, amount, status, idempotency_key, paid_at)
+             values ('${PAYABLE_SETTLEMENT}', 360000, 'paid', 'paid-key', now());
+           update public.planner_settlements set status = 'paid', paid_at = now()
+            where id = '${PAYABLE_SETTLEMENT}';
+           select status from public.planner_settlements where id = '${PAYABLE_SETTLEMENT}';
+         rollback;`) === "paid",
+  );
+
+  // ── 유예 경계 — 앞당길 수 없다 ───────────────────────────────────────────
+  check(
+    "**유예가 지나지 않은 건을 지급 대상으로 옮길 수 없다**(0028) — 앞당기면 회수할 수 없다",
+    rejectedWith(/planner_settlements_grace_not_elapsed|유예 기간이 지나지 않은/, () =>
+      sql(`update public.planner_settlements set status = 'payable'
+            where id = '${GRACE_SETTLEMENT}';`),
+    ),
+  );
+  check(
+    "**유예가 지난 건은 옮길 수 있다**",
+    sql(`begin;
+           update public.planner_settlements set status = 'payable' where id = '${PAYABLE_SETTLEMENT}';
+           select status from public.planner_settlements where id = '${PAYABLE_SETTLEMENT}';
+         rollback;`) === "payable",
+  );
+  check(
+    "**허용되지 않은 전이를 막는다** — earned 에서 바로 paid 로 갈 수 없다",
+    rejectedWith(/허용되지 않은 플래너 정산 상태 전이/, () =>
+      sql(`update public.planner_settlements set status = 'paid', paid_at = now()
+            where id = '${PAYABLE_SETTLEMENT}';`),
+    ),
+  );
+  check(
+    "**해지 무효는 어느 단계에서든 된다** — 그러나 되돌아오지 않는다",
+    rejectedWith(/허용되지 않은 플래너 정산 상태 전이/, () =>
+      sql(`begin;
+             update public.planner_settlements set status = 'void' where id = '${GRACE_SETTLEMENT}';
+             update public.planner_settlements set status = 'earned' where id = '${GRACE_SETTLEMENT}';
+           rollback;`),
+    ),
+  );
+
+  // ── 픽스처가 두 갈래를 다 덮는가 (함정 8) ────────────────────────────────
+  check(
+    "**유예가 지난 건과 아직 남은 건이 둘 다 시드에 있다** — 한 갈래만 있으면 검사가 아무것도 안 본다",
+    sql(`select count(*) from public.planner_settlements where payable_at <= now();`) === "1" &&
+      sql(`select count(*) from public.planner_settlements where payable_at > now();`) === "1",
+  );
+
+  // ── 같은 값을 두 곳이 다르게 해석하지 않는가 (FIX-52) ────────────────────
+  {
+    const payoutSource = readFileSync("lib/planners/payouts.ts", "utf8");
+
+    check(
+      "**유예 판정을 다시 만들지 않는다** — lib/core 의 함수를 부른다",
+      payoutSource.includes("plannerPayoutState"),
+    );
+    check(
+      "**유예 값도 계약 확정 경로와 같은 키를 같은 함수로 읽는다**",
+      payoutSource.includes('readSetting("planner.payout_grace_days")') &&
+        payoutSource.includes("resolveGraceDays") &&
+        readFileSync("lib/contract/actions.ts", "utf8").includes(
+          'readSetting("planner.payout_grace_days")',
+        ),
+    );
+    check(
+      "**지급 어댑터를 업체 지급과 공유한다** — 나누면 같은 일이 두 벌이 된다",
+      payoutSource.includes('from "@/lib/settlements/payout-adapter"'),
+    );
+    check(
+      "**어댑터가 받는 쪽을 종류와 함께 받는다** — 업체 정산을 플래너에게 보낼 수 없다",
+      readFileSync("lib/settlements/payout-adapter.ts", "utf8").includes("PayoutPayee") &&
+        payoutSource.includes('payee: { type: "planner"'),
+    );
+  }
+
+  // ── 집행 수단 — 누가 채우고 누가 읽는가 ─────────────────────────────────
+  check(
+    "**배치 라우트가 실재한다** — 표만 있고 옮기는 코드가 없으면 영영 유예다(FIX-46 모양)",
+    existsSync("app/api/jobs/planner-payout-due/route.ts"),
+  );
+  check(
+    "**`vercel.json` 에 등록돼 있다** — 만들어 두고 안 부르면 없는 것과 같다",
+    readFileSync("vercel.json", "utf8").includes("/api/jobs/planner-payout-due"),
+  );
+  check(
+    "**배치 이름이 job_runs 어휘에 있다** — 없으면 기록이 CHECK 에 걸려 사라진다",
+    sql(`select count(*) from pg_constraint
+           where conrelid = 'public.job_runs'::regclass
+             and conname = 'job_runs_name_vocab'
+             and pg_get_constraintdef(oid) like '%planner-payout-due%';`) === "1",
+  );
+  check(
+    "**지급을 실행하는 API 가 있다** — 지급 대상만 만들고 보내지 않으면 돈이 안 나간다",
+    existsSync("app/api/admin/planner-payouts/route.ts"),
+  );
+  check(
+    "**플래너가 자기 원장을 읽는 API 가 있다**",
+    existsSync("app/api/planner/settlements/route.ts"),
+  );
+
+  // ── 화면 ─────────────────────────────────────────────────────────────────
+  check("`/pro/settlements` 화면이 실재한다", existsSync("app/(planner)/pro/settlements/page.tsx"));
+  check(
+    "**플래너 내비가 내 정산을 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/pro/settlements"'),
+  );
+  check(
+    "**운영자 정산 화면이 플래너 지급을 함께 든다** — 두 화면이면 한쪽만 보고 마감한다",
+    readFileSync("app/(admin)/admin/settlements/page.tsx", "utf8").includes("PlannerPayoutPanel"),
+  );
+  check(
+    "내 정산 화면이 캐시되지 않는다 (함정 4)",
+    readFileSync("app/(planner)/pro/settlements/page.tsx", "utf8").includes(
+      'export const dynamic = "force-dynamic"',
+    ),
+  );
+  check(
+    "**'받을 수 있음' 과 '받았음' 을 합치지 않는다는 사실이 본문에 실린다**(함정 3)",
+    readFileSync("lib/core/settlement/planner-payout.ts", "utf8").includes(
+      "PAYOUT_NOT_RECEIVED_NOTICE",
+    ) && readFileSync("lib/planners/payouts.ts", "utf8").includes("payoutWired: false"),
+  );
+  check(
+    "**plannerId 도 금액도 입력으로 받지 않는다** — 원장이 정한다(FIX-45·FIX-53 과 같은 자리)",
+    // 스키마 본문만 본다. 주석에는 그 낱말이 **왜 없는지**가 적혀 있어서, 파일 전체를
+    // 훑으면 설명 문장이 검사를 깨뜨린다.
+    (() => {
+      const source = readFileSync("app/api/admin/planner-payouts/route.ts", "utf8");
+      const block = source.slice(source.indexOf("const PaySchema"));
+      const fields = block.slice(0, block.indexOf("});"));
+
+      return (fields.match(/^ {2}[a-zA-Z]+:/gm) ?? [])
+        .map((line) => line.trim().replace(":", ""))
+        .sort()
+        .join(",") === "attempt,settlementId";
+    })(),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0071 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

@@ -547,6 +547,83 @@ async function seedPlanner(plannerUser, coupleId) {
   return "created";
 }
 
+/** Fixed ids so re-runs are idempotent and rls-check can find them. */
+const PAYABLE_SETTLEMENT_ID = "00000000-0000-0000-0000-00000000c0b3";
+const GRACE_SETTLEMENT_ID = "00000000-0000-0000-0000-00000000c0b4";
+
+/**
+ * Planner settlement fixture (S6-05).
+ *
+ * WHY TWO ROWS: the payout screen has two lanes that must not be conflated -
+ * "you can be paid" and "still in grace". A fixture that only fills one lane
+ * makes every check pass for the wrong reason (trap 8: a check that only ever
+ * sees one branch confirms nothing about the other).
+ *
+ * ALL TIMES ARE FIXED LITERALS, never computed. A computed time would make the
+ * second seed run differ from the first, and db:rls compares exact rows.
+ *
+ * The grace row ends in 2030 ON PURPOSE - far, but not infinite. When it
+ * passes, the "still in grace" lane goes empty and db:rls fails loudly instead
+ * of quietly testing nothing (same reasoning as the delegation fixture).
+ *
+ * NOT SEEDED: planner_payouts rows. A payout is an execution, and the flow
+ * check runs it for real through the stub adapter - seeding a fake "paid" row
+ * would mean the state machine is never exercised.
+ */
+async function seedPlannerSettlements() {
+  const bookings = await rest(
+    "bookings?select=id,total_amount&order=created_at.asc&limit=4",
+  );
+
+  if (bookings.length < 2) return "skipped (no bookings)";
+
+  const rows = [
+    {
+      id: PAYABLE_SETTLEMENT_ID,
+      booking: bookings[0],
+      // grace elapsed - this row is the "you can be paid" lane.
+      earned_at: "2026-01-01T00:00:00Z",
+      payable_at: "2026-01-15T00:00:00Z",
+    },
+    {
+      id: GRACE_SETTLEMENT_ID,
+      booking: bookings[1],
+      // still inside grace - the "not yet" lane.
+      earned_at: "2026-01-01T00:00:00Z",
+      payable_at: "2030-12-31T00:00:00Z",
+    },
+  ];
+
+  for (const row of rows) {
+    const existing = await rest(`planner_settlements?id=eq.${row.id}&select=id`);
+    if (existing.length > 0) continue;
+
+    const gross = row.booking.total_amount ?? 10000000;
+    // 300bp is the seeded global planner rate. The fee is computed the same way
+    // the contract path computes it (basis points, integer floor) - a different
+    // number here would make the screen and the ledger disagree.
+    const feeAmount = Math.floor((gross * 300) / 10000);
+
+    await rest("planner_settlements", {
+      method: "POST",
+      body: JSON.stringify({
+        id: row.id,
+        planner_id: PLANNER_ID,
+        booking_id: row.booking.id,
+        gross_amount: gross,
+        fee_rate_bp: 300,
+        fee_amount: feeAmount,
+        earned_at: row.earned_at,
+        payable_at: row.payable_at,
+        // status stays at the default `earned`. The batch moves the first row to
+        // `payable`; seeding it already-payable would skip the batch entirely.
+      }),
+    });
+  }
+
+  return "created";
+}
+
 // ── metrics fixture (S8-01) ─────────────────────────────────────────────────
 // Fixed ids so re-runs are idempotent and rls-check can find them.
 const METRIC_PRODUCT_ID = "00000000-0000-0000-0000-00000000d001";
@@ -1926,6 +2003,11 @@ async function main() {
   const monitoringSeed = await seedMonitoringFixture();
   const couponSeed = await seedCouponFixture(vendor.id, linkedCouple);
   const contractSeed = await seedContractFixture(METRIC_BOOKING_ID, 12000000);
+  // MUST run after the booking fixtures: planner settlements reference bookings.
+  // Calling it from inside seedPlanner() put it BEFORE those fixtures, so the rows
+  // only appeared on the second seed run - which is exactly what running
+  // `seed:accounts` twice is for.
+  const plannerSettlementSeed = await seedPlannerSettlements();
 
   console.log(`  contract fixture (S5-12): ${contractSeed}`);
   console.log("    active contract + 2 unpaid installments (20/80) on the metrics booking");
@@ -1971,6 +2053,8 @@ async function main() {
   console.log("    engagement  : active over the linked couple");
   console.log("    scope       : couples, carts, consultations (chat/payments stay closed)");
   console.log("    -> category selection (planner_scopes) is the customer's act - not seeded");
+  console.log(`    settlements: ${plannerSettlementSeed} - one past grace (payable), one still inside it`);
+  console.log("    -> planner_payouts is NOT seeded: a payout is an execution, not a fixture");
   console.log("");
   console.log("  linked couple fixture (S4-04)");
   console.log(`    couple id   : ${linkedCouple}`);

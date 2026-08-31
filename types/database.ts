@@ -3534,6 +3534,62 @@ export type Database = {
         }
         Relationships: []
       }
+      planner_payouts: {
+        Row: {
+          amount: number
+          attempt_count: number
+          created_at: string
+          failed_at: string | null
+          failure_reason: string | null
+          id: string
+          idempotency_key: string
+          paid_at: string | null
+          planner_settlement_id: string
+          provider: string | null
+          provider_ref: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          amount: number
+          attempt_count?: number
+          created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          idempotency_key: string
+          paid_at?: string | null
+          planner_settlement_id: string
+          provider?: string | null
+          provider_ref?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          attempt_count?: number
+          created_at?: string
+          failed_at?: string | null
+          failure_reason?: string | null
+          id?: string
+          idempotency_key?: string
+          paid_at?: string | null
+          planner_settlement_id?: string
+          provider?: string | null
+          provider_ref?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "planner_payouts_planner_settlement_id_fkey"
+            columns: ["planner_settlement_id"]
+            isOneToOne: false
+            referencedRelation: "planner_settlements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       planner_scopes: {
         Row: {
           category: string
