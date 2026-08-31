@@ -48,3 +48,36 @@ export const PlannerListingSchema = z.object({
 });
 
 export type PlannerListing = z.infer<typeof PlannerListingSchema>;
+
+/**
+ * 위임 제안 (S6-04 · F-C-18 · §3.7 planner_engagements)
+ *
+ * **`plannerId` 는 경로가 정하고 `coupleId` 는 세션이 정한다** — 본문으로 받으면
+ * 남의 커플 데이터를 내 플래너에게 여는 요청을 만들 수 있다(FIX-45 가 드러낸 자리:
+ * "누구의 것인가" 가 판정에서 빠지면 비용도 권한도 엉뚱한 쪽으로 간다).
+ *
+ * **`status` 를 받지 않는다.** 제안은 언제나 `pending` 에서 시작하고 수락은 플래너의
+ * 몫이다(D-165). 받으면 커플이 곧바로 `active` 로 적어 수락 절차를 우회한다.
+ *
+ * 범위 어휘는 `lib/core/planner/delegation.ts` 의 `DELEGATABLE_SCOPE_KEYS` 가 갖고
+ * DB CHECK 이 같은 목록을 든다 — 여기서는 **모양만** 본다(문자열·비어 있지 않음).
+ */
+export const DelegationOfferSchema = z.object({
+  scopes: z.array(z.string().trim().min(1)).min(1, "무엇을 보여줄지 하나 이상 골라 주세요."),
+  validFrom: z.string().datetime(),
+  validTo: z.string().datetime(),
+});
+
+export type DelegationOfferInput = z.infer<typeof DelegationOfferSchema>;
+
+/**
+ * 위임 상태 변경.
+ *
+ * **행위별로 갈랐다** — 상태 문자열을 그대로 받으면 "누가 무엇으로 옮길 수 있는가"
+ * 를 본문이 정하게 된다. 여기서 받는 것은 **행위**이고 상태는 서버가 정한다.
+ */
+export const DelegationActionSchema = z.object({
+  action: z.enum(["accept", "decline", "revoke"]),
+});
+
+export type DelegationAction = z.infer<typeof DelegationActionSchema>;

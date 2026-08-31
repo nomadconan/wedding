@@ -3438,6 +3438,9 @@ export type Database = {
           created_at: string
           id: string
           planner_id: string
+          responded_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
           scope_json: Json
           status: string
           updated_at: string
@@ -3449,6 +3452,9 @@ export type Database = {
           created_at?: string
           id?: string
           planner_id: string
+          responded_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
           scope_json?: Json
           status?: string
           updated_at?: string
@@ -3460,6 +3466,9 @@ export type Database = {
           created_at?: string
           id?: string
           planner_id?: string
+          responded_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
           scope_json?: Json
           status?: string
           updated_at?: string

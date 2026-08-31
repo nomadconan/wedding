@@ -63,6 +63,16 @@ export function PlannerMarketView({ data }: { data: MarketData }) {
         <p className="mt-0.5 text-xs text-neutral-600">{MARKET_SORT_BASIS_NOTICE}</p>
       </div>
 
+      {/* S6-04. **이미 위임한 사람이 돌아오는 자리다.** 목록만 있고 관리 화면으로
+          가는 길이 없으면, 위임을 거두려는 사람은 자기가 어느 플래너에게 맡겼는지
+          기억해 프로필을 다시 찾아 들어가야 한다. */}
+      <Link
+        href="/planners/delegations"
+        className="block rounded-lg border border-border px-3 py-2 text-xs font-medium text-brand-600"
+      >
+        내 위임 관리 — 지금 무엇이 열려 있는지 보고 거둘 수 있어요
+      </Link>
+
       <section>
         <p className="text-xs font-medium text-neutral-500">정렬</p>
         <div className="mt-2 flex flex-wrap gap-2">
