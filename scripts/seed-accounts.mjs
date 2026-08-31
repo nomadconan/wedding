@@ -526,8 +526,20 @@ async function seedPlanner(plannerUser, coupleId) {
         // Only the tables S3-04/S4-07 opened. Chat/payments stay closed.
         scope_json: { tables: ["couples", "carts", "consultations"] },
         status: "active",
+        // S6-04 (0069) requires a period on every live engagement (D-166): an
+        // open-ended delegation only ends if the customer remembers to revoke
+        // it. Both ends are FIXED LITERALS, never computed - a computed time
+        // would make the second seed run differ from the first.
+        //
+        // The end date is far but not infinite ON PURPOSE. When it passes,
+        // db:rls fails loudly on the delegation checks instead of quietly
+        // testing an expired engagement (trap 8: checking something that is
+        // already in a failed state makes the check pass for the wrong reason).
         valid_from: "2026-01-01T00:00:00Z",
-        valid_to: null,
+        valid_to: "2030-12-31T00:00:00Z",
+        // The trigger stamps this when it is missing; passing it keeps the
+        // fixture reproducible instead of depending on wall-clock at seed time.
+        responded_at: "2026-01-01T00:00:00Z",
       }),
     });
   }

@@ -355,8 +355,9 @@ check(
   asUser(plannerUser, `select count(*) from public.cart_items;`,
     `${cartFixture}
      insert into public.planners (id, user_id, status, profile_json, regions) values ('${PLANNER}', '${plannerUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
-     insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
-       values ('${PLANNER}', '${coupleId}', '{"tables":["tasks"]}'::jsonb, 'active');`) === "0",
+     insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+       values ('${PLANNER}', '${coupleId}', '{"tables":["tasks"]}'::jsonb, 'active',
+               now() - interval '1 day', now() + interval '30 days');`) === "0",
 );
 
 // ── 중복 처리 ────────────────────────────────────────────────────────────────
@@ -1164,7 +1165,11 @@ if (!adminUser || !opsUser || !vendorStaff) {
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       values ('${CPLANNER}', '${coupleId}',
-              '{"tables":["carts","wishlists","chat_rooms","chat_messages"]}'::jsonb,
+              -- S6-04(0069) 이후로는 **채팅을 범위에 적을 수조차 없다** — CHECK 이
+              -- 어휘를 11개로 못 박았다. 예전 픽스처는 "적어도 안 열린다" 를 봤는데,
+              -- 지금은 그보다 앞에서 막힌다. 그 사실은 아래 S6-04 구역이 따로 확인하고,
+              -- 여기서는 **정상 범위를 받은 플래너도 채팅은 못 본다** 를 본다.
+              '{"tables":["carts","wishlists"]}'::jsonb,
               'active', now() - interval '1 day', now() + interval '30 days');
   `;
 
@@ -1977,8 +1982,9 @@ if (!adminUser || !opsUser || !vendorStaff) {
     asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
       `${consultFixture}
        insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
-       insert into public.planner_engagements (planner_id, couple_id, scope_json, status)
-         values ('${PL2}', '${coupleId}', '{"tables":["carts"]}'::jsonb, 'active');`) === "0",
+       insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
+         values ('${PL2}', '${coupleId}', '{"tables":["carts"]}'::jsonb, 'active',
+                 now() - interval '1 day', now() + interval '30 days');`) === "0",
   );
 
   // ── 4) 슬롯 중복 금지 (구간 겹침이라 EXCLUDE) ────────────────────────────
@@ -5480,9 +5486,19 @@ if (!vendorStaff || !adminUser) {
               '{"headline":"예산 픽스처","categories":["hall"]}'::jsonb, array['서울'])
       on conflict (user_id) do nothing;
     insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
-      select p.id, '${coupleId}', '{"tables":["budgets","budget_items","expenses"]}'::jsonb,
+      -- **budget_items 는 범위 키가 아니다.** 그 표는 부모(budgets)의 정책을 통해
+      -- 보이며(층 2 모양), 위임 어휘에 그런 키는 없다. 0069 의 CHECK 이 이제
+      -- 그것을 거절한다 — 적어 두어도 열린 적이 없던 키다.
+      select p.id, '${coupleId}', '{"tables":["budgets","expenses"]}'::jsonb,
              'active', now() - interval '1 day', now() + interval '30 days'
-        from public.planners p where p.user_id = '${plannerAccount ?? outsider}';
+        from public.planners p where p.user_id = '${plannerAccount ?? outsider}'
+      -- 0069 가 "살아 있는 위임은 커플·플래너당 하나" 를 세웠고, 시드가 이미 이
+      -- 짝으로 활성 위임을 하나 갖고 있다. 두 개를 만들면 무엇이 열려 있는지
+      -- 답할 수 없으므로, 새로 만드는 대신 **범위를 갈아 끼운다.**
+      on conflict (couple_id, planner_id) where status in ('pending', 'active')
+      do update set scope_json = excluded.scope_json,
+                    valid_from = excluded.valid_from,
+                    valid_to   = excluded.valid_to;
   `;
 
   if (plannerAccount) {
@@ -11067,6 +11083,574 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0068 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S6-04 — 플래너 권한 위임 (F-C-18 · 0069)
+//
+// 이 태스크의 자격은 `has_planner_scope()` 이고 그 근거 표는 **`planner_engagements`
+// + `planners`** 다. 자격을 얻으려는 사람은 **플래너**이므로 물음은 하나다 —
+// "플래너가 그 두 표를 직접 쓸 수 있는가". 아래 첫 묶음이 그것을 본다.
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // 전용 플래너를 하나 더 세운다. 시드 플래너(planner@local.test)는 이 커플과
+  // **이미 활성 위임**을 갖고 있어 "수락 전" 갈래를 만들 수 없다 — 두 갈래가 다
+  // 닿아야 검사가 뭔가를 본다(함정 8).
+  const S604_PLANNER = "00000000-0000-0000-0000-0000000006a1";
+  const S604_OFFER = "00000000-0000-0000-0000-0000000006a2";
+  const SEEDED_PLANNER = "00000000-0000-0000-0000-00000000c0b1";
+
+  const plannerRow = `
+    insert into public.planners (id, user_id, status, profile_json, regions)
+      values ('${S604_PLANNER}', '${outsider}', 'active',
+              '{"headline":"위임 픽스처 플래너","categories":["hall"]}'::jsonb, array['서울']);
+  `;
+
+  /** 아직 수락되지 않은 제안 하나. 범위는 couples 뿐이라 열림·닫힘이 한 값으로 읽힌다. */
+  const offerFixture = `${plannerRow}
+    insert into public.planner_engagements
+      (id, planner_id, couple_id, scope_json, valid_from, valid_to)
+      values ('${S604_OFFER}', '${S604_PLANNER}', '${coupleId}',
+              '{"tables":["couples"]}'::jsonb,
+              now() - interval '1 day', now() + interval '30 days');
+  `;
+
+  /** 수락까지 끝난 위임. */
+  const activeFixture = `${offerFixture}
+    update public.planner_engagements set status = 'active' where id = '${S604_OFFER}';
+  `;
+
+  // ── 층 3 (FIX-44 · FIX-47): 자격의 근거가 되는 표 ────────────────────────
+  check(
+    "**플래너는 자기 위임을 만들 수 없다** — 만들 수 있으면 자격 검사가 아무것도 검사하지 않는다",
+    rejectedWith(/row-level security|permission denied/i, () =>
+      asUser(
+        outsider,
+        `insert into public.planner_engagements
+           (planner_id, couple_id, scope_json, valid_from, valid_to)
+         values ('${S604_PLANNER}', '${coupleId}', '{"tables":["guests"]}'::jsonb,
+                 now(), now() + interval '30 days');`,
+        plannerRow,
+      ),
+    ),
+  );
+  check(
+    "**플래너는 받은 제안의 범위를 넓힐 수 없다** — 스스로 넓히면 자기 수수료를 늘리는 행위다",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        outsider,
+        `update public.planner_engagements
+            set scope_json = '{"tables":["couples","guests","budgets"]}'::jsonb
+          where id = '${S604_OFFER}';`,
+        offerFixture,
+      ),
+    ),
+  );
+  check(
+    "**플래너는 기간도 늘릴 수 없다**",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        outsider,
+        `update public.planner_engagements set valid_to = now() + interval '10 years'
+          where id = '${S604_OFFER}';`,
+        offerFixture,
+      ),
+    ),
+  );
+  check(
+    "**수락해도 범위는 그대로다** — 값이 바뀌었는지를 직접 본다(함정 9)",
+    asUser(
+      outsider,
+      `update public.planner_engagements set status = 'active' where id = '${S604_OFFER}';
+       select scope_json::text from public.planner_engagements where id = '${S604_OFFER}';`,
+      offerFixture,
+    ) === '{"tables": ["couples"]}',
+  );
+  check(
+    "**플래너는 남에게 온 제안을 수락할 수 없다** — 반영된 행 수로 본다",
+    asUser(
+      plannerAccount ?? adminUser,
+      `with u as (update public.planner_engagements set status = 'active'
+                   where id = '${S604_OFFER}' returning id)
+       select count(*) from u;`,
+      offerFixture,
+    ) === "0",
+  );
+  check(
+    "**플래너는 자기 앞으로 온 제안을 수락한다** — 막기만 하면 기능이 없는 것이다",
+    asUser(
+      outsider,
+      `update public.planner_engagements set status = 'active' where id = '${S604_OFFER}';
+       select status from public.planner_engagements where id = '${S604_OFFER}';`,
+      offerFixture,
+    ) === "active",
+  );
+  check(
+    "**수락 시각은 서버가 적는다** — 당사자가 넣을 칸이 아니다",
+    asUser(
+      outsider,
+      `update public.planner_engagements set status = 'active' where id = '${S604_OFFER}';
+       select (responded_at is not null)::text
+         from public.planner_engagements where id = '${S604_OFFER}';`,
+      offerFixture,
+    ) === "true",
+  );
+  check(
+    "**수락한 플래너가 스스로 되돌릴 수 없다** — 되돌리기는 전이표에 없다",
+    asUser(
+      outsider,
+      `with u as (update public.planner_engagements set status = 'revoked'
+                   where id = '${S604_OFFER}' returning id)
+       select count(*) from u;`,
+      activeFixture,
+    ) === "0",
+  );
+  check(
+    "**거절한 제안을 스스로 되살릴 수 없다** — 재위임은 새 행이다(D-23)",
+    asUser(
+      outsider,
+      `update public.planner_engagements set status = 'declined' where id = '${S604_OFFER}';
+       with u as (update public.planner_engagements set status = 'active'
+                    where id = '${S604_OFFER}' returning id)
+       select count(*) from u;`,
+      offerFixture,
+    ) === "0",
+  );
+  check(
+    "**커플이 제안을 바로 활성으로 만들 수 없다** — 그러면 수락 절차가 우회된다(함정 6)",
+    rejectedWith(/permission denied/i, () =>
+      asUser(
+        owner,
+        `insert into public.planner_engagements
+           (planner_id, couple_id, scope_json, valid_from, valid_to, status)
+         values ('${S604_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb,
+                 now(), now() + interval '30 days', 'active');`,
+        plannerRow,
+      ),
+    ),
+  );
+  check(
+    "**커플 소유자는 제안을 만들 수 있고 그것은 pending 이다**",
+    asUser(
+      owner,
+      `insert into public.planner_engagements
+         (planner_id, couple_id, scope_json, valid_from, valid_to)
+       values ('${S604_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb,
+               now(), now() + interval '30 days');
+       select status from public.planner_engagements
+        where planner_id = '${S604_PLANNER}' and couple_id = '${coupleId}';`,
+      plannerRow,
+    ) === "pending",
+  );
+  check(
+    "**배우자는 위임을 제안할 수 없다** — 우리 데이터를 밖으로 여는 일이라 결제·서명과 같은 층이다",
+    rejectedWith(/row-level security/i, () =>
+      asUser(
+        partner,
+        `insert into public.planner_engagements
+           (planner_id, couple_id, scope_json, valid_from, valid_to)
+         values ('${S604_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb,
+                 now(), now() + interval '30 days');`,
+        plannerRow,
+      ),
+    ),
+  );
+  check(
+    "**되돌리는 전이는 트리거가 막는다** — 커플이 활성 위임을 pending 으로 되돌릴 수 없다",
+    rejectedWith(/planner_engagements_transition|바꿀 수 없습니다/, () =>
+      asUser(
+        owner,
+        `update public.planner_engagements set status = 'pending' where id = '${S604_OFFER}';`,
+        activeFixture,
+      ),
+    ),
+  );
+  check(
+    "**남은 남의 위임을 보지 못한다**",
+    asUser(adminUser, `select count(*) from public.planner_engagements
+                        where id = '${S604_OFFER}';`, offerFixture) === "0",
+  );
+  check(
+    "**비로그인은 위임 표에 닿지도 못한다** — 정책이 아니라 권한 자체가 없다",
+    rejectedWith(/permission denied/i, () =>
+      asAnon(`select count(*) from public.planner_engagements;`, offerFixture),
+    ),
+  );
+
+  // ── 층 2 (FIX-41): 정책이 자기 조건을 스스로 말하는가 ─────────────────────
+  check(
+    "**위임 조회 정책이 소유자 조건을 스스로 든다** — 부모 정책에 기대지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_engagements'
+             and policyname = 'planner_engagements_select'
+             and qual like '%p.user_id = auth.uid()%';`) === "1",
+  );
+  check(
+    "**플래너 응답 정책도 자기 조건을 스스로 든다**",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_engagements'
+             and policyname = 'planner_engagements_respond'
+             and qual like '%auth.uid()%' and with_check like '%auth.uid()%';`) === "1",
+  );
+  // 층 2 **기록**: budget_items_select 는 부모(budgets)를 통해서만 좁혀진다.
+  // 오늘은 부모가 좁아서 안전하지만, 부모가 넓어지는 순간 자식이 함께 열린다.
+  // 그래서 **부모를 못 박는다** — 넓어지면 여기서 먼저 깨진다.
+  check(
+    "**budget_items 의 부모(budgets) 정책이 여전히 좁다**(층 2 기록 · 위임이 여는 표다)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'budgets'
+             and policyname = 'budgets_select'
+             and qual like '%is_couple_member%';`) === "1",
+  );
+
+  // ── 층 1: 정책 아래의 권한 ───────────────────────────────────────────────
+  check(
+    "**planner_engagements 에 표 단위 INSERT·UPDATE 가 없다**(FIX-36 — 컬럼 회수만으로는 무효다)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_engagements'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**고칠 수 있는 칸은 status 하나뿐이다** — 범위·기간·상대는 못 만진다",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'planner_engagements'
+            and grantee = 'authenticated' and privilege_type = 'UPDATE';`) === "status",
+  );
+  check(
+    "**제안이 담는 칸은 다섯뿐이다** — status·시각·행위자는 넣을 수 없다",
+    sql(`select string_agg(column_name, ',' order by column_name)
+           from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'planner_engagements'
+            and grantee = 'authenticated' and privilege_type = 'INSERT';`) ===
+      "couple_id,planner_id,scope_json,valid_from,valid_to",
+  );
+  check(
+    "**위임을 지울 수 있는 사람이 없다**(D-23) — 지우면 '언제부터 언제까지 봤는가' 가 사라진다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_engagements'
+             and cmd = 'DELETE';`) === "0",
+  );
+  check(
+    "**planners 도 지울 수 없다** — cascade 로 위임 기록이 함께 사라지던 길이다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planners'
+             and grantee in ('anon', 'authenticated') and privilege_type = 'DELETE';`) === "0",
+  );
+  check(
+    "**planners 를 지워도 위임이 함께 사라지지 않는다** — FK 가 restrict 다",
+    rejectedWith(/violates foreign key constraint|still referenced/i, () =>
+      sql(`begin;
+             insert into public.planners (id, user_id, status, profile_json, regions)
+               values ('${S604_PLANNER}', '${outsider}', 'active',
+                       '{"headline":"삭제 시험","categories":["hall"]}'::jsonb, array['서울']);
+             insert into public.planner_engagements
+               (id, planner_id, couple_id, scope_json, valid_from, valid_to)
+               values ('${S604_OFFER}', '${S604_PLANNER}', '${coupleId}',
+                       '{"tables":["couples"]}'::jsonb, now(), now() + interval '30 days');
+             delete from public.planners where id = '${S604_PLANNER}';
+           rollback;`),
+    ),
+  );
+  check(
+    "**비로그인에게 SELECT GRANT 가 남아 있지 않다** — 남으면 정책 한 줄로 열린다",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'planner_engagements'
+             and grantee = 'anon' and privilege_type = 'SELECT';`) === "0",
+  );
+  check(
+    "**CHECK 이 생겼다** — 0069 전에는 이 표에 하나도 없었다",
+    Number(
+      sql(`select count(*) from pg_constraint
+             where conrelid = 'public.planner_engagements'::regclass and contype = 'c';`),
+    ) >= 7,
+  );
+
+  // ── CHECK 이 실제로 무엇을 막는가 ────────────────────────────────────────
+  check(
+    "**무기한 위임을 만들 수 없다**(D-166) — 잊으면 예식 뒤에도 계속 보인다",
+    rejectedWith(/planner_engagements_period_required/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, status)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   '{"tables":["couples"]}'::jsonb, 'pending');`),
+    ),
+  );
+  check(
+    "**끝이 시작보다 앞설 수 없다**",
+    rejectedWith(/planner_engagements_period_order/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, valid_from, valid_to)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   '{"tables":["couples"]}'::jsonb,
+                   now() + interval '10 days', now());`),
+    ),
+  );
+  check(
+    "**어휘 밖의 범위를 적을 수 없다** — 고객이 '결제를 위임했다' 고 믿는 일이 없다",
+    rejectedWith(/planner_engagements_scope_values/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, valid_from, valid_to)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   '{"tables":["payments"]}'::jsonb, now(), now() + interval '30 days');`),
+    ),
+  );
+  check(
+    "**채팅은 범위에 적을 수조차 없다**(S4-01 의 경계를 CHECK 이 앞당겨 든다)",
+    rejectedWith(/planner_engagements_scope_values/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, valid_from, valid_to)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   '{"tables":["chat_rooms"]}'::jsonb, now(), now() + interval '30 days');`),
+    ),
+  );
+  check(
+    "**범위가 빈 위임을 만들 수 없다** — 아무것도 열지 않는 위임은 장식이다",
+    rejectedWith(/planner_engagements_scope_nonempty/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, valid_from, valid_to)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   '{"tables":[]}'::jsonb, now(), now() + interval '30 days');`),
+    ),
+  );
+  check(
+    "**범위 칸이 아예 없는 행도 막힌다**(함정 8 — NULL 은 CHECK 을 통과한다)",
+    rejectedWith(/planner_engagements_scope_nonempty/, () =>
+      sql(`insert into public.planner_engagements
+             (planner_id, couple_id, valid_from, valid_to)
+           values ('${SEEDED_PLANNER}', '${coupleId}',
+                   now(), now() + interval '30 days');`),
+    ),
+  );
+  check(
+    "**허용 목록 열한 개는 다 통과한다** — 막기만 하면 고를 것이 없다",
+    sql(`begin;
+           ${plannerRow}
+           insert into public.planner_engagements
+             (planner_id, couple_id, scope_json, valid_from, valid_to)
+           values ('${S604_PLANNER}', '${coupleId}',
+                   '{"tables":["couples","tasks","budgets","expenses","carts","wishlists","bookings","consultations","quotes","guests","seating_plans"]}'::jsonb,
+                   now(), now() + interval '30 days');
+           select jsonb_array_length(scope_json -> 'tables')
+             from public.planner_engagements where planner_id = '${S604_PLANNER}';
+         rollback;`) === "11",
+  );
+  check(
+    "**살아 있는 위임은 커플·플래너당 하나다** — 둘이면 무엇이 열려 있는지 답할 수 없다",
+    rejectedWith(/uq_planner_engagements_live/, () =>
+      sql(`begin;
+             ${offerFixture}
+             insert into public.planner_engagements
+               (planner_id, couple_id, scope_json, valid_from, valid_to)
+             values ('${S604_PLANNER}', '${coupleId}', '{"tables":["guests"]}'::jsonb,
+                     now(), now() + interval '30 days');
+           rollback;`),
+    ),
+  );
+  check(
+    "**공개 중이 아닌 플래너에게는 위임할 수 없다** — 심사가 무의미해진다",
+    rejectedWith(/planner_engagements_planner_not_active|공개 중인 플래너/, () =>
+      sql(`begin;
+             insert into public.planners (id, user_id, status, profile_json, regions)
+               values ('${S604_PLANNER}', '${outsider}', 'pending',
+                       '{"headline":"미심사","categories":["hall"]}'::jsonb, array['서울']);
+             insert into public.planner_engagements
+               (planner_id, couple_id, scope_json, valid_from, valid_to)
+               values ('${S604_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb,
+                       now(), now() + interval '30 days');
+           rollback;`),
+    ),
+  );
+
+  // ── 어휘가 실제 정책과 같은가 (검사가 검사 노릇을 하게) ──────────────────
+  const policyScopeKeys = sql(
+    `select string_agg(k, ',' order by k) from (
+       select distinct m[1] as k
+         from pg_policies,
+              lateral regexp_matches(coalesce(qual, '') || ' ' || coalesce(with_check, ''),
+                                     'has_planner_scope\\([^,]+, ''([a-z_]+)''', 'g') m
+        where schemaname = 'public'
+     ) s;`,
+  );
+
+  check(
+    "**RLS 가 실제로 읽는 범위 키는 열한 개다** — 새 정책이 키를 늘리면 여기서 먼저 깨진다",
+    policyScopeKeys ===
+      "bookings,budgets,carts,consultations,couples,expenses,guests,quotes,seating_plans,tasks,wishlists",
+    policyScopeKeys,
+  );
+
+  {
+    const delegationSource = readFileSync("lib/core/planner/delegation.ts", "utf8");
+
+    check(
+      "**화면이 그리는 목록과 정책의 목록이 같다** — 하나라도 어긋나면 동의가 아니다",
+      policyScopeKeys.split(",").every((key) => delegationSource.includes(`key: "${key}"`)),
+    );
+    check(
+      "**목록에 없는 키를 화면이 그리지 않는다**",
+      (delegationSource.match(/^    key: "/gm) ?? []).length === 11,
+    );
+  }
+
+  // ── 판정이 DB 와 같은 답을 내는가 ────────────────────────────────────────
+  check(
+    "**수락 전에는 아무것도 열리지 않는다**(D-165)",
+    asUser(outsider, `select count(*) from public.couples where id = '${coupleId}';`, offerFixture) ===
+      "0",
+  );
+  check(
+    "**수락하면 열린다** — 막기만 하면 기능이 없는 것이다",
+    asUser(outsider, `select count(*) from public.couples where id = '${coupleId}';`, activeFixture) ===
+      "1",
+  );
+  check(
+    "**거두면 즉시 닫힌다**",
+    asUser(
+      outsider,
+      `select count(*) from public.couples where id = '${coupleId}';`,
+      `${activeFixture}
+       update public.planner_engagements set status = 'revoked', revoked_by = '${owner}'
+        where id = '${S604_OFFER}';`,
+    ) === "0",
+  );
+  check(
+    "**기간이 지나면 상태가 active 여도 닫힌다** — 만료를 저장하지 않는 이유다",
+    asUser(
+      outsider,
+      `select count(*) from public.couples where id = '${coupleId}';`,
+      `${plannerRow}
+       insert into public.planner_engagements
+         (id, planner_id, couple_id, scope_json, status, valid_from, valid_to, responded_at)
+         values ('${S604_OFFER}', '${S604_PLANNER}', '${coupleId}',
+                 '{"tables":["couples"]}'::jsonb, 'active',
+                 now() - interval '10 days', now() - interval '1 day', now() - interval '10 days');`,
+    ) === "0",
+  );
+  check(
+    "**거둔 시각과 사람이 남는다** — 행을 지우지 않기 때문에 남길 수 있다",
+    asUser(
+      owner,
+      `select (revoked_at is not null and revoked_by is not null)::text
+         from public.planner_engagements where id = '${S604_OFFER}';`,
+      `${activeFixture}
+       update public.planner_engagements set status = 'revoked', revoked_by = '${owner}'
+        where id = '${S604_OFFER}';`,
+    ) === "true",
+  );
+
+  // ── 두 축이 연동되지 않는다 (D-43) ───────────────────────────────────────
+  check(
+    "**위임을 거둬도 카테고리 선택은 그대로다** — 돈이 걸린 변경이 저절로 일어나지 않는다",
+    asUser(
+      owner,
+      `select count(*) from public.planner_scopes
+        where couple_id = '${coupleId}' and planner_id = '${S604_PLANNER}'
+          and status = 'selected';`,
+      `${activeFixture}
+       insert into public.planner_scopes (couple_id, planner_id, category, selected_by)
+         values ('${coupleId}', '${S604_PLANNER}', 'hall', '${owner}');
+       update public.planner_engagements set status = 'revoked', revoked_by = '${owner}'
+        where id = '${S604_OFFER}';`,
+    ) === "1",
+  );
+
+  // ── 증적 ─────────────────────────────────────────────────────────────────
+  check(
+    "**표를 직접 두드린 응답도 증적에 남는다** — 앱 경로만 믿지 않는다",
+    asUser(
+      outsider,
+      `update public.planner_engagements set status = 'declined' where id = '${S604_OFFER}';
+       select count(*) from public.entity_events
+        where entity_type = 'planner_engagement' and entity_id = '${S604_OFFER}'
+          and event_type = 'planner_engagement_declined';`,
+      offerFixture,
+    ) === "1",
+  );
+  check(
+    "**커플 구성원이 그 증적을 읽는다**",
+    asUser(
+      owner,
+      `select count(*) from public.entity_events
+        where entity_type = 'planner_engagement' and entity_id = '${S604_OFFER}';`,
+      `${offerFixture}
+       insert into public.entity_events
+         (entity_type, entity_id, event_type, actor_id, source)
+         values ('planner_engagement', '${S604_OFFER}', 'planner_engagement_offered',
+                 '${owner}', 'web');`,
+    ) !== "0",
+  );
+
+  // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
+  check(
+    "`/planners/delegations` 화면이 실재한다",
+    existsSync("app/(consumer)/planners/delegations/page.tsx"),
+  );
+  check(
+    "`/planners/[id]/delegate` 화면이 실재한다",
+    existsSync("app/(consumer)/planners/[id]/delegate/page.tsx"),
+  );
+  check(
+    "`/pro/engagements` 화면이 실재한다",
+    existsSync("app/(planner)/pro/engagements/page.tsx"),
+  );
+  check(
+    "**플래너 내비가 받은 위임을 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/pro/engagements"'),
+  );
+  check(
+    "**플래너 상세가 위임 화면으로 잇는다** — 문장만 있고 갈 곳이 없던 자리다",
+    readFileSync("app/(consumer)/planners/[id]/page.tsx", "utf8").includes("/delegate"),
+  );
+  check(
+    "**마켓에서 위임 관리로 돌아갈 수 있다**",
+    readFileSync("app/(consumer)/planners/PlannerMarketView.tsx", "utf8").includes(
+      "/planners/delegations",
+    ),
+  );
+  for (const page of [
+    "app/(consumer)/planners/delegations/page.tsx",
+    "app/(consumer)/planners/[id]/delegate/page.tsx",
+    "app/(planner)/pro/engagements/page.tsx",
+  ]) {
+    check(
+      `${page} 가 캐시되지 않는다 (함정 4)`,
+      readFileSync(page, "utf8").includes('export const dynamic = "force-dynamic"'),
+    );
+  }
+  check(
+    "**coupleId 를 입력으로 받지 않는다** — 세션이 정한다(FIX-45 와 같은 자리)",
+    !readFileSync("app/api/planner-engagements/route.ts", "utf8").includes("coupleId: z."),
+  );
+  check(
+    "**status 를 입력으로 받지 않는다** — 제안은 언제나 pending 이다",
+    !readFileSync("lib/core/schemas/planner.ts", "utf8").includes("DelegationOfferSchema = z.object({\n  status"),
+  );
+  check(
+    "**두 축이 연동되지 않는다는 사실이 API 본문에 실린다**(함정 3)",
+    readFileSync("lib/planners/delegation.ts", "utf8").includes("categoryAxisLinked: false"),
+  );
+  check(
+    "**수락 전에는 고객 신원이 열리지 않는다는 사실도 본문에 실린다**",
+    readFileSync("lib/planners/delegation.ts", "utf8").includes("customerIdentityVisible: false"),
+  );
+
+  // ── 기록: 이번에 고치지 않은 자리도 지금 상태를 못 박는다 ────────────────
+  check(
+    "**planner_settlements 에 쓰기 정책이 없다** — GRANT 는 남아 있으나 RLS 가 막는다(기록)",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'planner_settlements'
+             and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL');`) === "0",
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · 0069 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

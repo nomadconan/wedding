@@ -159,6 +159,10 @@ const ADMIN_NAV: NavItem[] = [
  */
 const PLANNER_NAV: NavItem[] = [
   { href: "/pro", label: "내 프로필", icon: Store },
+  // S6-04. **프로필 바로 아래다** — 공개된 프로필을 보고 고객이 제안을 보내므로
+  // 그 다음 화면이 자연스럽고, 수락하기 전에는 아무것도 열리지 않으니 여기가
+  // 플래너 업무의 실제 출발점이다(F-C-18).
+  { href: "/pro/engagements", label: "받은 위임", icon: Users },
 ];
 
 const ROLE_LABEL: Record<AdminRole, string> = {

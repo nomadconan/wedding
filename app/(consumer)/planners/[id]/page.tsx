@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
@@ -21,10 +22,9 @@ export const metadata: Metadata = {
 /**
  * /planners/[id] (F-C-18, §6.2)
  *
- * **위임은 여기서 하지 않는다.** 명세 F-C-18 은 "매칭 후 커플 데이터 열람 권한
- * 위임(범위·기간 지정)" 을 적었는데 그것은 **S6-04** 의 몫이다 — 범위·기간을 고르는
- * 화면은 프로필 읽기와 성격이 다르고, `planner_engagements` 쓰기 경로가 함께 와야 한다.
- * 이 화면은 그 다음 단계가 있다는 것만 알린다.
+ * **위임은 여기서 하지 않고 다음 화면으로 잇는다**(S6-04). 범위·기간을 고르는 일은
+ * 프로필 읽기와 성격이 다르고 되돌리기 어려운 결정이라 `/planners/[id]/delegate` 를
+ * 따로 둔다 — 목록을 훑다가 실수로 눌러 우리 예산·하객이 열리는 일이 없어야 한다.
  *
  * **요금을 보여주지 않는다.** 요율은 `planner_fee_rates` 가 갖고 계약 확정 시
  * 스냅샷된다(D-16) — 프로필에 숫자를 적으면 화면과 실제 청구가 어긋난다.
@@ -106,9 +106,22 @@ async function DetailSection({ id }: { id: string }) {
           ) : null}
         </section>
 
-        <p className="rounded-lg border border-border px-3 py-2 text-xs text-neutral-600">
-          {DELEGATION_NEXT_NOTICE}
-        </p>
+        {/* S6-04 가 이 자리를 실제 경로로 이었다. 그 전까지는 문장만 있고 갈 곳이
+            없었다 — 만들어 놓고 들어가는 자리가 없는 화면의 반대 짝이다. */}
+        <section className="rounded-lg border border-border px-3 py-3">
+          <p className="text-xs text-neutral-600">{DELEGATION_NEXT_NOTICE}</p>
+          <div className="mt-2 flex flex-wrap gap-3">
+            <Link
+              href={`/planners/${planner.id}/delegate`}
+              className="text-xs font-medium text-brand-600"
+            >
+              권한 위임하기
+            </Link>
+            <Link href="/planners/delegations" className="text-xs font-medium text-neutral-600">
+              내 위임 관리
+            </Link>
+          </div>
+        </section>
 
         <p className="text-xs text-neutral-500">{SELF_REPORTED_NOTICE}</p>
       </div>
