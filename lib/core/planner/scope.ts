@@ -250,9 +250,20 @@ export const RANKING_METRIC_LABEL: Record<RankingMetric, string> = {
   profile_views: "프로필 방문 수",
 };
 
+/**
+ * 이 지표를 지금 셀 수 있는가.
+ *
+ * **못 세는 이유가 두 종류다**(S6-06 이 갈랐다).
+ *  · `pending` — 채우는 경로가 아직 없다. **담당 태스크가 있다.**
+ *  · `not_distinct` — 구조상 다른 지표와 **같은 행을 센다.** 담당이 생겨도 별도
+ *    지표가 되지 않으므로 "언젠가 열린다" 고 적으면 거짓말이 된다.
+ *
+ * 둘을 한 통에 담으면 화면이 "곧 생긴다" 와 "생길 수 없다" 를 같은 문장으로 적는다.
+ */
 export type MetricAvailability =
   | { available: true; source: string }
-  | { available: false; reason: string; owner: string };
+  | { available: false; kind: "pending"; reason: string; owner: string }
+  | { available: false; kind: "not_distinct"; reason: string; sameAs: RankingMetric };
 
 /**
  * 지금 이 지표를 실제로 셀 수 있는가.
@@ -273,23 +284,34 @@ export function rankingMetricAvailability(metric: RankingMetric): MetricAvailabi
 
     case "consultations":
       // 컬럼은 있지만(0025 `consultations.planner_id`) 채우는 경로가 아직 없다.
+      // **담당이 옮겨졌다**(FIX-51): S6-04 는 그 값을 채우지 않기로 했다 — 위임에서
+      // 계산 가능한 값이라 저장하면 위임을 거둔 뒤에도 남는 두 번째 진실이 된다.
+      // 그 컬럼의 실제 쓰임은 3자 캘린더 동기화(D-19)이며 그것은 S4-11 이다.
       return {
         available: false,
-        reason: "상담에 플래너를 연결하는 경로가 아직 없어요.",
-        owner: "S6-04",
+        kind: "pending",
+        reason: "상담에 플래너를 연결하는 값을 채우는 경로가 아직 없어요.",
+        owner: "S4-11",
       };
 
     case "bookings":
+      // **따로 셀 수 없는 지표다**(S6-06 이 확인했다). 예약과 플래너를 잇는 **저장된
+      // 값**은 `planner_settlements`(booking_id + planner_id)뿐이고 그 행은 **계약이
+      // 성사돼야** 생긴다(D-17). 즉 "플래너가 붙은 예약" 을 세면 계약 건수와 **같은
+      // 행**을 센다 — 담당 태스크가 생겨도 별도 지표가 되지 않는다.
       return {
         available: false,
-        reason: "예약과 플래너를 잇는 것은 카테고리 선택이며 그 화면이 아직 없어요.",
-        owner: "S6-03",
+        kind: "not_distinct",
+        reason:
+          "예약과 플래너를 잇는 값은 계약이 성사될 때 생겨요. 따로 세면 계약 건수와 같은 행을 두 번 세게 됩니다.",
+        sameAs: "contracts",
       };
 
     case "reviews":
       // `reviews` 는 vendor_id 대상이다. 플래너를 평가하는 구조가 없다.
       return {
         available: false,
+        kind: "pending",
         reason: "후기는 업체를 대상으로만 쌓입니다. 플래너 후기 구조가 아직 없어요.",
         owner: "S8-11",
       };
@@ -297,6 +319,7 @@ export function rankingMetricAvailability(metric: RankingMetric): MetricAvailabi
     case "profile_views":
       return {
         available: false,
+        kind: "pending",
         reason: "프로필 방문을 세는 경로가 아직 없어요.",
         owner: "S8-10",
       };

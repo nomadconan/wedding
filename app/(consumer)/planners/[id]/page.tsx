@@ -104,6 +104,15 @@ async function DetailSection({ id }: { id: string }) {
           {planner.contractCount === 0 ? (
             <p className="mt-3 text-xs text-neutral-500">{NEW_PLANNER_NOTICE}</p>
           ) : null}
+
+          {/* S6-06. **"아직 세지 않아요" 를 읽은 사람이 다음에 묻는 것**이 여기 있다 —
+              무엇을 세고 무엇을 안 세는가, 그리고 왜. */}
+          <Link
+            href="/planners/ranking"
+            className="mt-3 inline-block text-xs font-medium text-brand-600"
+          >
+            무엇을 세고 무엇을 안 세는지 보기
+          </Link>
         </section>
 
         {/* S6-04 가 이 자리를 실제 경로로 이었다. 그 전까지는 문장만 있고 갈 곳이
