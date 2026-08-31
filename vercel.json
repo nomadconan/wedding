@@ -8,6 +8,7 @@
     { "path": "/api/jobs/price-anomaly-scan", "schedule": "0 2 * * *" },
     { "path": "/api/jobs/sla-escalation", "schedule": "30 * * * *" },
     { "path": "/api/jobs/consultation-confirm-request", "schedule": "15 * * * *" },
-    { "path": "/api/jobs/consultation-resolve", "schedule": "45 * * * *" }
+    { "path": "/api/jobs/consultation-resolve", "schedule": "45 * * * *" },
+    { "path": "/api/jobs/planner-payout-due", "schedule": "0 3 * * *" }
   ]
 }

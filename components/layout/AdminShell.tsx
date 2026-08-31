@@ -163,6 +163,9 @@ const PLANNER_NAV: NavItem[] = [
   // 그 다음 화면이 자연스럽고, 수락하기 전에는 아무것도 열리지 않으니 여기가
   // 플래너 업무의 실제 출발점이다(F-C-18).
   { href: "/pro/engagements", label: "받은 위임", icon: Users },
+  // S6-05. **받은 위임 바로 아래다** — 위임을 수락하고 그 고객의 계약이 성사되면
+  // 이 화면에 수수료가 쌓인다. 두 화면이 같은 흐름의 앞뒤라 붙여 둔다(F-C-18 · D-21).
+  { href: "/pro/settlements", label: "내 정산", icon: Receipt },
 ];
 
 const ROLE_LABEL: Record<AdminRole, string> = {

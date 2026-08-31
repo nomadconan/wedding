@@ -106,7 +106,8 @@ export const BATCH_SPECS: readonly BatchSpec[] = [
   {
     name: "planner-payout-due",
     schedule: "매일",
-    cron: null,
+    // S6-05 가 라우트를 만들고 `vercel.json` 에 등록했다.
+    cron: "0 3 * * *",
     purpose: "유예 기간이 지난 플래너 정산을 지급 대상으로 넘긴다",
     consequence:
       "지급 대상 전환이 늦는다. 다만 화면은 `payable_at` 과 시계로 판정하므로(D-21) 표시는 맞다.",

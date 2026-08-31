@@ -526,8 +526,9 @@ export async function paySettlement(input: {
 
   // ── 2) 어댑터 ─────────────────────────────────────────────────────────────
   const result = await adapter().pay({
-    settlementId: row.id,
-    vendorId: row.vendor_id,
+    ledgerId: row.id,
+    // **받는 쪽을 종류와 함께 넘긴다**(S6-05 가 어댑터를 플래너와 공유하면서 열었다).
+    payee: { type: "vendor", vendorId: row.vendor_id },
     amount: row.payout_amount ?? 0,
     currency: "KRW",
     idempotencyKey: key,

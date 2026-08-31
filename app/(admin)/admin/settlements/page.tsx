@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 
 import { AdminShell } from "@/components/layout/AdminShell";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { loadAdminPlannerPayouts } from "@/lib/planners/payouts";
 import { loadSettlements } from "@/lib/settlements/loader";
 import { requireOperator } from "@/lib/supabase/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
+import { PlannerPayoutPanel } from "./PlannerPayoutPanel";
 import { RunPanel } from "./RunPanel";
 
 export const metadata: Metadata = {
@@ -53,6 +55,10 @@ export default async function AdminSettlementsPage() {
 
     const blocked = payload.settlements.filter((row) => row.status === "blocked").length;
 
+    // S6-05. **이번에 나갈 돈을 한 화면이 든다.** 플래너 지급을 다른 화면에 두면
+    // 운영자가 마감할 때 한쪽만 보고 끝내고, 안 본 쪽은 아무도 모르게 밀린다.
+    const plannerPayouts = await loadAdminPlannerPayouts({ now: new Date() });
+
     return (
       <AdminShell
         role="admin"
@@ -71,6 +77,13 @@ export default async function AdminSettlementsPage() {
             vendorName: nameOf.get(vendorOf.get(row.id) ?? "") ?? "업체",
           }))}
         />
+
+        <div className="mt-8 border-t border-border pt-6">
+          <PlannerPayoutPanel
+            rows={plannerPayouts.rows}
+            plannerNames={plannerPayouts.plannerNames}
+          />
+        </div>
       </AdminShell>
     );
   } catch {
