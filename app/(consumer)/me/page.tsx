@@ -254,6 +254,23 @@ async function MeSection() {
 
       <Separator />
 
+      {/* ── 알림센터 (F-C-21 · S4-13) ──
+          **S0-04 가 이 진입점을 만들었다.** 화면은 S4-13 이 세웠는데
+          **어느 내비도 어느 화면도 `/notifications` 를 가리키지 않았다** —
+          미들웨어가 로그인까지 요구하는 화면이라 URL 을 직접 쳐야 열렸다(FIX-25 계열).
+          하단 탭은 다섯 칸이 찼으므로(D-55) 쿠폰·예약과 같은 자리에 둔다. */}
+      <section className="space-y-2" data-testid="me-notifications">
+        <h2 className="text-base font-semibold text-foreground">알림</h2>
+        <p className="text-caption text-muted-foreground">
+          받은 알림과 토픽별 수신 설정을 확인하세요.
+        </p>
+        <Link href="/notifications" className="text-caption font-medium text-brand-600">
+          알림센터 열기
+        </Link>
+      </section>
+
+      <Separator />
+
       {/* ── 내 쿠폰 (F-C-35 · S5-12) ──
           **여기가 `/coupons` 의 진입점이다.** 하단 탭은 다섯 칸이 찼고(D-55)
           쿠폰함은 결제 화면에서도 들어가지만, **받은 것을 모아 보는 자리**가

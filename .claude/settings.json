@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec *)",
+      "Bash(node -e ' *)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }; Start-Sleep -Seconds 2; \"dev stopped\")",
+      "Bash(python \"C:/Users/Ksd/AppData/Local/Temp/claude/c--Users-Ksd-Desktop-wstory/53f575c1-0861-4996-81e6-c7ee674a8ea4/scratchpad/patch_coupon_tasks.py\")"
+    ]
+  }
+}

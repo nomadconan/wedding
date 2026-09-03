@@ -17,7 +17,8 @@
     "check:bundle": "node scripts/check-secrets.mjs --bundle",
     "check:audit": "node scripts/check-audit.mjs",
     "check:coverage-table": "node scripts/check-coverage-table.mjs",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run check:secrets && npm run check:coverage-table && npm run assets:check",
+    "check:tables": "node scripts/check-doc-tables.mjs",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run check:secrets && npm run check:coverage-table && npm run check:tables && npm run assets:check",
     "seed:accounts": "node --env-file=.env.local scripts/seed-accounts.mjs",
     "env:sync": "node scripts/sync-env.mjs",
     "env:check": "node scripts/sync-env.mjs --check",
@@ -27,7 +28,12 @@
     "db:reset": "supabase db reset",
     "db:diff": "supabase db diff",
     "db:types": "supabase gen types typescript --local > types/database.ts",
-    "db:rls": "node --env-file=.env.local scripts/rls-check.mjs"
+    "db:rls": "node --env-file=.env.local scripts/rls-check.mjs",
+    "audit:routes": "node scripts/audit-routes.mjs",
+    "audit:screens": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs --screens --out=tmp/audit-screens.json",
+    "audit:api": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs --api --out=tmp/audit-api.json",
+    "audit:runtime": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs",
+    "audit:report": "node scripts/audit-report.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

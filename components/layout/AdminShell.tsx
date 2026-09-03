@@ -12,6 +12,7 @@ import {
   MessageSquare,
   MessagesSquare,
   Package,
+  Percent,
   Receipt,
   ScrollText,
   Settings,
@@ -22,6 +23,7 @@ import {
   Ticket,
   Tag,
   ToggleLeft,
+  Undo2,
   Activity,
   Users,
 } from "lucide-react";
@@ -74,14 +76,23 @@ const VENDOR_NAV: NavItem[] = [
   { href: "/vendor/consultations", label: "상담 일정", icon: CalendarClock },
   { href: "/vendor/availability", label: "상담 가능 시간", icon: Clock },
   { href: "/vendor/bookings", label: "예약", icon: CalendarRange },
-  // S8-11. **예약 바로 아래다** — 후기는 확정·이행된 예약에만 달리므로 그 목록의
-  // 다음 화면이 자연스럽다. 커뮤니티 태그와 다르다: 그쪽은 미검증 경험담이고
+  // S0-04. **예약 바로 아래다** — 해지는 예약의 한 국면이고 그 목록에서 넘어온다.
+  // 화면은 S5-08 이 만들었는데 `VENDOR_NAV` 가 가리키지 않아 **URL 을 직접 쳐야
+  // 열렸다**(FIX-25). 만들어 두고 켜지 않은 것이 아니라 **아무도 못 가는** 상태였다.
+  { href: "/vendor/cancellations", label: "해지·환불", icon: Undo2 },
+  // S8-11. **예약 묶음 바로 아래다**(S0-04 가 그 사이에 해지·환불을 넣었다) — 후기는
+  // 확정·이행된 예약에만 달리므로 그 목록의 다음 화면이 자연스럽다. 커뮤니티 태그와 다르다: 그쪽은 미검증 경험담이고
   // 이쪽은 **거래가 확인된 평가**이며, 할 수 있는 일도 답변과 신고로 다르다(F-V-11).
   { href: "/vendor/reviews", label: "후기·평판", icon: Star },
   // S5-13. **정산 바로 위**다 — 업체 쿠폰의 할인액은 **그 업체의 정산에서
   // 빠진다**(D-27). 둘이 같은 돈을 다른 각도로 보는 화면이라 붙여 둔다.
   { href: "/vendor/coupons", label: "쿠폰", icon: Ticket },
   { href: "/vendor/settlements", label: "정산", icon: Receipt },
+  // S0-04. **정산 바로 아래다** — 안전거래 예치금은 정산으로 풀리는 돈이라 둘이
+  // 한 흐름이다. 위(쿠폰)에 끼우지 않은 이유는 S5-13 이 "쿠폰은 정산 바로 위" 라고
+  // 적어 뒀기 때문이다 — 항목을 끼우면 그 주석이 거짓말이 된다.
+  // 화면은 S5-09 가 만들었고 내비가 가리키지 않아 도달 불가였다(FIX-25).
+  { href: "/vendor/escrow", label: "안전거래 예치", icon: ShieldCheck },
   { href: "/vendor/stats", label: "성과 통계", icon: BarChart3 },
   { href: "/vendor/members", label: "멤버 관리", icon: Users },
   // 약관 자가 진단(F-V-10 · S7-13). 설정 바로 위에 둔다 — 자주 오는 화면은
@@ -130,9 +141,16 @@ const ADMIN_NAV: NavItem[] = [
   // 두어 둘이 한 흐름임을 보이게 한다. 화면은 S5-08 이 만들었는데 **내비가 가리키지
   // 않아 URL 을 직접 쳐야 열렸다**(FIX-25 가 세던 다섯 중 하나).
   { href: "/admin/penalties", label: "위약금 처리", icon: Receipt },
+  // S0-04. **위약금 바로 아래다** — 위약금·상계·지급이 모두 정산서 한 장에서 만난다.
+  // 화면은 S5-07 이 만들었는데 내비가 가리키지 않아 URL 을 직접 쳐야 열렸다(FIX-25).
+  { href: "/admin/settlements", label: "정산 집행", icon: Receipt },
+  // S0-04. **정산 집행 바로 아래다** — 정산 금액을 정하는 값이 여기 있고, 정산서는
+  // 그 요율의 **스냅샷**을 근거로 든다(D-16). 화면은 S5-03 이 만들었다(FIX-25).
+  { href: "/admin/commission-rates", label: "수수료 요율", icon: Percent },
   // S8-02. **화면은 §6.4 에 있었는데 내비가 가리키지 않았다** — URL 을 직접 쳐야
-  // 열리는 화면이었다(FIX-25 계열). 분쟁 중재 바로 아래에 둔다: 조율은 타임라인을
-  // 읽는 데서 시작하고, 둘은 같은 사건을 다른 각도로 보는 화면이다.
+  // 열리는 화면이었다(FIX-25 계열). 분쟁 묶음 아래에 둔다(S0-04 가 그 사이에 정산
+  // 집행·수수료 요율을 넣었다): 조율은 타임라인을 읽는 데서 시작하고, 둘은 같은
+  // 사건을 다른 각도로 보는 화면이다.
   { href: "/admin/audit", label: "감사 로그", icon: ScrollText },
   // S8-04. 감사 로그 바로 아래에 둔다 — 둘 다 "무엇이 남았고 무엇이 지워졌나" 를
   // 보는 화면이고, 개인정보 감사는 그 중 **법적 의무가 걸린 쪽**이다(§5.1·§7.3).
@@ -145,7 +163,10 @@ const ADMIN_NAV: NavItem[] = [
   // 찾는 데 시간이 걸리면 안 된다. 파기 배치가 멈춘 것을 이 화면이 먼저 말하고
   // 개인정보 감사로 넘긴다.
   { href: "/admin/ops", label: "운영 상태", icon: Activity },
-  { href: "/admin/settings", label: "설정", icon: Settings },
+  // **`/admin/settings` 는 여기 없다**(S0-04 가 뺐다). 화면도 없고 §6.4 에도 없어
+  // **무엇을 가리키려던 것인지 아무도 모르는 링크**였다(FIX-23 이 그렇게 적었다).
+  // 없는 화면을 가리키는 링크는 "만들어 두고 켜지 않은" 것이 아니라 **깨진 것**이다
+  // (S3-11 이 하단 탭에서 세운 규칙). 운영자 설정 화면이 명세에 서면 그때 함께 온다.
 ];
 
 /**
