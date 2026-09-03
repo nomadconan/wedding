@@ -76,6 +76,9 @@ export function RatesPanel({ rates }: RatesData) {
     }
   }
 
+  /** 지금 실제로 적용될 수 있는 요율. 무효화된 행은 해석에서 빠진다(FIX-12). */
+  const liveRows = rows.filter((row) => row.state !== "voided");
+
   return (
     <div className="space-y-5">
       <p className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-700">
@@ -110,9 +113,22 @@ export function RatesPanel({ rates }: RatesData) {
 
       <Simulator type={type} onResult={setSimulation} result={simulation} />
 
-      {rows.length === 0 ? (
-        <EmptyState title={NO_RATE_TITLE} description={NO_RATE_BODY} />
-      ) : (
+      {/* **'행이 없다' 가 아니라 '살아 있는 요율이 없다' 를 본다**(FIX-11).
+          무효화된 행만 남아 있으면 목록은 비어 있지 않은데 계약은 계속 막힌다 —
+          FIX-12 가 무효화를 열면서 생긴 자리다. 화면이 그 상태를 말하지 않으면
+          운영자는 표에 줄이 보이니 요율이 있다고 읽는다. */}
+      {liveRows.length === 0 ? (
+        <EmptyState
+          title={NO_RATE_TITLE}
+          description={
+            rows.length === 0
+              ? NO_RATE_BODY
+              : `${NO_RATE_BODY} 지금 목록에 보이는 ${rows.length}건은 모두 무효화된 이력이라 적용되지 않습니다.`
+          }
+        />
+      ) : null}
+
+      {rows.length === 0 ? null : (
         <section className="rounded-xl border border-border p-4">
           <h2 className="text-sm font-semibold text-foreground">요율 이력</h2>
           <p className="mt-1 text-xs text-neutral-600">{SCOPE_PRIORITY_NOTICE}</p>

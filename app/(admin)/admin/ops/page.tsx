@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { dateTimeAttr, formatTimestamp } from "@/lib/core/format/timestamp";
 import { BATCH_STATE_HINT, BATCH_STATE_LABEL } from "@/lib/core/ops/monitor";
+import { READINESS_ALL_SET, READINESS_NOTICE } from "@/lib/core/ops/readiness";
 import { measured } from "@/lib/core/stats/metric";
 import { loadOpsConsole } from "@/lib/ops/admin";
 import { requireOperator } from "@/lib/supabase/auth";
@@ -55,6 +56,7 @@ export default async function AdminOpsPage() {
   const {
     batches,
     alerts,
+    readiness,
     purgeOverdue,
     loginFailures,
     loginWindowHours,
@@ -115,6 +117,58 @@ export default async function AdminOpsPage() {
                   ))}
                 </ul>
               )}
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* ── 오픈 준비 (FIX-11) ────────────────────────────────────────
+            **첫 거래가 실패하기 전에 말한다.** 요율이 0행이면 계약 발행이 통째로
+            막히는데(CONTRACT_RATE_UNRESOLVED) 그 사실을 아는 자리가 없었다 —
+            업체는 "운영자에게 문의해 주세요" 를 보고, 운영자는 문의를 받을 때까지
+            몰랐다. 재현해 확인했다: 요율을 없애도 `job_runs`·`client_events`
+            어디에도 신호가 없다. */}
+        <section aria-labelledby="readiness-heading">
+          <Card>
+            <CardHeader>
+              <CardTitle id="readiness-heading" className="text-base">
+                오픈 준비
+              </CardTitle>
+              <CardDescription>{READINESS_NOTICE}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2" data-testid="ops-readiness">
+                {readiness.map((row) => (
+                  <li
+                    key={row.key}
+                    className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border p-3 text-sm"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-medium text-foreground">
+                        {row.label}{" "}
+                        <Badge variant={row.ready ? "secondary" : "destructive"}>
+                          {row.ready ? `${row.liveCount}건` : "없음"}
+                        </Badge>
+                      </p>
+                      {/* **갖춰졌을 때는 결과를 말하지 않는다** — 없을 때만 무슨 일이
+                          나는지 적는다. 늘 적으면 경고가 배경이 된다. */}
+                      {row.ready ? null : (
+                        <p className="text-caption text-neutral-600">{row.consequence}</p>
+                      )}
+                      {row.openIssue ? (
+                        <p className="text-caption text-neutral-500">
+                          값은 운영 결정입니다({row.openIssue}) — 이 화면이 고르지 않습니다.
+                        </p>
+                      ) : null}
+                    </div>
+                    <Link href={row.href} className="text-caption font-medium text-brand-600">
+                      값 넣기
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {readiness.every((row) => row.ready) ? (
+                <p className="mt-3 text-caption text-neutral-500">{READINESS_ALL_SET}</p>
+              ) : null}
             </CardContent>
           </Card>
         </section>
