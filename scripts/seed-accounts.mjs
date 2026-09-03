@@ -1921,6 +1921,604 @@ async function seedPriceFixture(vendorId) {
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
+// -- FIX-56 fixtures: the ten tables seed:accounts never filled --------------
+//
+// WHY THIS EXISTS: S0-04 opened all 97 screens with all 10 accounts and found
+// that FIVE of them had never been rendered with real data by anyone - not
+// because they were broken, but because `seed:accounts` left their tables at
+// zero rows. The audit could only open them with a made-up id, so all it ever
+// proved was "the not-found path ends cleanly". The happy path was unseen.
+//
+//   /chat/[roomId]          <- chat_rooms
+//   /community/[postId]     <- community_posts
+//   /share/[token]          <- share_links
+//   /rsvp/[token]           <- guests.invite_token
+//   /vendor/invite/[token]  <- vendor_invites
+//
+// Five more tables were empty too. They do not own a screen of their own, but
+// their API routes could only be checked on the 'nothing found' branch:
+// consultations, contract_cancellations, tasks, price_rules, product_options.
+//
+// Ids live in the 56xx block so they read as "this is the FIX-56 fixture".
+const FX56 = "00000000-0000-0000-0000-0000000056";
+
+const CHAT_ROOM_ID = `${FX56}01`;
+const CHAT_MSG_COUPLE_ID = `${FX56}02`;
+const CHAT_MSG_VENDOR_ID = `${FX56}03`;
+const CHAT_MSG_SYSTEM_ID = `${FX56}04`;
+
+const POST_EXPERIENCE_ID = `${FX56}10`;
+const POST_QNA_ID = `${FX56}11`;
+const POST_COMMENT_ID = `${FX56}12`;
+const POST_VENDOR_REPLY_ID = `${FX56}13`;
+const POST_TAG_ID = `${FX56}14`;
+
+const SHARE_LIVE_ID = `${FX56}20`;
+const SHARE_REVOKED_ID = `${FX56}21`;
+// The audit picks the OLDEST row, so the live link must be the older one.
+const SHARE_TOKEN_LIVE = "local-demo-share-live-000000000000000001";
+const SHARE_TOKEN_REVOKED = "local-demo-share-revoked-000000000001";
+
+const GUEST_PENDING_ID = `${FX56}30`;
+const GUEST_ATTENDING_ID = `${FX56}31`;
+const GUEST_DECLINED_ID = `${FX56}32`;
+// guests_invite_token_len_chk wants >= 32 characters.
+const GUEST_INVITE_TOKEN = "local-demo-rsvp-token-0000000000000001";
+
+const VENDOR_INVITE_ID = `${FX56}40`;
+const VENDOR_INVITE_TOKEN = "local-demo-vendor-invite-000000000001";
+// Deliberately NOT one of the seeded accounts: the accept screen must be able to
+// render its "this invite is for a different address" branch, and an invite that
+// any logged-in demo account could accept would quietly change vendor_members.
+const VENDOR_INVITE_EMAIL = "invitee@local.test";
+
+const TASK_HALL_ID = `${FX56}50`;
+const TASK_SDM_ID = `${FX56}51`;
+const TASK_DOC_ID = `${FX56}52`;
+const TASK_DONE_ID = `${FX56}53`;
+
+const OPTION_MANDATORY_ID = `${FX56}60`;
+const OPTION_CONDITIONAL_ID = `${FX56}61`;
+
+const PRICE_RULE_SEASON_ID = `${FX56}70`;
+const PRICE_RULE_WEEKDAY_ID = `${FX56}71`;
+
+const CONSULT_APPROVED_ID = `${FX56}80`;
+const CONSULT_REQUESTED_ID = `${FX56}81`;
+
+const CANCELLATION_ID = `${FX56}90`;
+
+/** Same upsert shape the other fixtures use. */
+function upsert56(table, row, conflict = "id") {
+  return rest(`${table}?on_conflict=${conflict}`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify(row),
+  });
+}
+
+const daysFromNow = (n) => new Date(Date.now() + n * 86400 * 1000).toISOString();
+const hoursAgo56 = (n) => new Date(Date.now() - n * 3600 * 1000).toISOString();
+
+/**
+ * Chat room + three messages (F-C-27 / F-V-15).
+ *
+ * The last message is from the COUPLE on purpose: chat_room_touch() then leaves
+ * awaiting_vendor_since set, so the vendor inbox shows a live SLA timer instead
+ * of a column that is always empty.
+ *
+ * A system message is included because sender_type='system' is the one branch
+ * with a CHECK behind it (sender_id must be null) - if the screen renders it
+ * wrong, nothing else in the fixture would show that.
+ */
+async function seedChatFixture(vendorId, coupleId, coupleUser, vendorUser) {
+  if (!vendorId || !coupleId || !coupleUser) return "skipped";
+
+  // Guard on the couple+vendor pair, not just the id: uq_chat_rooms_couple_vendor
+  // means a room made by hand through the app would collide here.
+  const existing = await rest(
+    `chat_rooms?couple_id=eq.${coupleId}&vendor_id=eq.${vendorId}&select=id`,
+  );
+  if (existing.length > 0 && existing[0].id !== CHAT_ROOM_ID) return "existing (other room)";
+
+  await upsert56("chat_rooms", {
+    id: CHAT_ROOM_ID,
+    couple_id: coupleId,
+    vendor_id: vendorId,
+    status: "active",
+    // Assignment is the vendor's call (F-V-15). Leaving it null keeps the
+    // "unassigned" branch of the inbox reachable.
+    assigned_to: null,
+    created_at: hoursAgo56(50),
+  });
+
+  await upsert56("chat_messages", [
+    {
+      id: CHAT_MSG_SYSTEM_ID,
+      room_id: CHAT_ROOM_ID,
+      sender_id: null,
+      sender_type: "system",
+      body: "대화가 시작됐어요. 계약·결제는 이 대화가 아니라 예약 화면에서 진행됩니다.",
+      created_at: hoursAgo56(50),
+    },
+    {
+      id: CHAT_MSG_VENDOR_ID,
+      room_id: CHAT_ROOM_ID,
+      sender_id: vendorUser?.id ?? null,
+      sender_type: vendorUser ? "vendor" : "system",
+      body: "안녕하세요. 문의 주셔서 감사합니다. 원하시는 날짜를 알려 주시면 가능 여부를 확인해 드릴게요.",
+      created_at: hoursAgo56(48),
+    },
+    {
+      id: CHAT_MSG_COUPLE_ID,
+      room_id: CHAT_ROOM_ID,
+      sender_id: coupleUser.id,
+      sender_type: "couple",
+      body: "2027년 5월 15일 토요일 낮 예식으로 보고 있어요. 총액에 무엇이 포함되는지도 알려 주세요.",
+      created_at: hoursAgo56(3),
+    },
+  ]);
+
+  return "created";
+}
+
+/**
+ * Two community posts, a comment and a VENDOR reply (F-C-32/33/34, F-V-18).
+ *
+ * The experience post carries a vendor tag, and the reply is written by a member
+ * of that tagged vendor - that is the only way the "업체 답변" badge appears
+ * (lib/community/loader.ts). Without it the badge is dead code on every screen.
+ *
+ * NOT SEEDED: a community_reports row. The moderation queue's empty state is
+ * itself meaningful ("nothing reported"), and FIX-56 is about tables that were
+ * empty by accident, not by design.
+ */
+async function seedCommunityFixture(vendorId, authorUser, otherUser, vendorUser) {
+  if (!authorUser) return "skipped";
+
+  await upsert56("community_posts", [
+    {
+      id: POST_EXPERIENCE_ID,
+      author_id: authorUser.id,
+      board_type: "experience",
+      // `category` is nullable and nothing reads it yet - leaving it null is the
+      // honest state, not an oversight.
+      category: null,
+      title: "홀 투어 다녀온 후기 남겨요",
+      body: "총액에 무엇이 들어가는지 미리 받아 보고 갔더니 상담이 훨씬 빨랐어요. 추가금 사전표를 꼭 확인하세요.",
+      status: "published",
+      view_count: 42,
+      like_count: 3,
+      created_at: hoursAgo56(72),
+    },
+    {
+      id: POST_QNA_ID,
+      author_id: (otherUser ?? authorUser).id,
+      board_type: "qna",
+      category: null,
+      title: "계약금 비율은 보통 어느 정도인가요?",
+      body: "20% 정도로 안내받았는데 다른 곳도 비슷한지 궁금합니다.",
+      status: "published",
+      view_count: 11,
+      like_count: 0,
+      created_at: hoursAgo56(20),
+    },
+  ]);
+
+  // ── which vendor gets tagged ──────────────────────────────────────────────
+  // community_tag_vendor_guard() only lets an ACTIVE vendor be tagged, and the
+  // demo vendor starts `pending` on purpose so the approval flow stays demoable
+  // (S0-02). So the target depends on the state of the demo:
+  //
+  //   demo vendor approved -> tag it. /vendor/community fills up and the
+  //                           '업체 답변' badge (F-V-18) becomes reachable,
+  //                           because the reply below is by one of its members.
+  //   still pending        -> tag a sample vendor instead. The post still shows a
+  //                           real tag chip that opens a real vendor page, but the
+  //                           badge stays out of reach until someone approves.
+  //
+  // We do NOT force the vendor active to make the badge appear. That branch
+  // genuinely requires approval, and faking it here would let a check pass
+  // against a state the product cannot produce.
+  const demoVendor = vendorId
+    ? await rest(`vendors?id=eq.${vendorId}&select=status`)
+    : [];
+  const demoIsActive = demoVendor[0]?.status === "active";
+  let tagVendorId = demoIsActive ? vendorId : null;
+  let tagNote = demoIsActive ? "demo vendor (approved)" : null;
+
+  if (!tagVendorId) {
+    const sample = await rest("vendors?status=eq.active&select=id,name&order=created_at&limit=1");
+    if (sample.length > 0) {
+      tagVendorId = sample[0].id;
+      tagNote = `sample vendor '${sample[0].name}' - demo vendor is still pending`;
+    }
+  }
+
+  if (tagVendorId) {
+    await upsert56("community_post_tags", {
+      id: POST_TAG_ID,
+      post_id: POST_EXPERIENCE_ID,
+      vendor_id: tagVendorId,
+      tagged_by: authorUser.id,
+      // The tag is an unverified mention (F-C-33). Marking it verified here would
+      // make the screen claim a purchase link the data does not have.
+      verified_purchase: false,
+      created_at: hoursAgo56(72),
+    });
+  }
+
+  await upsert56("community_comments", [
+    {
+      id: POST_COMMENT_ID,
+      post_id: POST_EXPERIENCE_ID,
+      author_id: (otherUser ?? authorUser).id,
+      parent_id: null,
+      body: "추가금 사전표 어디서 보셨어요? 저희는 못 받았어요.",
+      status: "published",
+      created_at: hoursAgo56(60),
+    },
+    {
+      id: POST_VENDOR_REPLY_ID,
+      post_id: POST_EXPERIENCE_ID,
+      author_id: (vendorUser ?? authorUser).id,
+      parent_id: POST_COMMENT_ID,
+      body: "업체입니다. 상품 상세의 추가금 사전표에 전부 공개하고 있어요. 안 보이시면 알려 주세요.",
+      status: "published",
+      created_at: hoursAgo56(58),
+    },
+  ]);
+
+  return tagNote ? `created (tag -> ${tagNote})` : "created (no active vendor to tag)";
+}
+
+/**
+ * One LIVE share link and one REVOKED one (F-C-20 - S7-12).
+ *
+ * Two rows because the screen has two answers and only one of them was ever
+ * seen: with no rows at all every token lands on "closed", which is also what a
+ * revoked link shows - so the check could not tell the two apart.
+ *
+ * The live link points at the seeded analysis, so /share/[token] renders an
+ * actual report (masked excerpts only - the original was purged, D-58).
+ */
+async function seedShareFixture(analysisId, ownerUser) {
+  if (!analysisId) return "skipped";
+
+  await upsert56("share_links", [
+    {
+      id: SHARE_LIVE_ID,
+      resource_type: "report",
+      resource_id: analysisId,
+      token: SHARE_TOKEN_LIVE,
+      expires_at: daysFromNow(14),
+      created_by: ownerUser?.id ?? null,
+      revoked_at: null,
+      view_count: 2,
+      created_at: hoursAgo56(30),
+    },
+    {
+      id: SHARE_REVOKED_ID,
+      resource_type: "report",
+      resource_id: analysisId,
+      token: SHARE_TOKEN_REVOKED,
+      expires_at: daysFromNow(14),
+      created_by: ownerUser?.id ?? null,
+      revoked_at: hoursAgo56(4),
+      view_count: 5,
+      created_at: hoursAgo56(28),
+    },
+  ]);
+
+  return "created";
+}
+
+/**
+ * Three guests, one of them holding an invite token (F-C-22 - S7-09).
+ *
+ * The token holder is `pending` and is the OLDEST row, because that is the one
+ * /rsvp/[token] has to be able to answer. The other two are already answered so
+ * the guest list shows all three states instead of one.
+ *
+ * invite_context() reports `closed` when the wedding date has passed; the seeded
+ * couple's date is in the future, so the form opens.
+ */
+async function seedGuestFixture(coupleId) {
+  if (!coupleId) return "skipped";
+
+  await upsert56("guests", [
+    {
+      id: GUEST_PENDING_ID,
+      couple_id: coupleId,
+      name: "김하객",
+      side: "groom",
+      rsvp_status: "pending",
+      party_size: 1,
+      invite_token: GUEST_INVITE_TOKEN,
+      responded_at: null,
+      created_at: hoursAgo56(40),
+    },
+    {
+      id: GUEST_ATTENDING_ID,
+      couple_id: coupleId,
+      name: "이참석",
+      side: "bride",
+      rsvp_status: "attending",
+      party_size: 2,
+      invite_token: null,
+      responded_at: hoursAgo56(20),
+      created_at: hoursAgo56(38),
+    },
+    {
+      id: GUEST_DECLINED_ID,
+      couple_id: coupleId,
+      name: "박불참",
+      side: "both",
+      rsvp_status: "declined",
+      party_size: 1,
+      invite_token: null,
+      responded_at: hoursAgo56(10),
+      created_at: hoursAgo56(36),
+    },
+  ]);
+
+  return "created";
+}
+
+/** A pending staff invite so /vendor/invite/[token] has something to preview (S2-09). */
+async function seedVendorInviteFixture(vendorId, inviterUser) {
+  if (!vendorId) return "skipped";
+
+  await upsert56("vendor_invites", {
+    id: VENDOR_INVITE_ID,
+    vendor_id: vendorId,
+    email: VENDOR_INVITE_EMAIL,
+    vendor_role: "staff",
+    token: VENDOR_INVITE_TOKEN,
+    expires_at: daysFromNow(7),
+    invited_by: inviterUser?.id ?? null,
+    sent_at: hoursAgo56(6),
+    send_attempts: 1,
+    accepted_by: null,
+    accepted_at: null,
+    revoked_at: null,
+    created_at: hoursAgo56(6),
+  });
+
+  return "created";
+}
+
+/**
+ * Four tasks and one dependency edge (F-C-04 / F-C-37 - S7-08, S7-18, S7-19).
+ *
+ * /checklist has four views and three of them are shaped by data the empty table
+ * could not provide: the reverse timeline needs due dates, the category gauge
+ * needs more than one category, and the dependency view needs an edge. One task
+ * is `done` so "progress" is not 0 of 0.
+ *
+ * The dependency points from the SDM task to the hall task - venue first, then
+ * the studio date. It is a single edge on purpose: the cycle-prevention trigger
+ * (0042) is what a bigger graph would be testing, and that already has tests.
+ */
+async function seedScheduleFixture(coupleId, ownerUser) {
+  if (!coupleId) return "skipped";
+
+  await upsert56("tasks", [
+    {
+      id: TASK_HALL_ID,
+      couple_id: coupleId,
+      category: "hall",
+      title: "웨딩홀 계약금 입금",
+      due_date: daysFromNow(21).slice(0, 10),
+      status: "doing",
+      assignee_id: ownerUser?.id ?? null,
+      source: "manual",
+      template_code: null,
+    },
+    {
+      id: TASK_SDM_ID,
+      couple_id: coupleId,
+      category: "sdm",
+      title: "스튜디오 촬영일 확정",
+      due_date: daysFromNow(45).slice(0, 10),
+      status: "todo",
+      assignee_id: null,
+      source: "manual",
+      template_code: null,
+    },
+    {
+      id: TASK_DOC_ID,
+      couple_id: coupleId,
+      category: "document",
+      title: "혼인신고 서류 확인",
+      due_date: daysFromNow(120).slice(0, 10),
+      status: "todo",
+      assignee_id: null,
+      source: "manual",
+      template_code: null,
+    },
+    {
+      id: TASK_DONE_ID,
+      couple_id: coupleId,
+      category: "hall",
+      title: "웨딩홀 투어 다녀오기",
+      due_date: daysFromNow(-5).slice(0, 10),
+      status: "done",
+      assignee_id: ownerUser?.id ?? null,
+      source: "manual",
+      template_code: null,
+    },
+  ]);
+
+  await upsert56(
+    "task_dependencies",
+    {
+      task_id: TASK_SDM_ID,
+      depends_on_task_id: TASK_HALL_ID,
+      created_by: ownerUser?.id ?? null,
+    },
+    "task_id,depends_on_task_id",
+  );
+
+  return "created";
+}
+
+/**
+ * Two product options and two pricing rules (F-V-03/04, F-V-06).
+ *
+ * The options are one mandatory and one conditional, because
+ * product_options_condition_required_chk only lets a NON-mandatory option exist
+ * when it says WHEN it applies - the fixture should exercise the branch that
+ * carries that text, not just the easy one.
+ *
+ * Both rules carry a floor and a cap: /vendor/pricing's guard rails are the part
+ * that has to hold, and with no rules at all the simulator had nothing to run.
+ */
+async function seedProductDetailFixture(vendorId, productId) {
+  if (!vendorId || !productId) return "skipped";
+
+  await upsert56("product_options", [
+    {
+      id: OPTION_MANDATORY_ID,
+      product_id: productId,
+      name: "예식 진행 스태프",
+      price: 300000,
+      is_mandatory: true,
+      trigger_condition: {},
+    },
+    {
+      id: OPTION_CONDITIONAL_ID,
+      product_id: productId,
+      name: "주말 저녁 시간대 추가금",
+      price: 500000,
+      is_mandatory: false,
+      trigger_condition: { description: "금·토·일 18시 이후 예식일 때 붙습니다." },
+    },
+  ]);
+
+  await upsert56("price_rules", [
+    {
+      id: PRICE_RULE_SEASON_ID,
+      vendor_id: vendorId,
+      product_id: productId,
+      rule_type: "season",
+      condition_json: { months: [4, 5, 10, 11] },
+      adjust_type: "percent_bp",
+      adjust_value: 500,
+      floor_price: 8000000,
+      cap_price: 16000000,
+      priority: 100,
+      is_active: true,
+    },
+    {
+      id: PRICE_RULE_WEEKDAY_ID,
+      vendor_id: vendorId,
+      product_id: productId,
+      rule_type: "weekday",
+      condition_json: { weekdays: [1, 2, 3, 4] },
+      adjust_type: "percent_bp",
+      adjust_value: -1000,
+      floor_price: 8000000,
+      cap_price: 16000000,
+      priority: 200,
+      is_active: true,
+    },
+  ]);
+
+  return "created";
+}
+
+/**
+ * Two consultations (F-C-29 / F-V-17 - S4-07..S4-09).
+ *
+ * One `approved` in the future and one `requested`, so both the couple's tracker
+ * and the vendor's approve/reject queue have a row. `ends_at` is computed by
+ * consultation_set_ends_at(), so it is not written here.
+ *
+ * NOT SEEDED: a no-show or disputed consultation. Those rows drive
+ * /admin/consultation-disputes, and seeding one would put a dispute in the queue
+ * that no one filed.
+ */
+async function seedConsultationFixture(coupleId, vendorId) {
+  if (!coupleId || !vendorId) return "skipped";
+
+  await upsert56("consultations", [
+    {
+      id: CONSULT_APPROVED_ID,
+      couple_id: coupleId,
+      vendor_id: vendorId,
+      planner_id: null,
+      type: "visit_consult",
+      scheduled_at: daysFromNow(9),
+      duration_minutes: 60,
+      status: "approved",
+      location: "로컬 데모 웨딩홀 상담실",
+      requested_at: hoursAgo56(70),
+      approved_at: hoursAgo56(66),
+      created_at: hoursAgo56(70),
+    },
+    {
+      id: CONSULT_REQUESTED_ID,
+      couple_id: coupleId,
+      vendor_id: vendorId,
+      planner_id: null,
+      type: "venue_tour",
+      scheduled_at: daysFromNow(16),
+      duration_minutes: 90,
+      status: "requested",
+      location: null,
+      requested_at: hoursAgo56(5),
+      // PostgREST bulk insert wants every object to carry the SAME keys, so the
+      // 'not approved yet' row spells the null out instead of omitting it.
+      approved_at: null,
+      created_at: hoursAgo56(5),
+    },
+  ]);
+
+  return "created";
+}
+
+/**
+ * One cancellation request on the active contract (F-A-17 - S5-08).
+ *
+ * Status stays `requested` and fault stays `undecided`: that is the state the
+ * three screens are built to show (the couple's request, the vendor's queue, the
+ * operator's mediation). Settling it here would skip past all three and would
+ * also need a fault decision nobody made.
+ *
+ * The amounts are left null. They are computed from the penalty rules at read
+ * time, and writing numbers here would freeze a calculation the engine owns.
+ */
+async function seedCancellationFixture(contractId, bookingId, requesterUser) {
+  if (!contractId || !bookingId) return "skipped";
+
+  const contract = await rest(`contracts?id=eq.${contractId}&select=status`);
+  if (!Array.isArray(contract) || contract[0]?.status !== "active") {
+    // assert_cancellation_state() refuses anything but an active contract, and a
+    // 500 out of a seed script reads like a broken schema. Say why instead.
+    return "skipped (contract not active)";
+  }
+
+  await upsert56("contract_cancellations", {
+    id: CANCELLATION_ID,
+    contract_id: contractId,
+    booking_id: bookingId,
+    requested_by: requesterUser?.id ?? null,
+    requester_side: "couple",
+    reason_code: "schedule_changed",
+    reason_note: "예식일을 미루게 되어 해지를 요청합니다.",
+    couple_claim: null,
+    vendor_claim: null,
+    fault: "undecided",
+    status: "requested",
+    confirm_due_at: daysFromNow(3),
+    is_draft_rules: true,
+    created_at: hoursAgo56(8),
+  });
+
+  return "created";
+}
+
 async function main() {
   assertLocal();
 
@@ -2009,6 +2607,64 @@ async function main() {
   // `seed:accounts` twice is for.
   const plannerSettlementSeed = await seedPlannerSettlements();
 
+  // ── FIX-56 ────────────────────────────────────────────────────────────────
+  // AFTER everything above on purpose: the share link hangs off the analysis the
+  // metrics fixture creates, the cancellation needs the contract to be active,
+  // and the product options need the product. Run these first and they all
+  // silently skip - which is how the tables stayed empty in the first place.
+  const linkedOwner = results.find((row) => row.email === "couple-linked-a@local.test");
+  const linkedPartner = results.find((row) => row.email === "couple-linked-b@local.test");
+
+  const chatSeed = await seedChatFixture(vendor.id, linkedCouple, linkedOwner, vendorUser);
+  const communitySeed = await seedCommunityFixture(
+    vendor.id,
+    linkedOwner,
+    linkedPartner,
+    vendorUser,
+  );
+  const shareSeed = await seedShareFixture(METRIC_ANALYSIS_ID, linkedOwner);
+  const guestSeed = await seedGuestFixture(linkedCouple);
+  const inviteSeed = await seedVendorInviteFixture(vendor.id, vendorUser);
+  const scheduleSeed = await seedScheduleFixture(linkedCouple, linkedOwner);
+  const productDetailSeed = await seedProductDetailFixture(vendor.id, METRIC_PRODUCT_ID);
+  const consultationSeed = await seedConsultationFixture(linkedCouple, vendor.id);
+  const cancellationSeed = await seedCancellationFixture(
+    CONTRACT_ID,
+    METRIC_BOOKING_ID,
+    linkedOwner,
+  );
+
+  console.log("  FIX-56 fixtures - the tables that were empty by accident");
+  console.log(`    chat (F-C-27/F-V-15)        : ${chatSeed}`);
+  console.log("      1 room + 3 messages; last one from the couple so the vendor");
+  console.log("      inbox shows a live SLA timer instead of an always-empty column");
+  console.log(`    community (F-C-32/33/34)    : ${communitySeed}`);
+  console.log("      2 posts + comment + reply by the vendor account on a tagged post");
+  console.log("      NOTE: the '업체 답변' badge (F-V-18) needs the tagged vendor to be the");
+  console.log("      one the replier belongs to, and only an ACTIVE vendor can be tagged.");
+  console.log("      Approve the demo vendor at /admin/vendors, re-run this script, and the");
+  console.log("      tag moves to it - that branch cannot be faked from here.");
+  console.log(`    share links (F-C-20)        : ${shareSeed}`);
+  console.log("      1 live + 1 revoked. With zero rows every token looked 'closed',");
+  console.log("      so a revoked link and a wrong link were indistinguishable");
+  console.log(`    guests / rsvp (F-C-22)      : ${guestSeed}`);
+  console.log("      3 guests, the OLDEST holds the invite token and is pending");
+  console.log(`    vendor invite (S2-09)       : ${inviteSeed}`);
+  console.log(`      staff invite for ${VENDOR_INVITE_EMAIL} - NOT a seeded account, so`);
+  console.log("      nobody can accept it by accident and change vendor_members");
+  console.log(`    tasks (F-C-04/F-C-37)       : ${scheduleSeed}`);
+  console.log("      4 tasks over 3 categories + 1 dependency edge");
+  console.log("      -> timeline / gauge / dependency views all have shape");
+  console.log(`    options + price rules       : ${productDetailSeed}`);
+  console.log("      1 mandatory + 1 conditional option (the conditional one is the");
+  console.log("      branch that must carry a 'when' text), 2 rules with floor+cap");
+  console.log(`    consultations (F-C-29)      : ${consultationSeed}`);
+  console.log("      1 approved + 1 requested. NOT a no-show: that would put a");
+  console.log("      dispute in the operator queue that nobody filed");
+  console.log(`    cancellation (F-A-17)       : ${cancellationSeed}`);
+  console.log("      status=requested, fault=undecided, amounts null - the state the");
+  console.log("      three screens are built to show. Settling it would skip all three");
+  console.log("");
   console.log(`  contract fixture (S5-12): ${contractSeed}`);
   console.log("    active contract + 2 unpaid installments (20/80) on the metrics booking");
   console.log("               -> /checkout/[bookingId] finally has something to render");
