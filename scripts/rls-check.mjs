@@ -4047,6 +4047,68 @@ if (!vendorStaff || !adminUser) {
       asUser(outsider, `update public.profiles set role = 'admin' where user_id = '${outsider}';`)),
   );
 
+
+  // ===========================================================================
+  // 오픈 준비 점검이 보는 수 (FIX-11)
+  // ---------------------------------------------------------------------------
+  // `/admin/ops` 가 "요율이 하나도 없다" 를 말하려면 **살아 있는 요율의 수**를 셀 수
+  // 있어야 하고, 그 수는 **세션 클라이언트로** 세므로 RLS 를 지난다.
+  //
+  // **여기 수는 트랜잭션 안에서 전부 무효화해 만든다.** 시드가 요율을 넣어 두므로
+  // 표 전체를 그냥 세면 시드에 따라 답이 달라진다 — 검사가 자기가 세는 것을 알고
+  // 있어야 한다(D-178). 무효화는 제품이 실제로 하는 일이라 '없는 상태' 를 만드는
+  // 가장 정직한 방법이기도 하다.
+  // ===========================================================================
+  const voidAllRates = `
+    update public.commission_rates
+       set voided_at = now(), void_reason = 'rls: 요율 없음 상태 재현'
+     where voided_at is null;
+  `;
+
+  check(
+    "운영자는 살아 있는 요율 수를 센다 (오픈 준비 점검의 근거)",
+    Number(
+      asUser(adminUser, `select count(*) from public.commission_rates where voided_at is null;`),
+    ) >= 1,
+  );
+  check(
+    "**전부 무효화하면 살아 있는 요율이 0 이다** — 이때 계약 발행이 막힌다",
+    asUser(
+      adminUser,
+      `select count(*) from public.commission_rates where voided_at is null;`,
+      voidAllRates,
+    ) === "0",
+  );
+  check(
+    "그때도 **행 자체는 남아 있다** — 0 은 '지워졌다' 가 아니라 '적용되지 않는다' 다",
+    Number(asUser(adminUser, `select count(*) from public.commission_rates;`, voidAllRates)) >= 1,
+  );
+  check(
+    "**무효 필터를 빼면 답이 달라진다** — 필터가 장식이 아님을 고정한다",
+    Number(asUser(adminUser, `select count(*) from public.commission_rates;`, voidAllRates)) >
+      Number(
+        asUser(
+          adminUser,
+          `select count(*) from public.commission_rates where voided_at is null;`,
+          voidAllRates,
+        ),
+      ),
+  );
+  check(
+    "플래너 요율도 같은 방식으로 센다",
+    Number(
+      asUser(adminUser, `select count(*) from public.planner_fee_rates where voided_at is null;`),
+    ) >= 1,
+  );
+  check(
+    "커플은 요율 수를 셀 수 없다 (준비 점검은 운영자 화면이다)",
+    asUser(owner, `select count(*) from public.commission_rates where voided_at is null;`) === "0",
+  );
+  check(
+    "비로그인도 셀 수 없다",
+    asAnon(`select count(*) from public.commission_rates where voided_at is null;`) === "0",
+  );
+
   // ===========================================================================
   // 에스크로 (S5-09 · 0035)
   // ---------------------------------------------------------------------------

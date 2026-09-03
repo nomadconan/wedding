@@ -6,6 +6,11 @@ import {
   buildAlerts,
   buildBatchRows,
 } from "@/lib/core/ops/monitor";
+import {
+  buildReadinessRows,
+  readinessAlerts,
+  type ReadinessRow,
+} from "@/lib/core/ops/readiness";
 import { createClient } from "@/lib/supabase/server";
 
 import { cronSecretConfigured } from "./job-auth";
@@ -30,6 +35,8 @@ export type OpsPayload = {
   alerts: Alert[];
   /** 파기 기한이 지난 문서 수. §5.1 의무라 배치 상태와 별도로 센다. */
   purgeOverdue: number;
+  /** 오픈 전에 값이 들어가야 하는 자리(FIX-11). 비어 있으면 거래가 서지 않는다. */
+  readiness: ReadinessRow[];
   loginFailures: LoginFailureRow[];
   loginWindowHours: number;
   loginObservability: { complete: false; reason: string };
@@ -48,7 +55,8 @@ export async function loadOpsConsole(now: Date): Promise<OpsPayload> {
   const supabase = await createClient();
   const since = new Date(now.getTime() - LOGIN_WINDOW_HOURS * 3_600_000).toISOString();
 
-  const [runsResult, auditResult, eventsResult] = await Promise.all([
+  const [runsResult, auditResult, eventsResult, commissionResult, plannerRateResult] =
+    await Promise.all([
     supabase
       .from("job_runs")
       .select("job_name, started_at, finished_at, status, processed_count, error_summary")
@@ -61,6 +69,19 @@ export async function loadOpsConsole(now: Date): Promise<OpsPayload> {
       .eq("kind", "login_failed")
       .gte("occurred_at", since)
       .limit(1_000),
+    /**
+     * **살아 있는 요율만 센다**(FIX-11 · FIX-12). `voided_at is null` 을 빼면 무효화된
+     * 행까지 세어 "요율이 있다" 고 답하면서 계약은 계속 막힌다 — 가장 나쁜 종류의
+     * 거짓말이다. `head: true` 라 행을 끌어오지 않고 수만 받는다.
+     */
+    supabase
+      .from("commission_rates")
+      .select("id", { count: "exact", head: true })
+      .is("voided_at", null),
+    supabase
+      .from("planner_fee_rates")
+      .select("id", { count: "exact", head: true })
+      .is("voided_at", null),
   ]);
 
   // **권한 실패와 조회 실패를 구분한다** — 앞은 로그인 문제고 뒤는 장애다.
@@ -71,6 +92,20 @@ export async function loadOpsConsole(now: Date): Promise<OpsPayload> {
     throw new Error(auditResult.error.code === "42501" ? "OPS_FORBIDDEN" : "OPS_LOAD_FAILED");
   }
   if (eventsResult.error) throw new Error("OPS_LOAD_FAILED");
+
+  /**
+   * **못 센 것을 0으로 읽지 않는다.** 조회가 실패했는데 0으로 두면 화면이
+   * "요율이 하나도 없다" 는 **틀린 경보**를 올리고, 운영자는 멀쩡한 요율을 찾아
+   * 헤맨다. 파기 잔존에서 세운 규칙과 같다(S8-01 이 물린 함정).
+   */
+  if (commissionResult.error || typeof commissionResult.count !== "number") {
+    throw new Error(commissionResult.error?.code === "42501" ? "OPS_FORBIDDEN" : "OPS_LOAD_FAILED");
+  }
+  if (plannerRateResult.error || typeof plannerRateResult.count !== "number") {
+    throw new Error(
+      plannerRateResult.error?.code === "42501" ? "OPS_FORBIDDEN" : "OPS_LOAD_FAILED",
+    );
+  }
 
   const runs: BatchRun[] = (
     (runsResult.data ?? []) as {
@@ -113,10 +148,21 @@ export async function loadOpsConsole(now: Date): Promise<OpsPayload> {
     runs,
   });
 
+  const readiness = buildReadinessRows({
+    liveCommissionRates: commissionResult.count,
+    livePlannerFeeRates: plannerRateResult.count,
+  });
+
   return {
     batches,
-    alerts: buildAlerts({ batches, purgeOverdue: overdueRaw, loginFailures }),
+    // **준비 경보를 배치 경보와 같은 목록에 넣는다.** 운영자가 볼 자리가 하나여야
+    // 하고, 심각도 정렬이 그 목록 안에서 이뤄져야 순서가 뜻을 갖는다.
+    alerts: [
+      ...readinessAlerts(readiness),
+      ...buildAlerts({ batches, purgeOverdue: overdueRaw, loginFailures }),
+    ],
     purgeOverdue: overdueRaw,
+    readiness,
     loginFailures,
     loginWindowHours: LOGIN_WINDOW_HOURS,
     loginObservability: { complete: false, reason: LOGIN_INCOMPLETE },
