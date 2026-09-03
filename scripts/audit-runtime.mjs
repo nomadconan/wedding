@@ -240,7 +240,11 @@ async function launchChrome() {
 
   const proc = spawn(findChrome(), args, { stdio: "ignore", detached: false });
 
-  for (let i = 0; i < 100; i += 1) {
+  // **넉넉히 기다린다.** 점검을 계정별로 쪼개 여러 개 동시에 돌리면 Chrome 이 셋
+  // 한꺼번에 차가운 시작을 하게 되고, 20초로는 모자라 한 샤드가 통째로 죽었다
+  // (두 번 겪었다). 여기서 기다리는 비용은 한 번뿐이고, 실패 비용은 계정 하나의
+  // 화면 97개다.
+  for (let i = 0; i < 300; i += 1) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json/version`);
       if (res.ok) return { proc, ws: (await res.json()).webSocketDebuggerUrl, port };
@@ -250,7 +254,18 @@ async function launchChrome() {
     await sleep(200);
   }
   proc.kill();
-  throw new Error("Chrome DevTools 엔드포인트가 열리지 않았다.");
+  return null;
+}
+
+/** 포트가 겹쳤을 수도 있다. 다른 포트로 한 번 더 해 본다. */
+async function launchChromeWithRetry() {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const started = await launchChrome();
+    if (started) return started;
+    console.log(`  Chrome 이 안 떴다 — 다시 시도한다 (${attempt}/3)`);
+    await sleep(2000);
+  }
+  throw new Error("Chrome DevTools 엔드포인트가 열리지 않았다 (3회 시도).");
 }
 
 function connect(wsUrl) {
@@ -688,7 +703,7 @@ async function main() {
     console.log(`시드에 없는 픽스처: ${FIX_MISSING.join(", ")}`);
   }
 
-  const { proc, ws } = await launchChrome();
+  const { proc, ws } = await launchChromeWithRetry();
   const cdp = connect(ws);
   await cdp.ready;
 

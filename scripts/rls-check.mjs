@@ -2468,6 +2468,12 @@ if (!vendorStaff || !adminUser) {
 
   /** 계약을 **확정(active)까지** 밀어 올린다. 서명 두 건을 실제로 거쳐서 간다. */
   const activeFixture = `
+    -- 이 블록의 count 는 표 전체를 센다. 그래야 "남의 행까지 보이는가" 를 묻는
+    -- 검사가 되는데, 그러려면 이 트랜잭션이 표의 내용을 전부 알고 있어야 한다.
+    -- FIX-56 이 시드에 행을 넣자 그 전제가 깨져 열다섯 검사가 한꺼번에 실패했다 --
+    -- 정책이 뚫린 것이 아니라 비어 있었기 때문에 통과하던 수였다(함정 8).
+    -- 지우고 시작한다. 트랜잭션은 rollback 되므로 시드 데이터는 그대로 돌아온다.
+    delete from public.contract_cancellations;
     ${payFixture}
     update public.contracts set
       template_id = (select id from public.contract_templates where status = 'active'),
@@ -4511,6 +4517,11 @@ if (!vendorStaff || !adminUser) {
 
     // 태그 대상 업체를 트랜잭션 안에서 만든다. **승인 상태여야** 태그 트리거를 지난다.
     const communityFixture = `
+      -- 위 activeFixture 와 같은 이유로 지우고 시작한다(FIX-56).
+      delete from public.community_reports;
+      delete from public.community_post_tags;
+      delete from public.community_comments;
+      delete from public.community_posts;
       insert into public.vendors (id, name, category, status)
         values ('${TAGV}', 'RLS커뮤니티업체', 'hall', 'active');
       insert into public.vendor_members (vendor_id, user_id, vendor_role)
@@ -5052,6 +5063,10 @@ if (!vendorStaff || !adminUser) {
   const DEP_OTHER_COUPLE = "00000000-0000-0000-0000-0000000000d5";
 
   const taskFixture = `
+    -- 위와 같은 이유로 지우고 시작한다(FIX-56). 간선을 먼저 지운다 — 태스크를
+    -- 지우면 cascade 로 함께 사라지지만, 순서를 적어 두면 읽는 사람이 덜 헤맨다.
+    delete from public.task_dependencies;
+    delete from public.tasks;
     insert into public.tasks (id, couple_id, category, title, status)
       values ('${TA}', '${coupleId}', 'hall', '웨딩홀 계약', 'todo'),
              ('${TB}', '${coupleId}', 'sdm', '스드메 계약', 'todo'),
@@ -6741,7 +6756,9 @@ if (!vendorStaff || !adminUser) {
   const TOKEN = "s709-rls-check-token-0123456789abcdef";
 
   const guestFixture = `
-    delete from public.guests where id in ('${G1}', '${G2}');
+    -- 원래는 자기 두 행만 지웠다. 시드가 같은 커플에 하객을 넣자(FIX-56) 커플 단위
+    -- count 가 어긋났다 — 이 검사가 세는 것은 **이 트랜잭션이 만든 명단**이다.
+    delete from public.guests;
     update public.couples set wedding_date = current_date + 30 where id = '${coupleId}';
     insert into public.guests (id, couple_id, name, side, rsvp_status, party_size, invite_token)
       values ('${G1}', '${coupleId}', '홍길동', 'groom', 'pending', 2, '${TOKEN}');
