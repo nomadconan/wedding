@@ -33,6 +33,7 @@ type RateRow = {
   fee_rate_bp: number;
   effective_from: string;
   effective_to: string | null;
+  voided_at: string | null;
 };
 
 /** 최소한의 select 인터페이스만 요구한다 — 세션·서비스롤 클라이언트 양쪽을 받기 위해서다. */
@@ -47,7 +48,8 @@ export async function resolveVendorCommission(
   params: { vendorId: string; category: string; at?: string; salePrice?: number | null },
 ): Promise<VendorRateResult> {
   const { data, error } = await client.from("commission_rates").select(
-    "id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to",
+    // `voided_at` 을 빼면 무효화한 요율이 다시 후보가 된다(FIX-12).
+    "id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to, voided_at",
   );
 
   if (error) {
@@ -61,6 +63,7 @@ export async function resolveVendorCommission(
     feeRateBp: row.fee_rate_bp,
     effectiveFrom: row.effective_from,
     effectiveTo: row.effective_to,
+    voidedAt: row.voided_at,
   }));
 
   const resolved = resolveRate(records, {

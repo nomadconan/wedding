@@ -5,6 +5,7 @@ import {
   rateState,
   simulationScopeKeys,
   validateRate,
+  voidRate,
   type RateDraft,
   type RateRow,
   type RateState,
@@ -55,6 +56,8 @@ export type RateListRow = RateRow & {
   type: RateType;
   state: RateState;
   memo: string | null;
+  /** 무효화 사유. `voidedAt` 이 null 이면 이것도 null 이다(DB CHECK 가 짝을 지킨다). */
+  voidReason: string | null;
   /** 대상 이름. 업체·플래너면 사람이 읽는 이름을 붙인다(uuid 만 보면 알 수 없다). */
   scopeLabel: string | null;
 };
@@ -71,8 +74,8 @@ export async function listRates(client: Reader, now: Date = new Date()): Promise
   for (const type of ["commission", "planner"] as RateType[]) {
     const columns =
       type === "planner"
-        ? "id, scope_type, scope_key, service_level, fee_rate_bp, effective_from, effective_to, memo"
-        : "id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to, memo";
+        ? "id, scope_type, scope_key, service_level, fee_rate_bp, effective_from, effective_to, memo, voided_at, void_reason"
+        : "id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to, memo, voided_at, void_reason";
 
     const { data } = await client
       .from(TABLE[type])
@@ -89,10 +92,15 @@ export async function listRates(client: Reader, now: Date = new Date()): Promise
         feeRateBp: raw.fee_rate_bp as number,
         effectiveFrom: raw.effective_from as string,
         effectiveTo: (raw.effective_to as string | null) ?? null,
+        // **무효 행을 목록에서 빼지 않는다.** 지우지 않는 이유(D-23)와 같다 — 무엇을
+        // 왜 무효화했는지가 이 표의 이력이고, 안 보이면 그 이력이 사라진 것과 같다.
+        voidedAt: (raw.voided_at as string | null) ?? null,
+        voidReason: (raw.void_reason as string | null) ?? null,
         memo: (raw.memo as string | null) ?? null,
         state: rateState({
           effectiveFrom: raw.effective_from as string,
           effectiveTo: (raw.effective_to as string | null) ?? null,
+          voidedAt: (raw.voided_at as string | null) ?? null,
           now,
         }),
         scopeLabel: null,
@@ -142,7 +150,9 @@ export async function createRate(input: {
   // 말해 준다 — 제약 위반 메시지를 그대로 보여주면 운영자는 무엇을 고칠지 모른다.
   const { data: existingRows } = await admin
     .from(TABLE[input.draft.type])
-    .select("id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to");
+    // `voided_at` 을 함께 읽는다 — 무효 행은 겹침을 막지 않으므로(FIX-12 · DB 의 부분
+    // EXCLUDE 와 같은 판정) 빼먹으면 화면이 "겹친다" 며 막는데 DB 는 받아 준다.
+    .select("id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to, voided_at");
 
   const existing = ((existingRows ?? []) as Record<string, unknown>[]).map((raw) => ({
     id: raw.id as string,
@@ -151,6 +161,7 @@ export async function createRate(input: {
     feeRateBp: raw.fee_rate_bp as number,
     effectiveFrom: raw.effective_from as string,
     effectiveTo: (raw.effective_to as string | null) ?? null,
+    voidedAt: (raw.voided_at as string | null) ?? null,
   }));
 
   const overlap = findOverlaps({
@@ -160,6 +171,8 @@ export async function createRate(input: {
       feeRateBp: input.draft.feeRateBp,
       effectiveFrom: input.draft.effectiveFrom,
       effectiveTo: input.draft.effectiveTo,
+      // 새로 만드는 행은 당연히 살아 있다.
+      voidedAt: null,
     },
     existing,
   });
@@ -206,6 +219,80 @@ export async function createRate(input: {
   });
 
   return { rateId };
+}
+
+// =============================================================================
+// 무효화 — 잘못 만든 행을 되돌리는 유일한 수단 (FIX-12)
+// =============================================================================
+
+/**
+ * 요율을 무효화한다.
+ *
+ * **왜 종료로는 안 되나.** 종료는 `effective_to` 를 닫는 것이고, 닫아도 **시작부터
+ * 종료까지 그 요율이 적용됐다는 사실**은 남는다. 오타로 `700bp` 를 `7000bp` 로 넣었다면
+ * 그 구간은 70% 가 정답이 되고, DB 는 시작 전으로 닫는 것도(CHECK) 겹쳐 덮는 것도
+ * (EXCLUDE) 지우는 것도(권한) 막는다. 셋 다 막힌 상태를 로컬에서 재현해 확인했다.
+ *
+ * **되돌릴 수 없다.** 잘못 무효화했으면 올바른 요율을 새로 등록한다 — 무효 행은 겹침을
+ * 막지 않으므로 같은 구간에 넣을 수 있다(부분 EXCLUDE).
+ *
+ * **판정은 순수 함수가 한다**(`voidRate`). 여기서는 행을 읽어 넘기고 결과를 저장할 뿐이다.
+ */
+export async function voidRateRow(input: {
+  type: RateType;
+  rateId: string;
+  reason: string;
+  actorId: string;
+}): Promise<{ voidedAt: string } | RateFailure> {
+  const admin = createAdminClient();
+
+  const { data } = await admin
+    .from(TABLE[input.type])
+    .select("id, voided_at")
+    .eq("id", input.rateId)
+    .maybeSingle();
+
+  const row = data as { voided_at: string | null } | null;
+
+  if (!row) return failure(404, "RATE_NOT_FOUND", "요율을 찾을 수 없습니다.");
+
+  const decision = voidRate({ voidedAt: row.voided_at, reason: input.reason });
+
+  if (!decision.ok) return failure(422, `RATE_VOID_${decision.code.toUpperCase()}`, decision.detail);
+
+  /**
+   * **시각을 계산해 넣지 않는다.** `now()` 는 DB 가 찍는다 — 앱과 DB 의 시계가 다르면
+   * 이력의 순서가 어긋나고, 그 이력이 정산 분쟁의 근거다.
+   */
+  const { data: updated, error } = await admin
+    .from(TABLE[input.type])
+    .update({
+      voided_at: new Date().toISOString(),
+      void_reason: decision.reason,
+      voided_by: input.actorId,
+      updated_by: input.actorId,
+    })
+    .eq("id", input.rateId)
+    .select("voided_at")
+    .maybeSingle();
+
+  if (error || !updated) {
+    return failure(500, "RATE_VOID_FAILED", "요율을 무효화하지 못했습니다.");
+  }
+
+  await recordEvent({
+    entityType: input.type === "commission" ? "commission_rate" : "planner_fee_rate",
+    entityId: input.rateId,
+    eventType: "rate_voided",
+    actor: { id: input.actorId, role: "admin" },
+    beforeState: "active",
+    afterState: "voided",
+    // **사유를 그대로 싣는다.** 무효화는 사람이 판단한 일이고 그 판단이 곧 증적이다.
+    // 개인정보가 아니며(요율 표에는 사람이 없다) 이 문장이 없으면 원장을 읽을 수 없다.
+    memo: `reason=${decision.reason.slice(0, 200)}`,
+  });
+
+  return { voidedAt: (updated as { voided_at: string }).voided_at };
 }
 
 // =============================================================================
@@ -292,6 +379,7 @@ export async function simulateRate(input: SimulationInput): Promise<SimulationRe
     feeRateBp: raw.fee_rate_bp as number,
     effectiveFrom: raw.effective_from as string,
     effectiveTo: (raw.effective_to as string | null) ?? null,
+    voidedAt: (raw.voided_at as string | null) ?? null,
   }));
 
   // **우선순위는 S5-02 가 갖는다.** 여기서 다시 정하지 않는다.

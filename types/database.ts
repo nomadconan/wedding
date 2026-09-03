@@ -782,6 +782,9 @@ export type Database = {
           scope_type: Database["public"]["Enums"]["commission_scope_type"]
           updated_at: string
           updated_by: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           created_at?: string
@@ -794,6 +797,9 @@ export type Database = {
           scope_type: Database["public"]["Enums"]["commission_scope_type"]
           updated_at?: string
           updated_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           created_at?: string
@@ -806,6 +812,9 @@ export type Database = {
           scope_type?: Database["public"]["Enums"]["commission_scope_type"]
           updated_at?: string
           updated_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: []
       }
@@ -3505,6 +3514,9 @@ export type Database = {
           service_level: string | null
           updated_at: string
           updated_by: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           created_at?: string
@@ -3518,6 +3530,9 @@ export type Database = {
           service_level?: string | null
           updated_at?: string
           updated_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           created_at?: string
@@ -3531,6 +3546,9 @@ export type Database = {
           service_level?: string | null
           updated_at?: string
           updated_by?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: []
       }

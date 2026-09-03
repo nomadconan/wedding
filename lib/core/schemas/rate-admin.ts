@@ -42,3 +42,25 @@ export const RateCloseSchema = z.object({
 });
 
 export type RateClose = z.infer<typeof RateCloseSchema>;
+
+/**
+ * 무효화 요청 (FIX-12).
+ *
+ * **종료와 다른 요청이라 스키마를 나눴다.** 종료는 시각을 받고("여기까지 적용했다")
+ * 무효화는 사유를 받는다("이 줄은 없던 것으로 친다"). 한 엔드포인트에 섞으면 어느
+ * 쪽인지가 본문 모양에 숨고, 감사 로그에서도 구분되지 않는다.
+ *
+ * **사유가 필수다.** DB CHECK(`*_void_pair`)가 최종 경계이며 여기서 먼저 걸러
+ * 사람이 읽을 수 있는 메시지를 준다. 상한 300자는 DB 와 같은 값이다.
+ */
+export const RateVoidSchema = z.object({
+  type: z.enum(RATE_TYPES),
+  rateId: z.string().uuid("요율 식별자가 올바르지 않습니다."),
+  reason: z
+    .string()
+    .trim()
+    .min(1, "무효화 사유를 적어 주세요.")
+    .max(300, "무효화 사유는 300자를 넘을 수 없습니다."),
+});
+
+export type RateVoid = z.infer<typeof RateVoidSchema>;

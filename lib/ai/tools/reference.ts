@@ -21,7 +21,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 async function loadPlannerRateRecords(): Promise<RateRecord[]> {
   const { data } = await createAdminClient()
     .from("planner_fee_rates")
-    .select("id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to");
+    // `voided_at` 을 빼면 무효화한 요율이 다시 후보가 된다(FIX-12).
+    .select("id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to, voided_at");
 
   return ((data ?? []) as {
     id: string;
@@ -30,6 +31,7 @@ async function loadPlannerRateRecords(): Promise<RateRecord[]> {
     fee_rate_bp: number;
     effective_from: string;
     effective_to: string | null;
+    voided_at: string | null;
   }[]).map((row) => ({
     id: row.id,
     scopeType: row.scope_type as RateRecord["scopeType"],
@@ -37,6 +39,7 @@ async function loadPlannerRateRecords(): Promise<RateRecord[]> {
     feeRateBp: row.fee_rate_bp,
     effectiveFrom: row.effective_from,
     effectiveTo: row.effective_to,
+    voidedAt: row.voided_at,
   }));
 }
 

@@ -66,19 +66,28 @@ export const SCOPE_PRIORITY_NOTICE =
  * **저장하지 않는다.** `effective_from`·`effective_to` 와 시계로 나오는 값이며,
  * 컬럼으로 두면 배치가 늦은 만큼 화면이 거짓을 말한다(0027~0033 이 세운 같은 규칙).
  */
-export type RateState = "scheduled" | "active" | "ended";
+export type RateState = "scheduled" | "active" | "ended" | "voided";
 
 export const RATE_STATE_LABEL: Record<RateState, string> = {
   scheduled: "예정",
   active: "적용 중",
   ended: "종료",
+  voided: "무효",
 };
 
 export function rateState(input: {
   effectiveFrom: string;
   effectiveTo: string | null;
+  /** 무효화 시각. null 이면 살아 있다(FIX-12). */
+  voidedAt: string | null;
   now: Date;
 }): RateState {
+  /**
+   * **무효화가 기간을 이긴다.** 무효화된 행은 구간이 어떻든 적용되지 않으므로
+   * '적용 중' 으로 그리면 화면이 거짓말을 한다 — 운영자가 그 요율이 지금 돈다고 읽는다.
+   */
+  if (input.voidedAt !== null) return "voided";
+
   const from = Date.parse(input.effectiveFrom);
   const at = input.now.getTime();
 
@@ -107,6 +116,8 @@ export type RateRow = {
   feeRateBp: number;
   effectiveFrom: string;
   effectiveTo: string | null;
+  /** 무효화 시각. null 이면 살아 있다(FIX-12). */
+  voidedAt: string | null;
 };
 
 export type OverlapCheck =
@@ -147,6 +158,10 @@ export function findOverlaps(input: {
   const conflicts = input.existing.filter((row) => {
     // 자기 자신은 겹침이 아니다(수정할 때).
     if (candidate.id !== undefined && row.id === candidate.id) return false;
+    // **무효화된 행은 자리를 차지하지 않는다**(FIX-12). DB 의 부분 EXCLUDE 제약
+    // (`where voided_at is null`)과 같은 판정이어야 한다 — 여기서만 세면 화면이
+    // "겹친다" 고 막는데 DB 는 받아 주는, 반대로 읽히는 상태가 된다.
+    if (row.voidedAt !== null) return false;
     if (row.scopeType !== candidate.scopeType) return false;
     if ((row.scopeKey ?? "") !== (candidate.scopeKey ?? "")) return false;
 
@@ -297,12 +312,85 @@ export function endRate(input: {
     return {
       ok: false,
       reason: "before_start",
-      detail: "시작 시각보다 앞선 시점으로 종료할 수 없어요. 잘못 만든 행이면 다른 요율로 덮어 주세요.",
+      // **"다른 요율로 덮어 주세요" 라고 적어 두었던 자리다**(FIX-12). DB 의 겹침
+      // 제약이 그 일을 거부하므로 시키는 대로 해도 되지 않는다. 실제로 되는 길을 적는다.
+      detail: "시작 시각보다 앞선 시점으로 종료할 수 없어요. 잘못 만든 행이면 무효화하세요.",
     };
   }
 
   return { ok: true, effectiveTo: input.endAt };
 }
+
+// =============================================================================
+// 무효화 — 잘못 만든 행을 되돌리는 유일한 수단 (FIX-12)
+// =============================================================================
+
+export type VoidRateDecision =
+  | { ok: true; reason: string }
+  | { ok: false; code: "already_voided" | "reason_required" | "reason_too_long"; detail: string };
+
+/** 사유 길이 상한. DB CHECK(`*_void_reason_shape`)와 같은 값이어야 한다. */
+export const VOID_REASON_MAX = 300;
+
+/**
+ * 요율을 무효화한다.
+ *
+ * **종료(`endRate`)와 다른 일이다.** 종료는 "여기까지 적용했다" 이고 무효화는
+ * **"이 줄은 없던 것으로 친다"** 이다. 오타로 넣은 요율은 종료로 되돌릴 수 없다 —
+ * 종료해도 시작부터 종료까지의 구간에는 그 요율이 그대로 적용되기 때문이다.
+ *
+ * **지우지 않는다**(D-23). 행은 이력으로 남고 해석에서만 빠진다(`resolveRate`).
+ *
+ * **되돌릴 수 없다.** 잘못 무효화했으면 올바른 요율을 새로 등록한다 — 무효화된 행은
+ * 겹침을 막지 않으므로 같은 구간에 넣을 수 있다. 되돌리기를 열면 같은 행이 무효와
+ * 유효를 오가고, 그 사이에 확정된 계약의 근거를 나중에 재현할 수 없다.
+ *
+ * **이미 확정된 계약을 고치지 않는다**(D-16). 스냅샷은 불변이며(0028) 무효화는
+ * 앞으로의 해석만 바꾼다. 화면이 그 사실을 함께 적어야 한다 — 적지 않으면 운영자가
+ * "무효화했으니 지난 정산도 바뀌겠지" 로 읽는다.
+ */
+export function voidRate(input: {
+  voidedAt: string | null;
+  reason: string;
+}): VoidRateDecision {
+  if (input.voidedAt !== null) {
+    return {
+      ok: false,
+      code: "already_voided",
+      detail: "이미 무효화된 요율이에요. 올바른 요율을 새로 등록하세요.",
+    };
+  }
+
+  const reason = input.reason.trim();
+
+  if (reason.length === 0) {
+    return {
+      ok: false,
+      code: "reason_required",
+      detail: "무효화 사유를 적어 주세요. 사유가 없으면 나중에 왜 지웠는지 답할 수 없어요.",
+    };
+  }
+
+  if (reason.length > VOID_REASON_MAX) {
+    return {
+      ok: false,
+      code: "reason_too_long",
+      detail: `무효화 사유는 ${VOID_REASON_MAX}자를 넘을 수 없어요.`,
+    };
+  }
+
+  return { ok: true, reason };
+}
+
+/**
+ * 무효화가 **하지 못하는 일**. 화면이 버튼 옆에 그대로 적는다.
+ *
+ * 소급되지 않는다는 사실을 여기서 한 번 더 적는 이유 — `NO_RETROACTIVE_NOTICE` 는
+ * *요율 변경*의 이야기이고, 무효화는 "없던 것으로 친다" 는 말이라 **더 강하게 들린다.**
+ * 그 오해가 그대로 두면 "무효화했는데 왜 정산이 그대로냐" 는 신고가 된다.
+ */
+export const VOID_NOT_RETROACTIVE_NOTICE =
+  "무효화해도 이미 발행된 계약의 요율은 바뀌지 않아요. 계약은 확정 시점의 요율을 스냅샷으로 갖고 있고 그 값은 되돌릴 수 없습니다. 무효화는 앞으로의 계산에서 이 줄을 빼는 것입니다.";
 
 // =============================================================================
 // 변경 영향 — 소급되지 않는다 (D-16)

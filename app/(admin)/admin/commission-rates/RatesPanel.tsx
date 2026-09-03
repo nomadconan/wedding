@@ -12,6 +12,7 @@ import {
   NO_RETROACTIVE_NOTICE,
   PLANNER_SCOPES,
   RATE_STATE_LABEL,
+  VOID_NOT_RETROACTIVE_NOTICE,
   RATE_VALUE_UNDECIDED_NOTICE,
   SCOPE_LABEL,
   SCOPE_PRIORITY_NOTICE,
@@ -142,34 +143,71 @@ export function RatesPanel({ rates }: RatesData) {
                       {row.effectiveFrom.slice(0, 10)} ~ {row.effectiveTo?.slice(0, 10) ?? "무기한"}
                     </td>
                     <td className="py-1.5 pr-2">
+                      {/* **무효는 종료와 다른 색이다**(FIX-12). 둘을 같은 회색으로 그리면
+                          "여기까지 적용했다" 와 "없던 것으로 친다" 가 한 낱말로 읽힌다. */}
                       <span
                         className={cn(
                           "rounded-full px-2 py-0.5",
                           row.state === "active"
                             ? "bg-success-surface text-success-foreground"
-                            : "bg-neutral-100 text-neutral-600",
+                            : row.state === "voided"
+                              ? "bg-danger-surface text-danger"
+                              : "bg-neutral-100 text-neutral-600",
                         )}
                       >
                         {RATE_STATE_LABEL[row.state]}
                       </span>
-                    </td>
-                    <td className="py-1.5 text-right">
-                      {row.effectiveTo === null ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() =>
-                            post(
-                              "/api/admin/commission-rates",
-                              { type: row.type, rateId: row.id, endAt: new Date().toISOString() },
-                              "PATCH",
-                            )
-                          }
-                        >
-                          종료
-                        </Button>
+                      {row.voidReason ? (
+                        <span className="ml-1 text-neutral-500">{row.voidReason}</span>
                       ) : null}
+                    </td>
+                    <td className="space-x-1 py-1.5 text-right">
+                      {row.state === "voided" ? null : (
+                        <>
+                          {row.effectiveTo === null ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() =>
+                                post(
+                                  "/api/admin/commission-rates",
+                                  { type: row.type, rateId: row.id, endAt: new Date().toISOString() },
+                                  "PATCH",
+                                )
+                              }
+                            >
+                              종료
+                            </Button>
+                          ) : null}
+                          {/* **무효화는 사유를 받고서야 보낸다**(FIX-12). 사유 없는 무효화는
+                              DB 도 거부하지만(`*_void_pair`) 여기서 먼저 물어야 운영자가
+                              422 를 보고 되돌아오지 않는다. */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => {
+                              const reason = window.prompt(
+                                `이 요율을 무효화합니다.\n\n${VOID_NOT_RETROACTIVE_NOTICE}\n\n무효화 사유를 적어 주세요.`,
+                                "",
+                              );
+
+                              // 취소(null)와 빈 사유를 나눠 다룬다 — 취소는 아무 일도
+                              // 일어나지 않아야 하고, 빈 사유는 서버가 거절할 요청이다.
+                              if (reason === null) return;
+
+                              void post("/api/admin/commission-rates/void", {
+                                type: row.type,
+                                rateId: row.id,
+                                reason,
+                              });
+                            }}
+                          >
+                            무효화
+                          </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -179,8 +217,14 @@ export function RatesPanel({ rates }: RatesData) {
 
           {/* 요율 행은 지우지 않는다 — 지우면 "그때 어떤 요율표였나" 를 재현할 수 없다. */}
           <p className="mt-3 text-xs text-neutral-500">
-            요율은 삭제하지 않고 <strong>종료</strong>합니다. 지난 정산의 근거가 남아야 하기 때문이에요.
+            요율은 삭제하지 않고 <strong>종료</strong>하거나 <strong>무효화</strong>합니다. 지난 정산의
+            근거가 남아야 하기 때문이에요. 종료는 “여기까지 적용했다”이고, 무효화는 “이 줄은 없던
+            것으로 친다”입니다 — 잘못 넣은 값은 종료로는 되돌릴 수 없어요(그 구간에는 그대로
+            적용됐기 때문입니다).
           </p>
+          {/* **무효화가 못 하는 일을 같은 자리에 적는다**(FIX-12). 이 문장이 없으면
+              "무효화했는데 왜 지난 정산이 그대로냐" 가 장애로 신고된다. */}
+          <p className="mt-1 text-xs text-neutral-500">{VOID_NOT_RETROACTIVE_NOTICE}</p>
         </section>
       )}
     </div>

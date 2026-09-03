@@ -18,14 +18,19 @@ import {
 const VENDOR_ID = "11111111-1111-4111-8111-111111111111";
 const PLANNER_ID = "22222222-2222-4222-8222-222222222222";
 
+/**
+ * **`as RateRecord` 캐스트를 걷었다**(FIX-12). 캐스트가 있으면 필드를 빠뜨려도 TS 가
+ * 통과시키고 zod 가 런타임에야 던진다 — 타입이 거짓말하는 자리다(FIX-38 과 같은 결).
+ */
 function record(overrides: Partial<RateRecord> & Pick<RateRecord, "scopeType">): RateRecord {
   return {
     scopeKey: null,
     feeRateBp: 100,
     effectiveFrom: "2026-01-01T00:00:00Z",
     effectiveTo: null,
+    voidedAt: null,
     ...overrides,
-  } as RateRecord;
+  };
 }
 
 const COMMISSION_QUERY = {
@@ -406,5 +411,75 @@ describe("calculatePlannerFee — 미선택이면 부과하지 않는다 (D-17)"
   it("반올림은 정산과 같은 방식이다", () => {
     expect(calculatePlannerFee({ salePrice: 1, feeRateBp: 5_000, selected: true })).toBe(1);
     expect(calculatePlannerFee({ salePrice: 1, feeRateBp: 4_999, selected: true })).toBe(0);
+  });
+});
+
+
+describe("resolveRate — 무효화된 요율은 후보가 아니다 (FIX-12)", () => {
+  it("무효화된 행은 해석에서 빠진다 — 그것이 오타를 되돌리는 방식이다", () => {
+    const typo = record({
+      scopeType: "global",
+      feeRateBp: 7000,
+      voidedAt: "2026-05-01T00:00:00Z",
+    });
+    const corrected = record({ scopeType: "global", feeRateBp: 700 });
+
+    const resolved = resolveRate([typo, corrected], {
+      scopeCandidates: COMMISSION_SCOPE_ORDER,
+      scopeKeys: {},
+      at: "2026-06-01T00:00:00Z",
+    });
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.feeRateBp).toBe(700);
+  });
+
+  it("살아 있는 요율이 무효화된 것 하나뿐이면 '요율 없음' 이다 — 조용히 통과하지 않는다", () => {
+    const onlyVoided = record({
+      scopeType: "global",
+      feeRateBp: 500,
+      voidedAt: "2026-05-01T00:00:00Z",
+    });
+
+    const resolved = resolveRate([onlyVoided], {
+      scopeCandidates: COMMISSION_SCOPE_ORDER,
+      scopeKeys: {},
+      at: "2026-06-01T00:00:00Z",
+    });
+
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) expect(resolved.reason).toBe("no_matching_rate");
+  });
+
+  it("무효화된 행은 모호(ambiguous) 판정에도 끼지 않는다", () => {
+    // 같은 스코프·같은 구간에 둘이 있지만 하나가 무효면 남은 하나로 결정된다.
+    const voided = record({
+      scopeType: "global",
+      feeRateBp: 900,
+      voidedAt: "2026-05-01T00:00:00Z",
+    });
+    const alive = record({ scopeType: "global", feeRateBp: 500 });
+
+    const resolved = resolveRate([voided, alive], {
+      scopeCandidates: COMMISSION_SCOPE_ORDER,
+      scopeKeys: {},
+      at: "2026-06-01T00:00:00Z",
+    });
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.feeRateBp).toBe(500);
+  });
+
+  it("무효화하지 않은 행은 그대로 후보다 — 무효화가 해석을 무디게 하지 않았다", () => {
+    const alive = record({ scopeType: "global", feeRateBp: 500 });
+
+    const resolved = resolveRate([alive], {
+      scopeCandidates: COMMISSION_SCOPE_ORDER,
+      scopeKeys: {},
+      at: "2026-06-01T00:00:00Z",
+    });
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.feeRateBp).toBe(500);
   });
 });
