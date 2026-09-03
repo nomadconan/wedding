@@ -86,6 +86,22 @@ function asAnon(body, setup = "") {
 }
 
 /** 거절돼야 정상인 문장. 기대한 사유로 끊겼으면 true. */
+/**
+ * **되어야 하는 일**을 확인할 때 쓴다.
+ *
+ * `sql()` 은 실패하면 던진다 — `rejectedWith` 처럼 '막혀야 정상' 인 검사에는 그것이 맞지만,
+ * '되어야 정상' 인 검사에서는 **회귀가 FAIL 이 아니라 스크립트 폭사로 나타난다.**
+ * 그러면 남은 검사가 아예 돌지 않아 무엇이 더 깨졌는지 알 수 없다(FIX-12 에서 겪었다).
+ * 여기서는 오류를 삼키고 `null` 을 돌려 그 줄만 FAIL 로 떨어지게 한다.
+ */
+function sqlOrNull(text) {
+  try {
+    return sql(text);
+  } catch {
+    return null;
+  }
+}
+
 function rejectedWith(pattern, run) {
   try {
     run();
@@ -3888,6 +3904,147 @@ if (!vendorStaff || !adminUser) {
     "**요율 값을 마이그레이션이 시드하지 않았다** (O-02 — 값은 화면에서 넣는다)",
     sql(`select count(*) from public.commission_rates
          where memo is null or memo not like 'local demo%';`) === "0",
+  );
+
+
+  // ===========================================================================
+  // 요율 무효화 (FIX-12 · 0072)
+  // ---------------------------------------------------------------------------
+  // **오타로 넣은 요율을 되돌리는 길이 셋 다 막혀 있었다** — 삭제(권한) · 시작 전
+  // 종료(CHECK) · 겹쳐 덮기(EXCLUDE). 무효화 표시가 그 자리를 연다.
+  //
+  // **여기 수는 `scope_key = PV` 로 좁혀 센다.** 시드가 전역 요율을 넣어 두므로
+  // 표 전체를 세면 이 트랜잭션이 만든 것과 다른 수가 나온다 — 검사가 자기가 세는
+  // 것을 알고 있어야 한다(D-178).
+  // ===========================================================================
+  const VOID_TYPO = "00000000-0000-0000-0000-00000000f060";
+  const VOID_FIX = "00000000-0000-0000-0000-00000000f061";
+
+  /** 오타 요율 하나가 살아 있는 상태. */
+  const typoFixture = `
+    ${payFixture}
+    insert into public.commission_rates
+      (id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+      values ('${VOID_TYPO}', 'vendor', '${PV}', 7000, '2026-03-01T00:00:00Z', null);
+  `;
+
+  /** 그 오타 요율을 사유와 함께 무효화한 상태. */
+  const voidedFixture = `
+    ${typoFixture}
+    update public.commission_rates
+       set voided_at = now(), void_reason = '700bp 를 7000bp 로 잘못 입력'
+     where id = '${VOID_TYPO}';
+  `;
+
+  check(
+    "**살아 있는 오타 요율은 겹침을 막는다** — 무효화 전에는 고칠 수 없었다",
+    rejectedWith(/commission_rates_no_overlap|23P01|conflicting key/i, () =>
+      sql(`begin; ${typoFixture}
+        insert into public.commission_rates
+          (id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+          values ('${VOID_FIX}', 'vendor', '${PV}', 700, '2026-03-01T00:00:00Z', null);
+        rollback;`)),
+  );
+  check(
+    "**무효화하면 같은 구간에 올바른 요율을 넣을 수 있다** (부분 EXCLUDE)",
+    sqlOrNull(`begin; ${voidedFixture}
+        insert into public.commission_rates
+          (id, scope_type, scope_key, fee_rate_bp, effective_from, effective_to)
+          values ('${VOID_FIX}', 'vendor', '${PV}', 700, '2026-03-01T00:00:00Z', null);
+        select count(*) from public.commission_rates where scope_key = '${PV}'; rollback;`) === "2",
+  );
+  check(
+    "**무효화해도 행은 남는다** (D-23 — 스냅샷의 출처를 답해야 한다)",
+    sqlOrNull(`begin; ${voidedFixture}
+        select count(*) from public.commission_rates
+         where id = '${VOID_TYPO}' and voided_at is not null; rollback;`) === "1",
+  );
+  check(
+    "사유 없이 무효화할 수 없다 (void_pair)",
+    rejectedWith(/commission_rates_void_pair|check constraint/i, () =>
+      sql(`begin; ${typoFixture}
+        update public.commission_rates set voided_at = now() where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "공백만 적은 사유는 사유가 아니다 (void_reason_shape)",
+    rejectedWith(/commission_rates_void_reason_shape|check constraint/i, () =>
+      sql(`begin; ${typoFixture}
+        update public.commission_rates set voided_at = now(), void_reason = '   '
+         where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "사유만 적고 무효화하지 않을 수도 없다 (짝은 양방향이다)",
+    rejectedWith(/commission_rates_void_pair|check constraint/i, () =>
+      sql(`begin; ${typoFixture}
+        update public.commission_rates set void_reason = '사유만' where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "**무효화는 되돌릴 수 없다** — 되돌리면 확정된 계약의 근거를 재현할 수 없다",
+    rejectedWith(/rate_voided_is_final|무효화된 요율/i, () =>
+      sql(`begin; ${voidedFixture}
+        update public.commission_rates set voided_at = null, void_reason = null
+         where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "무효화된 행은 다시 종료할 수도 없다 (종결은 종결이다)",
+    rejectedWith(/rate_voided_is_final|무효화된 요율/i, () =>
+      sql(`begin; ${voidedFixture}
+        update public.commission_rates set effective_to = now() + interval '1 day'
+         where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "무효화 칸도 당사자가 쓸 수 없다 (층 1 — 새 컬럼에 권한을 주지 않았다)",
+    rejectedWith(/permission denied|42501|row-level security/i, () =>
+      asUser(adminUser, `update public.commission_rates
+         set voided_at = now(), void_reason = '직접' where id = '${VOID_TYPO}';`, typoFixture)),
+  );
+  check(
+    "플래너 요율도 같은 규칙이다 (짝 CHECK · 되돌리기 금지)",
+    rejectedWith(/planner_fee_rates_void_pair|check constraint/i, () =>
+      sql(`begin;
+        insert into public.planner_fee_rates
+          (id, scope_type, scope_key, fee_rate_bp, effective_from)
+          values ('${VOID_TYPO}', 'planner', '${VOID_FIX}', 300, '2026-03-01T00:00:00Z');
+        update public.planner_fee_rates set voided_at = now() where id = '${VOID_TYPO}';
+        rollback;`)),
+  );
+  check(
+    "플래너 요율도 무효화하면 같은 구간을 다시 쓸 수 있다",
+    sqlOrNull(`begin;
+        insert into public.planner_fee_rates
+          (id, scope_type, scope_key, fee_rate_bp, effective_from)
+          values ('${VOID_TYPO}', 'planner', '${VOID_FIX}', 300, '2026-03-01T00:00:00Z');
+        update public.planner_fee_rates
+           set voided_at = now(), void_reason = '오타' where id = '${VOID_TYPO}';
+        insert into public.planner_fee_rates
+          (scope_type, scope_key, fee_rate_bp, effective_from)
+          values ('planner', '${VOID_FIX}', 30, '2026-03-01T00:00:00Z');
+        select count(*) from public.planner_fee_rates where scope_key = '${VOID_FIX}';
+        rollback;`) === "2",
+  );
+
+  // ── 층 2 · 층 3 (FIX-41 · FIX-47 계열) ────────────────────────────────────
+  check(
+    "**요율 정책이 부모 표의 RLS 를 빌려 쓰지 않는다** (층 2)",
+    sql(`select count(*) from pg_policy
+         where polrelid in ('public.commission_rates'::regclass, 'public.planner_fee_rates'::regclass)
+           and pg_get_expr(polqual, polrelid) ilike '%exists (select 1 from%';`) === "0",
+  );
+  check(
+    "**요율 표에 쓰기 정책이 하나도 없다** (층 1 — 권한을 되돌려도 열리지 않는다)",
+    sql(`select count(*) from pg_policy
+         where polrelid in ('public.commission_rates'::regclass, 'public.planner_fee_rates'::regclass)
+           and polcmd <> 'r';`) === "0",
+  );
+  check(
+    "**자격의 근거를 당사자가 못 쓴다** (층 3 — is_operator 는 profiles.role 을 읽는다)",
+    rejectedWith(/permission denied|42501/i, () =>
+      asUser(outsider, `update public.profiles set role = 'admin' where user_id = '${outsider}';`)),
   );
 
   // ===========================================================================

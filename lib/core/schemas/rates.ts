@@ -63,6 +63,15 @@ export const RateRecordSchema = z
     effectiveFrom: InstantSchema,
     /** null 이면 무기한. */
     effectiveTo: InstantSchema.nullable(),
+    /**
+     * 무효화 시각. null 이면 살아 있는 요율이다(FIX-12).
+     *
+     * **`.optional()` 을 붙이지 않았다.** 붙이면 조회 코드가 `voided_at` 컬럼을
+     * 빠뜨려도 타입이 통과하고, 그러면 **무효화한 요율이 조용히 계약에 적용된다.**
+     * 필수로 두면 `tsc` 가 빠뜨린 자리를 잡는다 — FIX-38 이 남긴 교훈(타입이 거짓말하면
+     * 검사가 아무것도 검사하지 않는다)을 여기서 값으로 쓴다.
+     */
+    voidedAt: InstantSchema.nullable(),
   })
   .refine(
     (record) => (record.scopeType === "global" ? record.scopeKey === null : record.scopeKey !== null),

@@ -9,6 +9,8 @@
 //   1) 좁은 범위가 넓은 범위를 이긴다.  vendor(planner) → category → global
 //   2) 적용 구간은 [effectiveFrom, effectiveTo) 반개구간이다. effectiveTo=null 이면 무기한.
 //   3) 요율 변경은 새 행 추가이므로, 과거 시점으로 조회하면 그때의 요율이 그대로 나온다.
+//   4) **무효화된 행(`voidedAt`)은 후보에서 빠진다**(FIX-12). 지우지 않고 표시만 하므로
+//      이력은 남고 해석에서만 사라진다 — 잘못 만든 요율을 되돌리는 유일한 길이다.
 
 import {
   PlannerFeeInputSchema,
@@ -112,6 +114,9 @@ export function resolveRate(records: readonly RateRecord[], query: RateQuery): R
 
     const matched = parsedRecords.filter(
       (record) =>
+        // **무효화된 행은 없는 것으로 친다**(FIX-12). 행은 이력으로 남지만(D-23) 해석에는
+        // 들어오지 않는다 — 그것이 오타 요율을 되돌리는 유일한 수단이다.
+        record.voidedAt === null &&
         record.scopeType === scopeType &&
         record.scopeKey === scopeKey &&
         isEffectiveAt(record, atMs) &&
