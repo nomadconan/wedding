@@ -50,6 +50,10 @@ export default defineConfig({
       "lib/membership/**/*.test.ts",
       // S8-13: 배치 실행 인프라 선언이 디스크·vercel.json 과 갈리지 않는지 대조한다.
       "lib/ops/**/*.test.ts",
+      // FIX-22: Supabase 클라이언트를 만드는 자리마다 캐시 정책을 정했는지 대조한다.
+      // 안 적으면 **아무 경고 없이 1년짜리 캐시에 얹히고**(revalidate 31536000) 값이
+      // 바뀌는 날에야 드러난다 — 사람의 기억이 아니라 검사가 들어야 하는 종류다.
+      "lib/supabase/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {
