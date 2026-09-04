@@ -36,5 +36,6 @@ export const JOB_ROUTE_NAMES = [
   "price-anomaly-scan",
   "price-index-refresh",
   "purge-documents",
+  "settlement-aggregate",
   "sla-escalation",
 ] as const;

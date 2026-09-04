@@ -98,9 +98,12 @@ export const BATCH_SPECS: readonly BatchSpec[] = [
   {
     name: "settlement-aggregate",
     schedule: "월 2회",
-    cron: null,
+    // FIX-08 이 라우트를 만들고 `vercel.json` 에 등록했다. **마감 기준일 다음 날**에
+    // 돈다 — `settlement.period.closingDay` 가 1 이므로 1일과 16일 새벽이다.
+    cron: "0 5 1,16 * *",
     purpose: "정산 기간을 집계하고 명세를 만든다",
-    consequence: "업체 정산이 밀린다. 지금은 라우트가 없어 수동 실행(`/admin/settlements`)뿐이다.",
+    consequence:
+      "업체 정산이 밀린다. 월 마감을 사람이 기억해야 하고, 한 업체를 빠뜨리면 그 업체는 정산을 못 받는데 빠뜨렸다는 사실이 어느 화면에도 뜨지 않는다.",
     legalDuty: false,
   },
   {
