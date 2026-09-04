@@ -1,5 +1,5 @@
 import { readIntSetting, readSetting } from "@/lib/app-settings";
-import { recordEvent } from "@/lib/audit/record";
+import { recordEvent, type EventSource } from "@/lib/audit/record";
 import { confirmDueAt } from "@/lib/core/confirmation/two-sided";
 import {
   buildReleaseCondition,
@@ -247,7 +247,7 @@ export async function confirmFulfillment(input: {
   });
 
   if (decision.action === "dispute") {
-    await moveToDisputed(hold.id, now, input.actorId);
+    await moveToDisputed(hold.id, now, { id: input.actorId, role: input.side });
 
     return { status: "disputed", action: "dispute", detail: decision.detail };
   }
@@ -257,7 +257,7 @@ export async function confirmFulfillment(input: {
       hold,
       direction: "release",
       reason: decision.reason === "agreed" ? "양측 이행 확인" : "확인 기한 경과",
-      actorId: input.actorId,
+      actor: { id: input.actorId, role: input.side },
       now,
     });
 
@@ -299,7 +299,8 @@ export async function resolveEscrow(input: {
     hold,
     direction: input.direction,
     reason: input.note,
-    actorId: input.adminId,
+    actor: { id: input.adminId, role: "admin" },
+    source: "admin",
     resolvedBy: input.adminId,
     now,
   });
@@ -310,8 +311,174 @@ export async function resolveEscrow(input: {
 }
 
 // =============================================================================
+// 자동 릴리즈 배치 — 아무도 화면을 열지 않아도 판정이 일어난다 (FIX-14 · §4.5)
+// =============================================================================
+
+export type EscrowReleaseResult = {
+  /** 살펴본 `held` 홀드 수. */
+  scanned: number;
+  /** 업체 정산 대상으로 넘긴 수. */
+  released: number;
+  /** 조율로 넘긴 수. */
+  disputed: number;
+  /** 아직 조건이 안 된 수. **0 으로 접지 않는다** — 왜 안 움직였는지가 사실이다. */
+  held: number;
+  /** 어댑터·DB 가 거절해 넘기지 못한 수. 다음 실행에서 다시 후보가 된다. */
+  failed: number;
+};
+
+/**
+ * 이행 확인이 끝났거나 기한이 지난 홀드를 정리한다 (§4.5 `escrow-release`).
+ *
+ * ── 왜 배치가 필요한가 ─────────────────────────────────────────────────────
+ * `decideRelease` 는 이미 있었는데 **그것을 부르는 자동 경로가 없었다.** 부르는 곳은
+ * 둘뿐이다 — 확인 버튼(`confirmFulfillment`)과 화면 표시(`lib/escrow/loader`, 쓰지
+ * 않는다). 즉 **아무도 화면을 열지 않으면 잔금이 영원히 묶인다.** 로컬에서 재현했다:
+ * 예식일과 확인 기한이 모두 지난 홀드를 두고 기존 배치 여덟 개를 전부 돌려도 상태가
+ * `held` 그대로였다.
+ *
+ * 손해는 두 겹이다. `settlementEligible` 은 **열린 홀드가 있는 예약을 정산에서 뺀다** —
+ * 홀드가 안 풀리면 그 돈은 업체에게 가지도 않고 **정산에도 들어오지 않는다.**
+ *
+ * ── 배치가 자기 규칙을 갖지 않는다 ─────────────────────────────────────────
+ * 판정은 전부 `decideRelease` 가 한다. 여기서 조건을 다시 적으면 **화면이 예고하는 것과
+ * 배치가 하는 것이 갈린다** — 화면은 같은 함수로 "예식일이 지나면 넘어갑니다" 라고
+ * 이미 적고 있다(`TIMEOUT_RELEASE_NOTICE`).
+ *
+ * ── '지금' 을 호출자가 넘긴다 ───────────────────────────────────────────────
+ * 배치가 스스로 시각을 정하면 같은 입력으로 같은 결과가 나오지 않아 재현할 수 없다
+ * (S4-15 가 상담 배치에서 세운 규칙 · `planner-payout-due` 와 같다).
+ *
+ * ── 증적을 두 번 남기지 않는다 ─────────────────────────────────────────────
+ * 전이 기록은 `settleHold`·`moveToDisputed` 가 이미 남긴다. 배치가 한 번 더 남기면
+ * 같은 사건이 두 줄이 되어 "몇 번 릴리즈됐나" 를 셀 수 없게 된다. 배치가 더하는 것은
+ * **행위자뿐**이다 — `actor.id = null` · `source = "system"`(D-173).
+ */
+export async function runEscrowRelease(now: Date): Promise<EscrowReleaseResult> {
+  const admin = createAdminClient();
+  const result: EscrowReleaseResult = {
+    scanned: 0,
+    released: 0,
+    disputed: 0,
+    held: 0,
+    failed: 0,
+  };
+
+  const { data } = await admin
+    .from("escrow_holds")
+    .select(
+      "id, booking_id, status, held_amount, provider_ref, confirm_due_at, couple_confirmed, vendor_confirmed",
+    )
+    // **`held` 만 본다.** `disputed` 는 운영자가 사유를 붙여 끝내는 일이고(D-24),
+    // 종결된 것은 되돌리지 않는다(D-23).
+    .eq("status", "held")
+    .limit(1000);
+
+  const rows = (data ?? []) as Record<string, unknown>[];
+  result.scanned = rows.length;
+
+  if (rows.length === 0) return result;
+
+  // 예식일은 커플이 갖는다. 홀드마다 따로 조회하면 N+1 이라 한 번에 끌어온다.
+  const bookingIds = [
+    ...new Set(
+      rows.map((row) => row.booking_id as string | null).filter((id): id is string => id !== null),
+    ),
+  ];
+
+  const { data: bookingRows } = await admin
+    .from("bookings")
+    .select("id, couple_id")
+    .in("id", bookingIds);
+
+  const coupleOf = new Map(
+    ((bookingRows ?? []) as { id: string; couple_id: string }[]).map((row) => [
+      row.id,
+      row.couple_id,
+    ]),
+  );
+
+  const coupleIds = [...new Set(coupleOf.values())];
+
+  const { data: coupleRows } = coupleIds.length
+    ? await admin.from("couples").select("id, wedding_date").in("id", coupleIds)
+    : { data: [] };
+
+  const eventOf = new Map(
+    ((coupleRows ?? []) as { id: string; wedding_date: string | null }[]).map((row) => [
+      row.id,
+      row.wedding_date,
+    ]),
+  );
+
+  for (const row of rows) {
+    const bookingId = (row.booking_id as string | null) ?? "";
+
+    const hold: HoldRow = {
+      id: row.id as string,
+      bookingId,
+      status: "held",
+      heldAmount: (row.held_amount as number) ?? 0,
+      providerRef: (row.provider_ref as string | null) ?? null,
+      confirmDueAt: (row.confirm_due_at as string | null) ?? null,
+      coupleConfirmed: (row.couple_confirmed as boolean | null) ?? null,
+      vendorConfirmed: (row.vendor_confirmed as boolean | null) ?? null,
+      eventDate: eventOf.get(coupleOf.get(bookingId) ?? "") ?? null,
+    };
+
+    const decision = decideRelease({
+      coupleConfirmed: hold.coupleConfirmed,
+      vendorConfirmed: hold.vendorConfirmed,
+      dueAt: hold.confirmDueAt,
+      eventDate: hold.eventDate,
+      now,
+    });
+
+    if (decision.action === "hold") {
+      result.held += 1;
+      continue;
+    }
+
+    if (decision.action === "dispute") {
+      // **배치가 분쟁을 만드는 것이 아니다.** 한쪽이 이미 '이행되지 않았어요' 를
+      // 고른 건이고, 그때 전이가 실패해 `held` 로 남은 것을 여기서 마무리한다.
+      await moveToDisputed(hold.id, now, BATCH_ACTOR, "system");
+      result.disputed += 1;
+      continue;
+    }
+
+    const settled = await settleHold({
+      hold,
+      direction: "release",
+      reason: decision.reason === "agreed" ? "양측 이행 확인" : "확인 기한 경과",
+      actor: BATCH_ACTOR,
+      source: "system",
+      now,
+    });
+
+    // **실패하면 상태를 바꾸지 않는다.** 다음 실행에서 다시 후보가 되며
+    // "돈은 안 갔는데 상태는 released" 가 되지 않는다.
+    if (settled) result.released += 1;
+    else result.failed += 1;
+  }
+
+  return result;
+}
+
+// =============================================================================
 // 내부 — 보관 해제
 // =============================================================================
+
+/**
+ * 증적에 남을 행위자.
+ *
+ * **`id` 가 null 일 수 있다**(D-173). 배치가 옮긴 전이에는 사람이 없고, 그 자리에
+ * 운영 계정을 빌려 넣으면 증적이 "운영자가 눌렀다" 고 거짓말을 한다.
+ */
+type Actor = { id: string | null; role?: string | null };
+
+/** 자동 릴리즈 배치가 남기는 행위자. `source: "system"` 이 실행자를 말한다. */
+const BATCH_ACTOR: Actor = { id: null, role: "system" };
 
 type HoldRow = {
   id: string;
@@ -364,7 +531,12 @@ async function loadHold(holdId: string): Promise<HoldRow | null> {
   };
 }
 
-async function moveToDisputed(holdId: string, now: Date, actorId: string): Promise<void> {
+async function moveToDisputed(
+  holdId: string,
+  now: Date,
+  actor: Actor,
+  source?: EventSource,
+): Promise<void> {
   const admin = createAdminClient();
 
   await admin
@@ -376,9 +548,10 @@ async function moveToDisputed(holdId: string, now: Date, actorId: string): Promi
     entityType: "escrow_hold",
     entityId: holdId,
     eventType: "escrow_disputed",
-    actor: { id: actorId },
+    actor,
     beforeState: "held",
     afterState: "disputed",
+    source,
   });
 }
 
@@ -392,7 +565,9 @@ async function settleHold(input: {
   hold: HoldRow;
   direction: "release" | "refund";
   reason: string;
-  actorId: string;
+  actor: Actor;
+  /** 사람이 눌렀는지 배치가 옮겼는지. 증적의 `source` 가 된다. */
+  source?: EventSource;
   resolvedBy?: string;
   now: Date;
 }): Promise<boolean> {
@@ -413,7 +588,8 @@ async function settleHold(input: {
         entityType: "escrow_hold",
         entityId: input.hold.id,
         eventType: "escrow_settle_failed",
-        actor: { id: input.actorId },
+        actor: input.actor,
+        source: input.source,
         memo: `direction=${input.direction} retryable=${result.retryable}`,
       });
 
@@ -450,9 +626,10 @@ async function settleHold(input: {
     entityType: "escrow_hold",
     entityId: input.hold.id,
     eventType: input.direction === "release" ? "escrow_released" : "escrow_refunded",
-    actor: { id: input.actorId },
+    actor: input.actor,
     beforeState: input.hold.status,
     afterState: input.direction === "release" ? "released" : "refunded",
+    source: input.source,
     memo: `amount=${input.hold.heldAmount} reason=${input.reason.slice(0, 60)}`,
   });
 

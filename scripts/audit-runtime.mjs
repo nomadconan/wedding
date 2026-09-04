@@ -51,6 +51,12 @@ const DO_SCREENS = has("--screens") || !has("--api");
 const DO_API = has("--api") || !has("--screens");
 const OUT = opt("out", "tmp/audit-runtime.json");
 const NAV_TIMEOUT = Number(opt("timeout", "45000"));
+/**
+ * 본문을 몇 글자까지 결과에 담을지. 기본 200 자는 **어느 화면인지 알아보는 용도**다.
+ * 고친 화면이 실제로 무엇을 그리는지 눈으로 봐야 할 때 `--head=4000` 처럼 늘린다 —
+ * 전수 점검 결과 파일이 그만큼 커지므로 기본값은 그대로 둔다.
+ */
+const HEAD_CHARS = Number(opt("head", "200"));
 
 // 로컬 전용 안전장치 — 원격을 상대로 이 스크립트를 돌리면 남의 데이터를 친다.
 if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE)) {
@@ -361,7 +367,7 @@ async function visit(cdp, sessionId, url, state) {
       // 운영자 화면을 404 로 기록**했다. Next 의 not-found 화면 문구만 본다.
       notFound: /This page could not be found/.test(flat),
       textLength: flat.length,
-      head: flat.slice(0, 200)
+      head: flat.slice(0, ${HEAD_CHARS})
     };
   })()`;
 
