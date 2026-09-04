@@ -51,7 +51,8 @@ export async function POST(request: NextRequest) {
         input.periodStart && input.periodEnd
           ? { start: input.periodStart, end: input.periodEnd }
           : undefined,
-      actorId: user.id,
+      actor: { id: user.id, role: user.role },
+      source: "admin",
     });
 
     return isSettlementFailure(result)

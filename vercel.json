@@ -10,6 +10,7 @@
     { "path": "/api/jobs/consultation-confirm-request", "schedule": "15 * * * *" },
     { "path": "/api/jobs/consultation-resolve", "schedule": "45 * * * *" },
     { "path": "/api/jobs/planner-payout-due", "schedule": "0 3 * * *" },
-    { "path": "/api/jobs/escrow-release", "schedule": "0 4 * * *" }
+    { "path": "/api/jobs/escrow-release", "schedule": "0 4 * * *" },
+    { "path": "/api/jobs/settlement-aggregate", "schedule": "0 5 1,16 * *" }
   ]
 }

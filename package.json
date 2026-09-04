@@ -34,7 +34,8 @@
     "audit:api": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs --api --out=tmp/audit-api.json",
     "audit:runtime": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs",
     "audit:report": "node scripts/audit-report.mjs",
-    "check:escrow": "node --env-file=.env.local scripts/check-escrow-release.mjs"
+    "check:escrow": "node --env-file=.env.local scripts/check-escrow-release.mjs",
+    "check:settlement": "node --env-file=.env.local scripts/check-settlement-aggregate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

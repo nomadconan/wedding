@@ -1,5 +1,5 @@
 import { readIntSetting, readSetting } from "@/lib/app-settings";
-import { recordEvent } from "@/lib/audit/record";
+import { recordEvent, type EventSource } from "@/lib/audit/record";
 import { vendorBorneTotal } from "@/lib/core/coupon/coupon";
 import { settlementEligible, type EscrowStatus } from "@/lib/core/escrow/escrow";
 import { feeBasisOf } from "@/lib/core/payment/payment";
@@ -210,7 +210,13 @@ export type RunResult = {
 export async function runSettlement(input: {
   vendorId: string;
   period?: SettlementPeriod;
-  actorId: string;
+  /**
+   * 증적에 남을 행위자. **`id` 가 null 일 수 있다**(D-173) — 배치가 옮긴 전이에는
+   * 사람이 없고, 그 자리에 운영 계정을 빌려 넣으면 증적이 "운영자가 눌렀다" 고
+   * 거짓말을 한다. 그때는 `source: "system"` 이 실행자를 말한다.
+   */
+  actor: { id: string | null; role?: string | null };
+  source?: EventSource;
   now?: Date;
 }): Promise<RunResult | SettlementFailure> {
   const admin = createAdminClient();
@@ -300,7 +306,8 @@ export async function runSettlement(input: {
     entityType: "settlement",
     entityId: settlementId,
     eventType: existing ? "settlement_recalculated" : "settlement_created",
-    actor: { id: input.actorId },
+    actor: input.actor,
+    source: input.source,
     afterState: patch.status,
     // 금액·건수·사유만. 업체명·거래 내용은 넣지 않는다(§7.3).
     memo:
@@ -315,6 +322,122 @@ export async function runSettlement(input: {
     blockedReason: patch.blocked_reason,
     itemCount: build.status === "draft" ? build.items.length : 0,
   };
+}
+
+// =============================================================================
+// 기간 집계 배치 — 마감을 사람이 기억하지 않는다 (FIX-08 · §4.5 `settlement-aggregate`)
+// =============================================================================
+
+export type AggregateResult = {
+  /** 이 기간에 돈이 들어온 업체 수. 집계를 시도한 대상이다. */
+  scanned: number;
+  /** 정산서가 선 업체 수(`draft`). */
+  drafted: number;
+  /** 기준이 없어 서지 못한 업체 수. **0 으로 접지 않는다** — 이것이 O-15 의 얼굴이다. */
+  blocked: number;
+  /** 이미 확정·지급돼 다시 계산하지 않은 업체 수(D-23). */
+  frozen: number;
+  /** 돈은 들어왔지만 넣을 거래가 없던 업체 수(미완납·열린 홀드 등). */
+  empty: number;
+  /** 쓰기가 실패한 업체 수. 다음 실행에서 다시 후보가 된다. */
+  failed: number;
+};
+
+/**
+ * 정산 기간을 집계한다 (§4.5 `settlement-aggregate`).
+ *
+ * ── 무엇이 없었나 ──────────────────────────────────────────────────────────
+ * 집계 코드(`runSettlement`)는 있었는데 **부르는 것은 사람뿐**이었다 —
+ * `/admin/settlements` 에서 **업체를 하나씩 골라 눌러야** 했다. 즉 월 마감을 사람이
+ * 기억해야 하고, 한 업체를 빠뜨리면 **그 업체는 정산을 못 받는다.** 그리고 빠뜨렸다는
+ * 사실이 어느 화면에도 뜨지 않는다(FIX-08 · D-182 와 같은 모양).
+ *
+ * ── 후보를 좁히되 판정하지 않는다 ──────────────────────────────────────────
+ * **그 기간에 돈이 들어온 업체**만 후보로 든다. 전 업체를 도는 것보다 좁고, 무엇보다
+ * `collectLines` 가 기간을 재는 기준(**마지막 결제일**)과 **같은 자리에서 나온다.**
+ * 다만 여기서 넣을지 말지를 정하지 않는다 — 완납인지, 열린 홀드가 있는지는 전부
+ * `collectLines` 가 본다. 배치가 그 규칙을 다시 적으면 **사람이 눌렀을 때와 배치가
+ * 돌았을 때의 답이 갈린다.**
+ *
+ * ── `blocked` 를 조용히 넘기지 않는다 ───────────────────────────────────────
+ * `fee_basis` 가 미결이면(O-15) 정산서는 `blocked` 로 선다. 그 **정산서**에게는
+ * "실패가 아니라 대기" 가 맞다 — 거래는 이미 모여 있다. 그러나 **배치**에게는 다르다:
+ * 후보가 있었는데 **하나도 명세가 되지 않았다면 이 실행은 제 일을 하지 못했다.**
+ * 그래서 그때는 실행을 `failed` 로 닫아 `/admin/ops` 가 그것을 든다. 둘은 다른
+ * 대상이고, 합치면 **월 마감이 조용히 비는 것**을 아무도 모른다.
+ *
+ * **값을 대신 정하지 않는다.** 기본 기준을 고르는 순간 미결정이 조용히 확정되고,
+ * 업체가 받는 금액이 코드의 선택이 된다(O-15).
+ */
+export async function runSettlementAggregate(now: Date): Promise<AggregateResult> {
+  const admin = createAdminClient();
+  const result: AggregateResult = {
+    scanned: 0,
+    drafted: 0,
+    blocked: 0,
+    frozen: 0,
+    empty: 0,
+    failed: 0,
+  };
+
+  const periodSetting = await readSetting("settlement.period");
+  const unit = typeof periodSetting?.unit === "string" ? periodSetting.unit : "month";
+  const period = settlementPeriod(now, unit);
+
+  // 기간 판정은 **마지막 결제 시각**이다(`collectLines` 와 같은 기준).
+  const { data: paymentRows } = await admin
+    .from("payments")
+    .select("booking_id, paid_at")
+    .in("status", ["paid", "partially_refunded"])
+    .gte("paid_at", `${period.start}T00:00:00.000Z`)
+    .lte("paid_at", `${period.end}T23:59:59.999Z`);
+
+  const bookingIds = [
+    ...new Set(
+      ((paymentRows ?? []) as { booking_id: string | null }[])
+        .map((row) => row.booking_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  if (bookingIds.length === 0) return result;
+
+  const { data: bookingRows } = await admin
+    .from("bookings")
+    .select("vendor_id")
+    .in("id", bookingIds)
+    .in("status", ["confirmed", "fulfilled"]);
+
+  const vendorIds = [
+    ...new Set(((bookingRows ?? []) as { vendor_id: string }[]).map((row) => row.vendor_id)),
+  ];
+
+  result.scanned = vendorIds.length;
+
+  for (const vendorId of vendorIds) {
+    const run = await runSettlement({
+      vendorId,
+      period,
+      // **사람이 없다**(D-173). 마감을 누른 운영자가 없기 때문이다.
+      actor: { id: null, role: "system" },
+      source: "system",
+      now,
+    });
+
+    if (isSettlementFailure(run)) {
+      // 확정·지급된 정산서는 다시 계산하지 않는다(D-23). **실패가 아니다** —
+      // 이미 끝난 기간을 배치가 다시 돌았을 뿐이다.
+      if (run.code === "SETTLEMENT_FROZEN") result.frozen += 1;
+      else result.failed += 1;
+      continue;
+    }
+
+    if (run.status === "blocked") result.blocked += 1;
+    else if (run.itemCount === 0) result.empty += 1;
+    else result.drafted += 1;
+  }
+
+  return result;
 }
 
 type SettlementPatch = Record<string, unknown>;

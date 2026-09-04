@@ -3818,6 +3818,147 @@ if (!vendorStaff || !adminUser) {
          values ('${PSET}', 100, 'pending', 'anon-k');`) === "0",
   );
 
+  // ── 기간 집계 배치 (FIX-08) ───────────────────────────────────────────────
+  //
+  // **집계 코드는 있었는데 부르는 것은 사람뿐이었다** — `/admin/settlements` 에서
+  // 업체를 하나씩 골라 눌러야 했다. 월 마감을 사람이 기억해야 하고, 한 업체를
+  // 빠뜨리면 그 업체는 정산을 못 받는데 **빠뜨렸다는 사실이 어느 화면에도 안 뜬다.**
+  {
+    const settleSource = readFileSync("lib/settlements/actions.ts", "utf8");
+    const aggregate = settleSource.slice(
+      settleSource.indexOf("export async function runSettlementAggregate"),
+      settleSource.indexOf("type SettlementPatch"),
+    );
+    const jobRoute = existsSync("app/api/jobs/settlement-aggregate/route.ts")
+      ? readFileSync("app/api/jobs/settlement-aggregate/route.ts", "utf8")
+      : "";
+
+    check(
+      "**배치 본문을 실제로 읽었다** — 못 읽으면 아래 검사가 빈 문자열을 통과시킨다",
+      aggregate.length > 500 && jobRoute.length > 500,
+    );
+    check(
+      "**배치 라우트가 실재한다** — 집계 코드만 있고 부르는 자리가 없으면 사람이 기억해야 한다",
+      existsSync("app/api/jobs/settlement-aggregate/route.ts"),
+    );
+    check(
+      "**`vercel.json` 에 등록돼 있다** — 만들어 두고 안 부르면 없는 것과 같다",
+      readFileSync("vercel.json", "utf8").includes("/api/jobs/settlement-aggregate"),
+    );
+    check(
+      "**배치 이름이 job_runs 어휘에 있다** — 없으면 기록이 CHECK 에 걸려 사라진다",
+      sql(`select count(*) from pg_constraint
+             where conrelid = 'public.job_runs'::regclass
+               and conname = 'job_runs_name_vocab'
+               and pg_get_constraintdef(oid) like '%settlement-aggregate%';`) === "1",
+    );
+    check(
+      "**배치가 집계 규칙을 다시 적지 않는다** — 사람이 누른 것과 같은 함수를 부른다",
+      aggregate.includes("await runSettlement({") && !aggregate.includes("buildSettlement("),
+    );
+    check(
+      "**기간을 배치가 지어내지 않는다** — `settlementPeriod` 와 설정이 정한다",
+      aggregate.includes("settlementPeriod(now, unit)") &&
+        aggregate.includes('readSetting("settlement.period")'),
+    );
+    check(
+      "**미결 파라미터를 코드가 대신 답하지 않는다**(O-15) — 기본 기준을 만들지 않았다",
+      !aggregate.includes("pre_discount") && !aggregate.includes("post_discount"),
+    );
+    check(
+      "**후보가 있는데 하나도 서지 못하면 실행을 실패로 닫는다** — 마감이 빈 것을 succeeded 로 적지 않는다",
+      jobRoute.includes("result.scanned > 0 && result.drafted === 0 && result.blocked > 0") &&
+        jobRoute.includes('status: result.failed > 0 || stalled ? "failed" : "succeeded"'),
+    );
+    check(
+      "**선 정산서만 센다** — blocked 를 함께 세면 마감이 빈 달과 찬 달이 같은 수가 된다",
+      jobRoute.includes("processedCount: result.drafted"),
+    );
+    check(
+      "**확정된 정산서를 다시 계산하려다 실패로 세지 않는다**(D-23) — 끝난 기간을 다시 돈 것뿐이다",
+      aggregate.includes('run.code === "SETTLEMENT_FROZEN"'),
+    );
+    check(
+      "**배치가 남긴 증적에는 사람이 없다**(D-173) — 마감을 누른 운영자가 없기 때문이다",
+      aggregate.includes('actor: { id: null, role: "system" }') &&
+        aggregate.includes('source: "system"'),
+    );
+    check(
+      "**안 선 이유를 0 으로 접지 않는다** — blocked·frozen·empty 를 갈라 센다",
+      aggregate.includes("result.blocked += 1") &&
+        aggregate.includes("result.frozen += 1") &&
+        aggregate.includes("result.empty += 1"),
+    );
+
+    // ── 기준이 없으면 실제로 막히는가 ────────────────────────────────────────
+    //
+    // **표 전체를 세지 않는다**(D-178). 이 트랜잭션이 만든 정산서 하나만 본다.
+    check(
+      "**기준이 없으면 정산서가 계산으로 서지 못한다** — 배치가 돌아도 금액이 안 나온다(O-15)",
+      rejectedWith(/settlements_fee_basis_shape/, () =>
+        sql(`begin; ${payFixture}
+          update public.settlements set status = 'draft', fee_basis = null
+            where id = '${PSET}';
+          rollback;`)),
+    );
+    check(
+      "**기준 값은 여전히 미결이다** — 코드도 시드도 대신 정하지 않았다(O-15)",
+      sql(`select value_json ->> 'status' from public.app_settings
+             where key = 'settlement.fee_basis';`) === "undecided",
+    );
+
+    // ── 층 3: 자격의 근거를 자격을 얻으려는 사람이 쓸 수 있는가 ─────────────
+    //
+    // 집계가 읽는 근거는 **예약의 요율 스냅샷**(`bookings.applied_fee_rate_bp`)과
+    // **계약 총액**(`contracts.total_amount`)이다. 받는 쪽인 업체가 그 둘을 고칠 수
+    // 있으면 **정산 금액을 스스로 적는 것과 같다.**
+    check(
+      "**업체는 예약의 요율 스냅샷을 못 고친다** — 고치면 자기 수수료를 스스로 낮춘다",
+      (() => {
+        try {
+          return (
+            asUser(
+              outsider,
+              `update public.bookings set applied_fee_rate_bp = 0 where id = '${PB}';
+               select count(*) from public.bookings
+                 where id = '${PB}' and applied_fee_rate_bp = 0;`,
+              payFixture,
+            ) === "0"
+          );
+        } catch (error) {
+          return /permission denied|row-level security|42501/i.test(String(error.stderr ?? error));
+        }
+      })(),
+    );
+    check(
+      "**업체는 계약 총액을 못 고친다** — 고치면 정산 대상 금액을 스스로 적는다",
+      (() => {
+        try {
+          return (
+            asUser(
+              outsider,
+              `update public.contracts set total_amount = 99999999 where id = '${PC}';
+               select count(*) from public.contracts
+                 where id = '${PC}' and total_amount = 99999999;`,
+              payFixture,
+            ) === "0"
+          );
+        } catch (error) {
+          return /permission denied|row-level security|42501/i.test(String(error.stderr ?? error));
+        }
+      })(),
+    );
+
+    // ── 층 1: 표에서 걷었는데 칸으로 다시 준 곳이 없는가 ────────────────────
+    check(
+      "**정산서에 업체가 쓸 수 있는 칸은 이의 메모 하나뿐이다** — 표에서 걷고 칸 하나만 돌려줬다",
+      sql(`select coalesce(string_agg(distinct column_name, ','), '(없음)')
+             from information_schema.column_privileges
+            where table_schema = 'public' and table_name = 'settlements'
+              and grantee = 'authenticated' and privilege_type = 'UPDATE';`) === "vendor_note",
+    );
+  }
+
   // ===========================================================================
   // 요율 관리 (S5-03 · 0034)
   // ---------------------------------------------------------------------------
