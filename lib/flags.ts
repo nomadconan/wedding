@@ -1,4 +1,4 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * 피처 플래그 (CLAUDE.md §2.1 · 명세서 §3.8)
@@ -19,31 +19,16 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
  * 취급돼 캐시에 얹힌다. 그 결과 플래그를 켜도 **꺼진 값이 계속 돌아왔다** — 스위치가
  * 스위치 노릇을 못 하는 상태이며, 흐름 점검이 그것을 잡았다.
  *
- * 그래서 이 모듈은 **자기 클라이언트를 만들고 `no-store` 를 못 박는다.**
- * `createAdminClient()` 를 쓰지 않는 이유는 그쪽을 건드리면 전 호출부의 캐시 동작이
- * 함께 바뀌기 때문이다 — 플래그만 고친다(같은 위험이 다른 곳에도 있다는 사실은
- * FIX-22 로 기록했다).
+ * 그때는 **자기 클라이언트를 만들어** `no-store` 를 못 박았다. 공용 팩토리를 건드리면
+ * 전 호출부의 캐시 동작이 함께 바뀌기 때문이었고, 같은 위험이 다른 곳에도 있다는 사실은
+ * FIX-22 로 기록했다. **FIX-22 가 그것을 해소하면서 기본이 `no-store` 가 됐으므로**
+ * 사본을 지우고 공용 팩토리로 돌아온다 — 사본이 남아 있으면 다음 사람이 "여기는 특별해서
+ * 따로 만들었구나" 로 읽고 **자기 것도 하나 더 만든다.**
  */
-function createFlagClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceRoleKey) {
-    throw new Error("Supabase 서버 환경변수가 설정되지 않았습니다.");
-  }
-
-  return createSupabaseClient(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: {
-      // **스위치는 캐시되면 안 된다.** 켠 순간 켜져야 한다.
-      fetch: (input, init) => fetch(input as RequestInfo, { ...init, cache: "no-store" }),
-    },
-  });
-}
 
 export async function isFeatureEnabled(key: string): Promise<boolean> {
   try {
-    const { data } = await createFlagClient()
+    const { data } = await createAdminClient()
       .from("feature_flags")
       .select("enabled")
       .eq("key", key)
@@ -65,14 +50,14 @@ export async function isFeatureEnabled(key: string): Promise<boolean> {
  * 개폐가 네 행에 흩어지고** 그 중 하나만 고치는 날이 온다(D-67 이 개방 조건을
  * `rollout_json` 에 적어 둔 것과 같은 자리다).
  *
- * `isFeatureEnabled` 와 같은 클라이언트를 쓴다 — **캐시를 끈다**(FIX-22).
+ * `isFeatureEnabled` 와 같은 클라이언트를 쓴다 — 공용 팩토리가 **캐시를 끈다**(FIX-22).
  * **행이 없으면 `null`** 이며, 읽는 쪽이 그것을 '판정 전' 으로 볼지 '꺼짐' 으로 볼지
  * 정한다. 커뮤니티는 꺼짐이었고 이쪽은 판정 전이다 — 두 상황이 다르므로 이 함수가
  * 대신 정하지 않는다.
  */
 export async function featureRollout(key: string): Promise<Record<string, unknown> | null> {
   try {
-    const { data } = await createFlagClient()
+    const { data } = await createAdminClient()
       .from("feature_flags")
       .select("rollout_json")
       .eq("key", key)

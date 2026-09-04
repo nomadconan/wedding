@@ -137,12 +137,29 @@ export function toFilterInput(params: URLSearchParams) {
   };
 }
 
-/** 익명 읽기 클라이언트. 쿠키를 보지 않으므로 항상 공개 정책으로 판정된다. */
+/**
+ * 익명 읽기 클라이언트. 쿠키를 보지 않으므로 항상 공개 정책으로 판정된다.
+ *
+ * ── 캐시를 끈다 (FIX-22) ────────────────────────────────────────────────────
+ * **쿠키를 안 보는 것이 곧 캐시에 얹히는 조건이었다.** Next 14 는 `fetch` 를 기본
+ * 캐시하고, 이 클라이언트의 조회는 세션을 안 보므로 정적 렌더로 취급돼 그대로
+ * 굳는다. 로컬에서 재현했다 — `products.base_price_total` 을 바꿨는데 `/explore` 가
+ * **옛 가격(9,000,000원)을 그렸고** 디스크 캐시에 `revalidate: 31536000`(1년)으로
+ * `products`·`product_options`·`price_index` 응답이 들어 있었다.
+ *
+ * **투명 가격이 이 서비스의 근간이다**(D-03). 그 화면이 옛 가격을 말하면 고객은
+ * 없는 가격을 보고 담고, 업체는 올린 가격이 반영 안 된 것을 모른다.
+ */
 export function createPublicClient(): SupabaseClient {
   return createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false } },
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: {
+        fetch: (input, init) => fetch(input as RequestInfo, { ...init, cache: "no-store" }),
+      },
+    },
   );
 }
 
