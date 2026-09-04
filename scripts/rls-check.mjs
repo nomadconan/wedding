@@ -4243,6 +4243,129 @@ if (!vendorStaff || !adminUser) {
          where key = 'escrow.confirm_due_days' and (value_json ->> 'days') ~ '^[0-9]+$';`) === "1",
   );
 
+  // ── 자동 릴리즈 배치 (FIX-14) ─────────────────────────────────────────────
+  //
+  // **판정 함수는 있었는데 부르는 자동 경로가 없었다.** 부르는 곳은 확인 버튼과
+  // **화면 표시**뿐이라, 아무도 화면을 열지 않으면 잔금이 묶인 채 남았다. 그리고 열린
+  // 홀드가 있는 예약은 정산에서 빠지므로(`settlementEligible`) 그 돈은 업체에게 가지도
+  // 않고 정산에도 들어오지 않았다 — 손해가 두 겹이다.
+  {
+    const batchSource = readFileSync("lib/escrow/actions.ts", "utf8");
+    const runner = batchSource.slice(
+      batchSource.indexOf("export async function runEscrowRelease"),
+      batchSource.indexOf("// 내부 — 보관 해제"),
+    );
+
+    check(
+      "**배치 본문을 실제로 읽었다** — 못 읽으면 아래 검사가 전부 빈 문자열을 통과시킨다",
+      runner.length > 500,
+    );
+    check(
+      "**배치 라우트가 실재한다** — 판정 함수만 있고 부르는 자리가 없으면 영영 보관이다",
+      existsSync("app/api/jobs/escrow-release/route.ts"),
+    );
+    check(
+      "**`vercel.json` 에 등록돼 있다** — 만들어 두고 안 부르면 없는 것과 같다",
+      readFileSync("vercel.json", "utf8").includes("/api/jobs/escrow-release"),
+    );
+    check(
+      "**배치 이름이 job_runs 어휘에 있다** — 없으면 기록이 CHECK 에 걸려 사라진다",
+      sql(`select count(*) from pg_constraint
+             where conrelid = 'public.job_runs'::regclass
+               and conname = 'job_runs_name_vocab'
+               and pg_get_constraintdef(oid) like '%escrow-release%';`) === "1",
+    );
+    check(
+      "**배치가 자기 규칙을 갖지 않는다** — 판정은 순수 함수 하나가 한다",
+      runner.includes("decideRelease({"),
+    );
+    check(
+      "**배치가 날짜로 후보를 거르지 않는다** — SQL 로 거르면 화면이 예고한 것과 답이 갈린다",
+      runner.includes('.eq("status", "held")') && !/\.(lt|lte|gt|gte)\(/.test(runner),
+    );
+    check(
+      "**배치가 상태를 직접 쓰지 않는다** — 전이 규칙과 증적을 든 함수로만 옮긴다(D-23 · D-24)",
+      !runner.includes(".update(") &&
+        runner.includes("settleHold({") &&
+        runner.includes("moveToDisputed("),
+    );
+    check(
+      "**배치가 남긴 증적에는 사람이 없다**(D-173) — 운영 계정을 빌려 넣으면 증적이 거짓말한다",
+      runner.includes("actor: BATCH_ACTOR") &&
+        runner.includes('source: "system"') &&
+        /const BATCH_ACTOR: Actor = \{ id: null, role: "system" \};/.test(batchSource),
+    );
+    check(
+      "**어댑터가 거절하면 넘긴 수로 세지 않는다** — '돈은 안 갔는데 released' 가 되지 않는다",
+      runner.includes("if (settled) result.released += 1;"),
+    );
+    check(
+      "**안 움직인 수를 0 으로 접지 않는다** — 왜 그대로인지가 사실이다",
+      runner.includes("result.held += 1;") && runner.includes("result.failed += 1;"),
+    );
+
+    // ── 배치가 하려는 전이를 DB 가 실제로 받는가 ────────────────────────────
+    //
+    // **표 전체를 세지 않는다**(D-178). 이 트랜잭션이 만든 홀드 하나만 보고, 그것이
+    // 실제로 `released` 가 되는지 확인한다.
+    check(
+      "**배치가 하려는 전이를 DB 가 받는다** — 무응답 릴리즈는 사유와 시각이 함께 간다",
+      sqlOrNull(`begin; ${escrowFixture}
+          update public.escrow_holds set
+            status = 'released', released_at = now(), release_reason = '확인 기한 경과'
+            where id = '${ESC}';
+          select status || ':' || (release_reason is not null)
+            from public.escrow_holds where id = '${ESC}'; rollback;`) === "released:true",
+    );
+
+    // ── 층 3: 자격의 근거를 자격을 얻으려는 사람이 쓸 수 있는가 ─────────────
+    //
+    // 무응답 릴리즈의 근거는 둘이다 — **확인 기한**(`escrow_holds.confirm_due_at`)과
+    // **예식일**(`couples.wedding_date`). 릴리즈로 이득을 보는 쪽은 업체다.
+    // **업체가 그 둘 중 하나라도 앞당겨 쓸 수 있으면 자동 릴리즈는 업체가 스스로
+    // 여는 문이 된다.**
+    check(
+      "**업체는 커플의 예식일을 못 고친다** — 고치면 업체가 자동 릴리즈를 스스로 앞당긴다",
+      (() => {
+        try {
+          return (
+            asUser(
+              vendorStaff,
+              `update public.couples set wedding_date = current_date - 400
+                 where id = '${coupleId}';
+               select count(*) from public.couples
+                 where id = '${coupleId}' and wedding_date = current_date - 400;`,
+            ) === "0"
+          );
+        } catch (error) {
+          return /permission denied|row-level security/i.test(String(error.stderr ?? error));
+        }
+      })(),
+    );
+    check(
+      "**업체는 확인 기한을 못 고친다** — 홀드 표에는 당사자 쓰기 권한 자체가 없다",
+      rejectedWith(/permission denied/, () =>
+        asUser(
+          vendorStaff,
+          `update public.escrow_holds set confirm_due_at = now() - interval '1 day';`,
+          escrowFixture,
+        ),
+      ),
+    );
+
+    // ── 층 1: 표에서 걷었는데 칸으로 다시 준 곳이 없는가 ────────────────────
+    //
+    // `revoke insert (칸)` 만으로는 무효다. 표 단위로 걷고 다시 주지 않았는지
+    // **`column_privileges` 에서 직접 확인한다** — 정책만 보면 이 구멍이 안 보인다.
+    check(
+      "**홀드 표에 칸 단위 쓰기 권한이 남아 있지 않다** — 표에서 걷고 칸으로 되돌려 주지 않았다",
+      sql(`select count(*) from information_schema.column_privileges
+             where table_schema = 'public' and table_name = 'escrow_holds'
+               and grantee in ('authenticated', 'anon')
+               and privilege_type in ('INSERT', 'UPDATE');`) === "0",
+    );
+  }
+
   // ===========================================================================
   // 플래너 범위 (S6-01 · 0036)
   // ---------------------------------------------------------------------------
@@ -10209,7 +10332,8 @@ if (!vendorStaff || !adminUser) {
     const inCheck = sql(`select pg_get_constraintdef(oid) from pg_constraint
                            where conname = 'job_runs_name_vocab';`);
 
-    check("코드가 배치 열 종을 선언한다 (명세 §4.5)", new Set(names).size === 10);
+    // §4.5 의 열 종 + FIX-14 가 더한 `escrow-release`.
+    check("코드가 배치 열한 종을 선언한다 (명세 §4.5 + FIX-14)", new Set(names).size === 11);
     check(
       "**CHECK 어휘가 코드와 같다** — 갈리면 배치가 이름을 못 남기거나 화면이 그 배치를 모른다",
       names.length > 0 && names.every((name) => inCheck.includes(`'${name}'`)),

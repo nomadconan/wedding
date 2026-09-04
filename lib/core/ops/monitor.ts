@@ -114,6 +114,17 @@ export const BATCH_SPECS: readonly BatchSpec[] = [
     legalDuty: false,
   },
   {
+    name: "escrow-release",
+    schedule: "매일",
+    // FIX-14 가 라우트를 만들고 `vercel.json` 에 등록했다. **예식일 경과가 조건이라
+    // 날짜 경계가 가장 이른 의미 있는 시점**이다 — 시간마다 돌 이유가 없다.
+    cron: "0 4 * * *",
+    purpose: "이행 확인이 끝났거나 확인 기한·예식일이 모두 지난 안전거래 홀드를 정리한다",
+    consequence:
+      "잔금이 보관된 채 남는다. 게다가 열린 홀드가 있는 예약은 정산에서 빠지므로(settlementEligible) 그 돈은 업체에게 가지도 않고 정산에도 들어오지 않는다.",
+    legalDuty: false,
+  },
+  {
     name: "wishlist-price-watch",
     schedule: "매일",
     cron: null,

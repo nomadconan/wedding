@@ -83,12 +83,13 @@ describe("buildBatchRows", () => {
     expect(noCron).toEqual(["settlement-aggregate", "wishlist-price-watch"]);
   });
 
-  it("배치 열 종이 각각 **안 돌면 무엇이 깨지는지**를 적는다", () => {
+  it("배치가 각각 **안 돌면 무엇이 깨지는지**를 적는다", () => {
     for (const spec of BATCH_SPECS) {
       expect(spec.consequence.length).toBeGreaterThan(15);
       expect(spec.purpose.length).toBeGreaterThan(5);
     }
-    expect(BATCH_SPECS).toHaveLength(10);
+    // §4.5 의 열 종 + FIX-14 가 더한 `escrow-release`.
+    expect(BATCH_SPECS).toHaveLength(11);
   });
 
   it("상태가 넷이다", () => {
