@@ -8825,8 +8825,12 @@ if (!vendorStaff || !adminUser) {
         // **새 예약을 만들어 둔다.** 기존 예약은 전부 후기가 붙어 있어 `not in` 으로
         // 고르면 **0행이 선택돼 INSERT 가 조용히 성공한다** — 거절되는지 보려는 검사가
         // 아무것도 묻지 않게 된다.
-        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount)
-           select '00000000-0000-0000-0000-0000000000fe', couple_id, vendor_id, 'confirmed', 1
+        // C-1 (0074). 요율 스냅샷 검사가 **INSERT 에도** 걸리므로 확정 픽스처는
+        // 요율을 함께 넣어야 한다. 넣지 않으면 이 검사가 **후기 정책이 아니라
+        // 트리거 때문에** 거절되고, 그러면 무엇을 확인한 검사인지 알 수 없게 된다.
+        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount,
+                                     applied_fee_rate_bp, applied_planner_fee_rate_bp)
+           select '00000000-0000-0000-0000-0000000000fe', couple_id, vendor_id, 'confirmed', 1, 500, 0
              from public.bookings limit 1;`,
       ),
     ),
