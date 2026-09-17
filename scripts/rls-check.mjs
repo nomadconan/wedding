@@ -112,6 +112,27 @@ function rejectedWith(pattern, run) {
   }
 }
 
+/**
+ * 소스에서 **주석을 걷어 낸다.**
+ *
+ * ── 왜 필요한가 (C-1 이 여기서 여섯 번 틀렸다) ──────────────────────────────
+ * 소스를 문자열로 훑는 검사는 **주석을 코드로 읽는다.** C-1 의 첫 실행에서 여섯 개가
+ * 그렇게 틀렸다 — `lib/bookings/create.ts` 의 "`accepted_at` 은 **비운다**" 라는 주석이
+ * `includes("accepted_at")` 에 걸려 "다리가 승인을 만든다" 로 판정됐고, 계약서 화면의
+ * "`pdf_path` 는 조회 컬럼에 넣지 않는다" 가 "경로를 읽는다" 로 판정됐다.
+ *
+ * **이 리포는 주석이 길다.** 무엇을 왜 안 했는지를 주석이 적는 관행이라, 안 한 것의
+ * 이름이 주석에 반드시 등장한다 — 그러면 "그 이름이 없어야 통과" 인 검사는 **항상**
+ * 실패한다. 코드만 보게 한다.
+ */
+function codeOf(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .map((line) => line.replace(/(^|\s)\/\/.*$/, "$1"))
+    .join("\n");
+}
+
 const results = [];
 const check = (label, pass, detail = "") => {
   results.push(pass);
@@ -13122,11 +13143,11 @@ if (!vendorStaff || !adminUser) {
 // 열면 그 구멍이 그대로 돌아온다. **열지 않았다는 사실을 여기서 못 박는다.**
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const bridgeSource = readFileSync("lib/bookings/create.ts", "utf8");
-  const bridgeCore = readFileSync("lib/core/booking/bridge.ts", "utf8");
-  const chainSource = readFileSync("lib/bookings/chain.ts", "utf8");
-  const contractRead = readFileSync("lib/contract/read.ts", "utf8");
-  const adminTx = readFileSync("lib/admin/transactions.ts", "utf8");
+  const bridgeSource = codeOf(readFileSync("lib/bookings/create.ts", "utf8"));
+  const bridgeCore = codeOf(readFileSync("lib/core/booking/bridge.ts", "utf8"));
+  const chainSource = codeOf(readFileSync("lib/bookings/chain.ts", "utf8"));
+  const contractRead = codeOf(readFileSync("lib/contract/read.ts", "utf8"));
+  const adminTx = codeOf(readFileSync("lib/admin/transactions.ts", "utf8"));
 
   // ── 층 1: 표에 쓰기가 열리지 않았는가 ───────────────────────────────────
   check(
@@ -13194,39 +13215,59 @@ if (!vendorStaff || !adminUser) {
   {
     const cp = sql(`select id from public.couples limit 1;`);
     const vd = sql(`select id from public.vendors limit 1;`);
-    const qt = sql(`select id from public.quotes limit 1;`);
+    const pd = sql(`select id from public.products limit 1;`);
 
-    // 견적 픽스처가 없으면 **이 검사를 통과로 세지 않는다**(빈 표로 통과 금지).
+    // **견적을 이 검사가 직접 만든다**(D-178 — 수는 표 전체가 아니라 트랜잭션이 만든
+    // 상태로 센다). 시드에 `quotes` 픽스처가 없어서 처음에는 "픽스처 없음" 으로
+    // 넘겼는데, **그러면 이 검사는 영영 안 돈다.** 만들 것을 만들어 놓고 센다.
+    const quoteFixture = `
+      insert into public.inquiries (id, couple_id)
+        values ('00000000-0000-0000-0000-0000000c1001', '${cp}');
+      insert into public.inquiry_targets (id, inquiry_id, vendor_id)
+        values ('00000000-0000-0000-0000-0000000c1002',
+                '00000000-0000-0000-0000-0000000c1001', '${vd}');
+      insert into public.quotes (id, inquiry_target_id, product_id,
+                                 total_amount, cap_total, base_price_snapshot, status)
+        values ('00000000-0000-0000-0000-0000000c1003',
+                '00000000-0000-0000-0000-0000000c1002', '${pd}', 1000, 1000, 1000, 'sent');`;
+
     check(
       "**같은 견적으로 두 번 만들면 두 번째가 막힌다** — 실제로 넣어 본다",
-      cp !== "" && vd !== "" && qt !== "" &&
+      cp !== "" && vd !== "" && pd !== "" &&
         rejectedWith(/uq_bookings_quote|duplicate key/, () =>
-          sql(`begin;
+          sql(`begin; ${quoteFixture}
                  insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
-                 values ('${cp}', '${vd}', 'hold', 1000, '${qt}');
+                 values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
                  insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
-                 values ('${cp}', '${vd}', 'hold', 1000, '${qt}');
+                 values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
                rollback;`)),
-      qt === "" ? "quotes 픽스처 없음" : "",
+    );
+    check(
+      "**한 번은 된다** — 없을 때 막는지만 보지 말고 있을 때 조용한지도 본다",
+      cp !== "" && vd !== "" && pd !== "" &&
+        sqlOrNull(`begin; ${quoteFixture}
+                     insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
+                     values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
+                   rollback;`) !== null,
     );
   }
 
   // ── 다리가 무엇을 안 만지는가 (소스로 고정한다) ─────────────────────────
   check(
     "**다리는 업체 승인을 만들지 않는다**(FIX-44) — 고객 행위로 동의가 생기지 않는다",
-    !bridgeSource.includes("accepted_at") && !bridgeCore.includes("acceptedAt"),
+    !bridgeSource.includes("accepted_at:") && !bridgeCore.includes("acceptedAt:"),
   );
   check(
     "**다리는 플래너를 만지지 않는다**(FIX-53) — planner_scopes 가 정한다",
-    !bridgeSource.includes("planner_id") && !bridgeCore.includes("plannerId"),
+    !bridgeSource.includes("planner_id:") && !bridgeCore.includes("plannerId:"),
   );
   check(
     "**다리는 요율을 만지지 않는다** — 서명이 끝날 때 박힌다",
-    !bridgeSource.includes("applied_fee_rate_bp"),
+    !bridgeSource.includes("applied_fee_rate_bp:"),
   );
   check(
     "**다리는 자리를 잡지 않는다** — 자리는 confirmed 전이에서 잡힌다(0031)",
-    !bridgeSource.includes("slot_id"),
+    !bridgeSource.includes("slot_id:"),
   );
   check(
     "**쓰기는 서비스롤이다**(D-62) — 표가 당사자에게 닫혀 있으므로 이 길뿐이다",
@@ -13325,7 +13366,7 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**문의 화면의 '준비 중' 안내가 사라졌다** — S5-04·S5-06 은 이미 완료다",
-    !readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8")
+    !codeOf(readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8"))
       .includes("계약서 작성과 결제는 준비 중"),
   );
   check(
