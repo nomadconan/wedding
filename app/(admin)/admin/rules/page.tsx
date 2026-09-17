@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { MetricTile } from "@/components/domain/MetricTile";
+import { ReleaseGateCard } from "@/components/domain/ReleaseGateCard";
 import { AdminShell } from "@/components/layout/AdminShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +13,6 @@ import {
   EDITABLE_RULE_FIELD_LABEL,
   EDITABLE_RULE_FIELDS,
   PROMPT_FEATURE_LABEL,
-  RELEASE_GATE_FALLBACK,
 } from "@/lib/core/rules/console";
 import { measured, noBasis, undecided } from "@/lib/core/stats/metric";
 import { loadRuleConsole } from "@/lib/rules/admin";
@@ -38,8 +38,9 @@ export const metadata: Metadata = {
  *    합쳐 보여준다 — 화면이 따로 계산하면 화면과 스캔이 갈린다.
  * 2. **어긋난 곳을 감추지 않는다.** DB 에만 있는 코드·판본 불일치·시드 누락을 전부
  *    적는다. DB 에만 있는 룰은 **실행되지 않는다**는 사실까지 함께.
- * 3. **없는 것을 있는 것처럼 적지 않는다.** 배포 게이트는 골든셋이 없어 `blocked`
- *    이고(FIX-42), 배포 이력 표는 비어 있다는 사실 자체가 상태다(O-22).
+ * 3. **없는 것을 있는 것처럼 적지 않는다.** 배포 게이트는 **이 페이지를 열 때 실제로
+ *    돌린 결과**이며(FIX-42 해소) 케이스가 없거나 룰이 전부 꺼지면 통과가 아니라
+ *    `blocked` 로 남는다. 배포 이력 표는 비어 있다는 사실 자체가 상태다(O-22).
  * 4. **못 고치는 칸마다 왜 못 고치는지 적는다.** 목록에서 빼 버리면 운영자는 그 값이
  *    존재하는 줄도 모른다.
  * 5. **캐시하지 않는다**(FIX-22 계열).
@@ -64,7 +65,7 @@ export default async function AdminRulesPage() {
     );
   }
 
-  const { rules, prompts, ledger, gate, penaltyBands } = payload;
+  const { rules, prompts, ledger, gate, gateUnmeasured, penaltyBands } = payload;
   const driftCount =
     rules.drift.unknownInDatabase.length +
     rules.drift.missingInDatabase.length +
@@ -118,49 +119,9 @@ export default async function AdminRulesPage() {
           </Card>
         </section>
 
-        {/* ── 배포 전 검증 게이트 (§7.5) ────────────────────────────────── */}
+        {/* ── 배포 전 검증 게이트 (§7.5 · FIX-42) ───────────── */}
         <section aria-labelledby="gate-heading">
-          <Card>
-            <CardHeader>
-              <CardTitle id="gate-heading" className="text-base">
-                배포 전 검증
-              </CardTitle>
-              <CardDescription>
-                명세 §7.5 는 룰·프롬프트를 배포하기 전에 <strong>AI 회귀(골든셋 스냅샷
-                비교)</strong>를 반드시 돌리라고 적습니다.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <MetricTile
-                  label="AI 회귀 게이트"
-                  metric={
-                    gate.status === "blocked"
-                      ? noBasis("골든셋이 아직 없어 배포 전 회귀를 돌릴 수 없습니다.", gate.fix)
-                      : measured(gate.cases)
-                  }
-                  unit="건"
-                />
-                <MetricTile
-                  label="스테이징 A/B"
-                  metric={undecided(
-                    "스테이징 환경이 이 리포에 없습니다. 만들지 않고 그 사실을 적습니다.",
-                    "O-22",
-                  )}
-                />
-              </div>
-
-              {gate.status === "blocked" ? (
-                <p className="rounded-md border border-border bg-muted p-3 text-caption text-muted-foreground">
-                  <strong>&apos;통과&apos;도 &apos;해당 없음&apos;도 아닙니다 — 검사 자체가
-                  없습니다({gate.fix}).</strong> {gate.message}{" "}
-                  <Link href={RELEASE_GATE_FALLBACK.href} className="underline">
-                    {RELEASE_GATE_FALLBACK.label}
-                  </Link>
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
+          <ReleaseGateCard gate={gate} unmeasured={gateUnmeasured} />
         </section>
 
         {/* ── 검출 룰 ───────────────────────────────────────────────────── */}

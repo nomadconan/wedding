@@ -8,7 +8,10 @@ import {
   RELEASE_GATE_FALLBACK,
   buildRuleConsole,
   deactivationWarning,
+  toReleaseGate,
 } from "./console";
+import { DETECT_RULES } from "./detect-rules";
+import { runGoldenSet } from "./golden/run";
 import { mergeDetectRules } from "./rule-source";
 import type { DetectRule } from "./types";
 
@@ -167,18 +170,53 @@ describe("편집 경계", () => {
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("배포 게이트·이력", () => {
-  it("**골든셋이 없으므로 게이트는 blocked 다** — 통과로도 해당 없음으로도 적지 않는다", () => {
-    expect(RELEASE_GATE_BLOCKED.status).toBe("blocked");
+  it("**골든셋이 실제로 돌고 통과한다** — FIX-42 가 막고 있던 자리", () => {
+    const gate = toReleaseGate(runGoldenSet());
+
+    expect(gate.status).toBe("passed");
     // 판별 유니온을 좁히지 않으면 tsc 가 막는다 — FIX-19 가 남긴 규칙이다.
-    expect(RELEASE_GATE_BLOCKED.status === "blocked" && RELEASE_GATE_BLOCKED.reason).toBe(
-      "golden_set_missing",
+    expect(gate.status === "passed" && gate.rules).toBe(
+      DETECT_RULES.filter((rule) => rule.is_active).length,
     );
+    expect(gate.status === "passed" && gate.cases).toBeGreaterThan(40);
+    expect(gate.status === "passed" && gate.checks).toBeGreaterThan(100);
+  });
+
+  it("**케이스가 없으면 통과가 아니라 blocked 다** — 빈 검사를 초록으로 적지 않는다", () => {
+    const gate = toReleaseGate(runGoldenSet({ cases: [], modelCases: [] }));
+
+    expect(gate.status).toBe("blocked");
+    expect(gate.status === "blocked" && gate.reason).toBe("golden_set_missing");
+    expect(gate.status === "blocked" && gate.fix).toMatch(/^FIX-\d+$/);
+  });
+
+  it("**룰을 전부 끄면 통과가 아니라 blocked 다** — 아무것도 안 걸린 것은 '위험 없음' 이 아니다", () => {
+    const gate = toReleaseGate(runGoldenSet({ rules: [] }));
+
+    expect(gate.status).toBe("blocked");
+    expect(gate.status === "blocked" && gate.reason).toBe("no_active_rule");
+  });
+
+  it("**깨지면 무엇이 깨졌는지 적는다** — 건수만으로는 고칠 수 없다", () => {
+    const broken = DETECT_RULES.map((rule) =>
+      rule.code === "R-01" ? { ...rule, detect: { presence: { patterns: [/맞지 않는 패턴/] } } } : rule,
+    );
+    const gate = toReleaseGate(runGoldenSet({ rules: broken }));
+
+    expect(gate.status).toBe("failed");
+    expect(gate.status === "failed" && gate.failed).toBeGreaterThan(0);
+    expect(gate.status === "failed" && gate.lines.length).toBeGreaterThan(0);
+    expect(gate.status === "failed" && gate.lines.join(" ")).toContain("R-01");
+  });
+
+  it("상수 blocked 는 남겨 둔다 — 골든셋을 못 부르는 자리에서 쓰는 기본값이다", () => {
+    expect(RELEASE_GATE_BLOCKED.status).toBe("blocked");
     expect(RELEASE_GATE_BLOCKED.status === "blocked" && RELEASE_GATE_BLOCKED.fix).toMatch(
       /^FIX-\d+$/,
     );
   });
 
-  it("게이트 자리를 비워 두지 않는다 — 지금 볼 수 있는 것을 가리킨다", () => {
+  it("게이트 옆자리를 비워 두지 않는다 — 골든셋이 재지 않는 것을 가리킨다", () => {
     expect(RELEASE_GATE_FALLBACK.href).toBe("/admin/ai-quality");
   });
 

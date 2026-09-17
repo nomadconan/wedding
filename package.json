@@ -12,6 +12,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "ai:golden": "vitest run lib/core/rules/golden",
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:bundle": "node scripts/check-secrets.mjs --bundle",

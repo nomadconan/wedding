@@ -17,9 +17,11 @@ import { getSessionUser, isOperator } from "@/lib/supabase/auth";
  * 가 코드로 갖는다(서비스롤이라 DB 컬럼 권한이 적용되지 않아 **그 함수가 유일한
  * 경계**다).
  *
- * **배포 게이트가 `blocked` 로 응답 본문에 실린다**(§7.5 · FIX-42). 골든셋이 없어
- * 배포 전 회귀를 돌릴 수 없다는 사실을 화면만이 아니라 API 도 말한다 — 없는 검사를
- * 통과로 적는 것이 이 콘솔에서 가장 나쁜 실패다.
+ * **배포 게이트가 응답 본문에 실린다**(§7.5 · FIX-42). 골든셋이 서기 전에는 `blocked`
+ * 하나였고 지금은 `passed`·`failed`·`blocked` 셋 중 하나다 — 그리고 그 값은 **요청할 때
+ * 실제로 돌려서** 나온다(저장된 결과를 읽으면 룰을 고친 뒤에도 어제의 초록불이 나간다).
+ * `gateBlocked` 를 그대로 두고 `gatePassed` 를 더했다 — 둘을 하나로 접으면
+ * **'검사 없음' 과 '검사 실패' 가 같은 얼굴이 된다.**
  */
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,7 @@ export async function GET() {
     return ok({
       ...payload,
       gateBlocked: payload.gate.status === "blocked",
+      gatePassed: payload.gate.status === "passed",
       ledgerEmpty: payload.ledger.status === "empty",
     });
   } catch {
