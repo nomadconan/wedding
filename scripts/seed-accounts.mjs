@@ -721,6 +721,15 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
     // fixture that only works on a clean database is a fixture that stops working.
     accepted_at: ACCEPTED_AT_FIXTURE,
+    // C-1. Rate snapshots are REQUIRED on confirmed/fulfilled bookings. The trigger
+    // used to be "before update" only, so a fixture could be INSERTed straight into
+    // 'confirmed' with null rates - the exact hole 0065 wrote down as a side branch.
+    // 0074 closed it because C-1 opened an INSERT path, and this seed was the first
+    // caller to hit it. A settlement needs these numbers, so a confirmed booking
+    // without them is not a state the product can reach: the fixture was wrong, not
+    // the check. Planner fee is 0 (not null) - "no planner", not "not snapshotted".
+    applied_fee_rate_bp: 500,
+    applied_planner_fee_rate_bp: 0,
   });
 
   // S5-10. A booking still WAITING for the vendor's decision.
@@ -1712,6 +1721,15 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
     // fixture that only works on a clean database is a fixture that stops working.
     accepted_at: ACCEPTED_AT_FIXTURE,
+    // C-1. Rate snapshots are REQUIRED on confirmed/fulfilled bookings. The trigger
+    // used to be "before update" only, so a fixture could be INSERTed straight into
+    // 'confirmed' with null rates - the exact hole 0065 wrote down as a side branch.
+    // 0074 closed it because C-1 opened an INSERT path, and this seed was the first
+    // caller to hit it. A settlement needs these numbers, so a confirmed booking
+    // without them is not a state the product can reach: the fixture was wrong, not
+    // the check. Planner fee is 0 (not null) - "no planner", not "not snapshotted".
+    applied_fee_rate_bp: 500,
+    applied_planner_fee_rate_bp: 0,
   });
   await upsert("bookings", {
     id: REVIEW_BOOKING_C,
@@ -1729,6 +1747,15 @@ async function seedReviewFixture(vendorId, coupleId, ownerUser, vendorUser) {
     // once set, so a computed "30 days ago" makes the SECOND seed run fail. A
     // fixture that only works on a clean database is a fixture that stops working.
     accepted_at: ACCEPTED_AT_FIXTURE,
+    // C-1. Rate snapshots are REQUIRED on confirmed/fulfilled bookings. The trigger
+    // used to be "before update" only, so a fixture could be INSERTed straight into
+    // 'confirmed' with null rates - the exact hole 0065 wrote down as a side branch.
+    // 0074 closed it because C-1 opened an INSERT path, and this seed was the first
+    // caller to hit it. A settlement needs these numbers, so a confirmed booking
+    // without them is not a state the product can reach: the fixture was wrong, not
+    // the check. Planner fee is 0 (not null) - "no planner", not "not snapshotted".
+    applied_fee_rate_bp: 500,
+    applied_planner_fee_rate_bp: 0,
   });
 
   await upsert("reviews", {

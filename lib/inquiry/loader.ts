@@ -112,9 +112,11 @@ export function toQuoteView(
   row: QuoteRow,
   items: QuoteItemRow[],
   productName: string | null,
+  bookingId: string | null = null,
 ): QuoteView {
   return {
     id: row.id,
+    bookingId,
     inquiryTargetId: row.inquiry_target_id,
     productId: row.product_id,
     productName,
@@ -182,11 +184,25 @@ async function quotesFor(
     ((productRows ?? []) as { id: string; name: string }[]).map((row) => [row.id, row.name]),
   );
 
+  // **예약을 임베드로 끌지 않는다**(함정 1). `bookings_select` 가 붙은 표를 임베드하면
+  // 정책에 걸린 행이 조용히 빠져 "예약 없음" 으로 그려진다 — 따로 묻고 코드가 맞춘다.
+  const { data: bookingRows } = await supabase
+    .from("bookings")
+    .select("id, quote_id")
+    .in("quote_id", quotes.map((quote) => quote.id));
+
+  const bookingByQuote = new Map(
+    ((bookingRows ?? []) as { id: string; quote_id: string | null }[])
+      .filter((row) => row.quote_id !== null)
+      .map((row) => [row.quote_id as string, row.id]),
+  );
+
   for (const quote of quotes) {
     const view = toQuoteView(
       quote,
       items.get(quote.id) ?? [],
       productNames.get(quote.product_id) ?? null,
+      bookingByQuote.get(quote.id) ?? null,
     );
 
     byTarget.set(quote.inquiry_target_id, [...(byTarget.get(quote.inquiry_target_id) ?? []), view]);

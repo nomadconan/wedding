@@ -112,6 +112,27 @@ function rejectedWith(pattern, run) {
   }
 }
 
+/**
+ * 소스에서 **주석을 걷어 낸다.**
+ *
+ * ── 왜 필요한가 (C-1 이 여기서 여섯 번 틀렸다) ──────────────────────────────
+ * 소스를 문자열로 훑는 검사는 **주석을 코드로 읽는다.** C-1 의 첫 실행에서 여섯 개가
+ * 그렇게 틀렸다 — `lib/bookings/create.ts` 의 "`accepted_at` 은 **비운다**" 라는 주석이
+ * `includes("accepted_at")` 에 걸려 "다리가 승인을 만든다" 로 판정됐고, 계약서 화면의
+ * "`pdf_path` 는 조회 컬럼에 넣지 않는다" 가 "경로를 읽는다" 로 판정됐다.
+ *
+ * **이 리포는 주석이 길다.** 무엇을 왜 안 했는지를 주석이 적는 관행이라, 안 한 것의
+ * 이름이 주석에 반드시 등장한다 — 그러면 "그 이름이 없어야 통과" 인 검사는 **항상**
+ * 실패한다. 코드만 보게 한다.
+ */
+function codeOf(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .map((line) => line.replace(/(^|\s)\/\/.*$/, "$1"))
+    .join("\n");
+}
+
 const results = [];
 const check = (label, pass, detail = "") => {
   results.push(pass);
@@ -8825,8 +8846,12 @@ if (!vendorStaff || !adminUser) {
         // **새 예약을 만들어 둔다.** 기존 예약은 전부 후기가 붙어 있어 `not in` 으로
         // 고르면 **0행이 선택돼 INSERT 가 조용히 성공한다** — 거절되는지 보려는 검사가
         // 아무것도 묻지 않게 된다.
-        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount)
-           select '00000000-0000-0000-0000-0000000000fe', couple_id, vendor_id, 'confirmed', 1
+        // C-1 (0074). 요율 스냅샷 검사가 **INSERT 에도** 걸리므로 확정 픽스처는
+        // 요율을 함께 넣어야 한다. 넣지 않으면 이 검사가 **후기 정책이 아니라
+        // 트리거 때문에** 거절되고, 그러면 무엇을 확인한 검사인지 알 수 없게 된다.
+        `insert into public.bookings(id, couple_id, vendor_id, status, total_amount,
+                                     applied_fee_rate_bp, applied_planner_fee_rate_bp)
+           select '00000000-0000-0000-0000-0000000000fe', couple_id, vendor_id, 'confirmed', 1, 500, 0
              from public.bookings limit 1;`,
       ),
     ),
@@ -13102,6 +13127,262 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · S6-06 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and privilege_type = 'TRUNCATE'
+             and grantee in ('anon', 'authenticated');`) === "0",
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// C-1 — 견적 수락 → 예약 생성 다리 · 세 면 거래 상세
+//
+// **생성 경로를 만들면서 층 3 을 다시 본다.** `bookings` 는 `reviews_insert` 가
+// 후기 자격으로 읽는 표다(D-129) — FIX-44 가 바로 그 자리에서 났다(커플이 업체 동의
+// 없이 confirmed 예약을 만들고 그것으로 '검증 후기' 를 썼다). 다리를 놓는다고 표를
+// 열면 그 구멍이 그대로 돌아온다. **열지 않았다는 사실을 여기서 못 박는다.**
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const bridgeSource = codeOf(readFileSync("lib/bookings/create.ts", "utf8"));
+  const bridgeCore = codeOf(readFileSync("lib/core/booking/bridge.ts", "utf8"));
+  const chainSource = codeOf(readFileSync("lib/bookings/chain.ts", "utf8"));
+  const contractRead = codeOf(readFileSync("lib/contract/read.ts", "utf8"));
+  const adminTx = codeOf(readFileSync("lib/admin/transactions.ts", "utf8"));
+
+  // ── 층 1: 표에 쓰기가 열리지 않았는가 ───────────────────────────────────
+  check(
+    "**`bookings` 에 여전히 당사자 쓰기 GRANT 가 없다**(FIX-44 · C-1 이후에도)",
+    sql(`select count(*) from information_schema.role_table_grants
+           where table_schema = 'public' and table_name = 'bookings'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**컬럼 GRANT 도 없다** — 표 GRANT 를 걷어도 컬럼 GRANT 는 따로 남는다(함정 6)",
+    sql(`select count(*) from information_schema.column_privileges
+           where table_schema = 'public' and table_name = 'bookings'
+             and grantee in ('anon', 'authenticated')
+             and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`) === "0",
+  );
+  check(
+    "**쓰기 정책도 없다** — GRANT 를 되돌려도 열리지 않는다",
+    sql(`select count(*) from pg_policies
+           where schemaname = 'public' and tablename = 'bookings'
+             and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL');`) === "0",
+  );
+
+  // ── 층 1 구멍을 닫았는가: 요율 스냅샷 검사가 INSERT 에도 걸리는가 ────────
+  //
+  // 0065 가 곁가지로 적어 둔 것이다 — 트리거가 `before update` 전용이라
+  // `confirmed` 행을 **INSERT 로 바로 만들면** 요율 검사를 건너뛴다. 그전까지는
+  // INSERT 경로가 없어 도달할 수 없었고, **C-1 이 그 경로를 만들었다.**
+  check(
+    "**요율 스냅샷 트리거가 INSERT 에도 걸린다**(0074 — 0065 가 적어 둔 곁가지)",
+    sql(`select count(*) from pg_trigger
+           where tgname = 'trg_bookings_rate_snapshot'
+             and (tgtype & 4) > 0;`) === "1",
+  );
+  {
+    // **헛돌지 않는지 실제로 본다.** 서비스롤로도 요율 없는 confirmed 를 못 만든다.
+    const cp = sql(`select id from public.couples limit 1;`);
+    const vd = sql(`select id from public.vendors limit 1;`);
+
+    check(
+      "**요율 없이 confirmed 예약을 INSERT 로 만들 수 없다** — 서비스롤도 못 한다",
+      cp !== "" && vd !== "" &&
+        rejectedWith(/bookings_rate_snapshot_required|스냅샷/, () =>
+          sql(`begin;
+                 insert into public.bookings (couple_id, vendor_id, status, total_amount)
+                 values ('${cp}', '${vd}', 'confirmed', 1000);
+               rollback;`)),
+    );
+    check(
+      "**hold 예약은 요율 없이 만들 수 있다** — 있을 때 조용한지도 본다",
+      cp !== "" && vd !== "" &&
+        sqlOrNull(`begin;
+                     insert into public.bookings (couple_id, vendor_id, status, total_amount)
+                     values ('${cp}', '${vd}', 'hold', 1000);
+                   rollback;`) !== null,
+    );
+  }
+
+  // ── 한 견적은 예약을 하나만 만든다 ──────────────────────────────────────
+  check(
+    "**견적당 예약 하나**(`uq_bookings_quote`) — 두 번 눌러도 예약이 둘 생기지 않는다",
+    sql(`select count(*) from pg_indexes
+           where schemaname = 'public' and indexname = 'uq_bookings_quote';`) === "1",
+  );
+  {
+    const cp = sql(`select id from public.couples limit 1;`);
+    const vd = sql(`select id from public.vendors limit 1;`);
+    const pd = sql(`select id from public.products limit 1;`);
+
+    // **견적을 이 검사가 직접 만든다**(D-178 — 수는 표 전체가 아니라 트랜잭션이 만든
+    // 상태로 센다). 시드에 `quotes` 픽스처가 없어서 처음에는 "픽스처 없음" 으로
+    // 넘겼는데, **그러면 이 검사는 영영 안 돈다.** 만들 것을 만들어 놓고 센다.
+    const quoteFixture = `
+      insert into public.inquiries (id, couple_id)
+        values ('00000000-0000-0000-0000-0000000c1001', '${cp}');
+      insert into public.inquiry_targets (id, inquiry_id, vendor_id)
+        values ('00000000-0000-0000-0000-0000000c1002',
+                '00000000-0000-0000-0000-0000000c1001', '${vd}');
+      insert into public.quotes (id, inquiry_target_id, product_id,
+                                 total_amount, cap_total, base_price_snapshot, status, sent_at)
+        values ('00000000-0000-0000-0000-0000000c1003',
+                '00000000-0000-0000-0000-0000000c1002', '${pd}', 1000, 1000, 1000, 'sent', now());`;
+    // `quotes_sent_pair_chk` 가 **보낸 견적에는 보낸 시각을 요구한다** — CI 가 그것을
+    // 잡았다. 픽스처도 제품이 만들 수 있는 상태여야 한다(FIX-56 이 세운 규칙).
+
+    check(
+      "**같은 견적으로 두 번 만들면 두 번째가 막힌다** — 실제로 넣어 본다",
+      cp !== "" && vd !== "" && pd !== "" &&
+        rejectedWith(/uq_bookings_quote|duplicate key/, () =>
+          sql(`begin; ${quoteFixture}
+                 insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
+                 values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
+                 insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
+                 values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
+               rollback;`)),
+    );
+    check(
+      "**한 번은 된다** — 없을 때 막는지만 보지 말고 있을 때 조용한지도 본다",
+      cp !== "" && vd !== "" && pd !== "" &&
+        sqlOrNull(`begin; ${quoteFixture}
+                     insert into public.bookings (couple_id, vendor_id, status, total_amount, quote_id)
+                     values ('${cp}', '${vd}', 'hold', 1000, '00000000-0000-0000-0000-0000000c1003');
+                   rollback;`) !== null,
+    );
+  }
+
+  // ── 다리가 무엇을 안 만지는가 (소스로 고정한다) ─────────────────────────
+  check(
+    "**다리는 업체 승인을 만들지 않는다**(FIX-44) — 고객 행위로 동의가 생기지 않는다",
+    !bridgeSource.includes("accepted_at:") && !bridgeCore.includes("acceptedAt:"),
+  );
+  check(
+    "**다리는 플래너를 만지지 않는다**(FIX-53) — planner_scopes 가 정한다",
+    !bridgeSource.includes("planner_id:") && !bridgeCore.includes("plannerId:"),
+  );
+  check(
+    "**다리는 요율을 만지지 않는다** — 서명이 끝날 때 박힌다",
+    !bridgeSource.includes("applied_fee_rate_bp:"),
+  );
+  check(
+    "**다리는 자리를 잡지 않는다** — 자리는 confirmed 전이에서 잡힌다(0031)",
+    !bridgeSource.includes("slot_id:"),
+  );
+  check(
+    "**쓰기는 서비스롤이다**(D-62) — 표가 당사자에게 닫혀 있으므로 이 길뿐이다",
+    bridgeSource.includes("createAdminClient"),
+  );
+  check(
+    "**예약 신청은 고객이 한다** — 업체가 자기 견적으로 만들 수 없다",
+    bridgeSource.includes("BOOKING_NOT_COUPLE"),
+  );
+
+  // ── 층 2: 새 정책이 부모 표에 기대는가 ──────────────────────────────────
+  //
+  // C-1 은 **정책을 하나도 더하지 않았다.** 운영자 조회는 definer 함수 둘이며
+  // 그 안에서 `is_operator()` 를 스스로 묻는다 — 부모 표의 정책에 기대지 않는다.
+  check(
+    "**운영자 조회는 definer 함수다** — 정책을 늘리지 않았다(D-120)",
+    sql(`select count(*) from pg_proc
+           where proname in ('admin_transaction_rows', 'admin_transaction_chain')
+             and prosecdef;`) === "2",
+  );
+  check(
+    "**두 함수가 자기 권한을 스스로 묻는다** — 부모 정책에 기대지 않는다(층 2)",
+    sql(`select count(*) from pg_proc
+           where proname in ('admin_transaction_rows', 'admin_transaction_chain')
+             and pg_get_functiondef(oid) like '%is_operator()%';`) === "2",
+  );
+  check(
+    "**anon 은 실행조차 못 한다**",
+    sql(`select count(*) from information_schema.role_routine_grants
+           where routine_schema = 'public'
+             and routine_name in ('admin_transaction_rows', 'admin_transaction_chain')
+             and grantee = 'anon';`) === "0",
+  );
+
+  // ── 운영자 함수가 민감 칸을 내보내지 않는가 (D-120 의 요점) ─────────────
+  {
+    const defs = sql(`select string_agg(pg_get_functiondef(oid), ' ') from pg_proc
+                        where proname in ('admin_transaction_rows', 'admin_transaction_chain');`);
+
+    for (const forbidden of ["clauses_json", "pdf_path", "vendor_memo"]) {
+      check(
+        `**운영자 조회가 ${forbidden} 를 내보내지 않는다**(§5.3 · D-120)`,
+        defs !== "" && !defs.includes(forbidden),
+      );
+    }
+  }
+
+  // ── 운영자가 아니면 0건인가 (오류가 아니라 0건이다) ─────────────────────
+  {
+    const outsider = sql(`select user_id from public.couple_members limit 1;`);
+
+    check(
+      "**운영자가 아니면 거래 목록이 0건이다** — 권한을 오류로 알리지 않는다",
+      outsider !== "" &&
+        asUser(outsider, `select count(*) from public.admin_transaction_rows(100);`) === "0",
+    );
+  }
+
+  // ── 세 면이 같은 사실을 읽는가 (조회 계층 공유) ─────────────────────────
+  check(
+    "**소비자·업체가 같은 조회 계층을 쓴다** — 따로 쓰면 같은 예약이 다르게 보인다",
+    readFileSync("lib/bookings/read.ts", "utf8").includes("loadChainFacts") &&
+      readFileSync("lib/bookings/vendor-detail.ts", "utf8").includes("loadChainFacts"),
+  );
+  check(
+    "**공유 계층은 세션으로 읽는다** — 서비스롤로 읽으면 RLS 경계를 우회한다",
+    chainSource.includes("createClient") && !chainSource.includes("createAdminClient"),
+  );
+
+  // ── 계약서 화면(FIX-57)이 Storage 경로를 읽지 않는가 ────────────────────
+  check(
+    "**계약서 화면이 pdf_path 를 읽지 않는다**(§5.3 — 경로는 어디에도 남기지 않는다)",
+    !contractRead.includes("pdf_path"),
+  );
+  check(
+    "**서명 역할을 사용자 id 로 판정한다** — 배우자에게 서명 버튼이 뜨면 안 된다",
+    contractRead.includes('.eq("user_id", actorId)'),
+  );
+
+  // ── 화면이 실재하고 들어가는 자리가 있는가 ──────────────────────────────
+  for (const [label, file] of [
+    ["계약서", "app/(consumer)/contracts/[id]/page.tsx"],
+    ["업체 거래 상세", "app/(vendor)/vendor/bookings/[id]/page.tsx"],
+    ["운영자 거래 조회", "app/(admin)/admin/transactions/page.tsx"],
+  ]) {
+    check(`${label} 화면이 실재한다`, existsSync(file));
+  }
+  check(
+    "**업체 목록이 거래 상세로 잇는다** — 안 이으면 URL 을 아는 사람만 연다(FIX-25)",
+    readFileSync("app/(vendor)/vendor/bookings/page.tsx", "utf8")
+      .includes("/vendor/bookings/"),
+  );
+  check(
+    "**운영자 내비가 거래 조회를 가리킨다**",
+    readFileSync("components/layout/AdminShell.tsx", "utf8").includes("/admin/transactions"),
+  );
+  check(
+    "**문의 화면의 '준비 중' 안내가 사라졌다** — S5-04·S5-06 은 이미 완료다",
+    !codeOf(readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8"))
+      .includes("계약서 작성과 결제는 준비 중"),
+  );
+  check(
+    "**수락한 견적이 예약으로 이어진다** — 화면이 갈 곳을 준다",
+    readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8")
+      .includes("quote-booking-link"),
+  );
+  check(
+    "**운영자 조회가 판정 어휘를 쓰지 않는다**(D-24) — 조율자이지 판정자가 아니다",
+    !adminTx.includes("지연") && !adminTx.includes("위반"),
+  );
+
+  check(
+    "public 어느 표에도 TRUNCATE 가 열려 있지 않다 (FIX-35 · C-1 이후에도)",
     sql(`select count(*) from information_schema.role_table_grants
            where table_schema = 'public' and privilege_type = 'TRUNCATE'
              and grantee in ('anon', 'authenticated');`) === "0",

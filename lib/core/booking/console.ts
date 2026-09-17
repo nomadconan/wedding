@@ -330,3 +330,20 @@ export function groupByLane<T extends { status: BookingStatus; acceptedAt: strin
     rows: bookings.filter((booking) => laneOf(booking) === lane),
   }));
 }
+
+// =============================================================================
+// 회차 진행 한 줄 (C-1)
+// =============================================================================
+
+/**
+ * **회차가 없는 것과 완납을 같은 말로 적지 않는다.**
+ *
+ * 계약 전에는 회차 자체가 없다. 그것을 "0/0 완납" 으로 적으면 **돈을 다 받은 것으로
+ * 읽힌다** — 업체가 정산을 기다리지 않고, 고객은 낼 것이 없다고 믿는다.
+ */
+export function settledLabelOf(scheduleCount: number, paidCount: number): string {
+  if (scheduleCount === 0) return "회차가 아직 없어요 (계약 발행 전)";
+  if (paidCount >= scheduleCount) return `${scheduleCount}회차 완납`;
+
+  return `${scheduleCount}회차 중 ${paidCount}회차 입금`;
+}

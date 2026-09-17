@@ -53,7 +53,13 @@ export const CloseInquirySchema = z.object({
   inquiryId: uuid,
 });
 
-/** 받은 견적에 답하기. 계약 전환은 5단계라 여기서는 상태만 바꾼다. */
+/**
+ * 받은 견적에 답하기.
+ *
+ * **수락하면 예약이 함께 생긴다**(C-1). 예전에는 상태만 바꾸고 끝나 사슬이 여기서
+ * 끊겨 있었다 — 계약을 발행할 `bookingId` 가 영영 만들어지지 않았다.
+ * 만들어지는 것은 `hold` 이며 업체 승인은 **업체가 따로 누른다**(FIX-44).
+ */
 export const DecideQuoteSchema = z.object({
   action: z.literal("decide_quote"),
   quoteId: uuid,
@@ -162,6 +168,14 @@ export const QuoteViewSchema = z.object({
   vendorMemo: z.string().nullable(),
   sentAt: z.string().nullable(),
   items: z.array(QuoteItemViewSchema),
+  /**
+   * 이 견적으로 만들어진 예약(C-1).
+   *
+   * **계산하지 않고 읽는다** — `bookings.quote_id` 가 진실이다. 화면 상태로 들고
+   * 있으면 새로고침에 사라지고, 사용자는 수락했는데 갈 곳이 없는 화면을 본다.
+   * null 은 "아직 안 만들어졌다" 이며 수락 전이거나 만들다 막힌 것이다.
+   */
+  bookingId: uuid.nullable(),
   /** 가격 재현에 필요한 사실들. 화면이 "왜 이 상한인가" 를 설명한다. */
   pricingContext: z.record(z.unknown()),
   pricingSteps: z.array(z.record(z.unknown())),

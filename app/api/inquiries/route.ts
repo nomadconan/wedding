@@ -9,6 +9,7 @@ import {
   targetCountProblem,
 } from "@/lib/core/inquiry/inquiry";
 import { InquiryActionSchema } from "@/lib/core/schemas/inquiry";
+import { createBookingFromQuote, isCreateFailure } from "@/lib/bookings/create";
 import { closeInquiry, createInquiry, decideQuote } from "@/lib/inquiry/actions";
 import { loadMaxTargets, loadMyInquiries, loadSlaThreshold } from "@/lib/inquiry/loader";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -72,14 +73,33 @@ export async function POST(request: NextRequest) {
   }
 
   if (action.action === "decide_quote") {
+    const now = new Date();
     const result = await decideQuote(supabase, {
       quoteId: action.quoteId,
       decision: action.decision,
       actorId: user.id,
-      now: new Date(),
+      now,
     });
 
-    return "status" in result ? fail(result.status, result.code, result.message) : ok(result);
+    if ("status" in result) return fail(result.status, result.code, result.message);
+
+    // **수락하면 예약을 함께 만든다**(C-1). 여기가 B-1 이 찾은 끊긴 칸이다 —
+    // 예전에는 상태만 바꾸고 끝나 계약을 발행할 `bookingId` 가 영영 없었다.
+    //
+    // **실패해도 수락을 되돌리지 않는다.** 되돌리면 업체가 본 '수락' 이 사라지고,
+    // 고객은 자기가 누른 것이 없던 일이 된다. 대신 **왜 안 됐는지를 함께 돌려주고**
+    // 화면이 다시 시도할 자리를 준다(`POST /api/bookings`).
+    if (action.decision !== "accepted") return ok(result);
+
+    const created = await createBookingFromQuote({
+      quoteId: action.quoteId,
+      actorId: user.id,
+      now,
+    });
+
+    return isCreateFailure(created)
+      ? ok({ ...result, bookingId: null, blocked: { code: created.code, message: created.message } })
+      : ok({ ...result, bookingId: created.bookingId, blocked: null });
   }
 
   // ── 문의 생성 ─────────────────────────────────────────────────────────────
