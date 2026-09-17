@@ -209,21 +209,24 @@ grant execute on function public.admin_transaction_rows(integer) to authenticate
 -- 아니다. 그래서 본문·메모·경로가 하나도 없다.
 create or replace function public.admin_transaction_chain(p_booking_id uuid)
 returns table (
-  stage      text,
+  stage       text,
   occurred_at timestamptz,
-  detail     text
+  detail      text
 )
 language sql security definer stable set search_path = public as $$
-  with allowed as (select 1 where public.is_operator())
-  select * from (
-    select 'inquiry_sent'::text, i.created_at, null::text
+  -- **권한은 where 로 건다.** 처음에 `cross join allowed` 로 썼다가 CI 가 잡았다 —
+  -- `select *` 가 그 조인 컬럼까지 끌어와 **선언한 3칸에 4칸을 돌려주려** 했다
+  -- (`return type mismatch in function declared to return record`).
+  select c.stage, c.occurred_at, c.detail
+  from (
+    select 'inquiry_sent'::text as stage, i.created_at as occurred_at, null::text as detail
       from public.bookings b
       join public.quotes q on q.id = b.quote_id
       join public.inquiry_targets it on it.id = q.inquiry_target_id
       join public.inquiries i on i.id = it.inquiry_id
      where b.id = p_booking_id
     union all
-    select 'quote_sent', q.sent_at, null
+    select 'quote_sent', q.sent_at, null::text
       from public.bookings b join public.quotes q on q.id = b.quote_id
      where b.id = p_booking_id and q.sent_at is not null
     union all
@@ -231,31 +234,33 @@ language sql security definer stable set search_path = public as $$
       from public.bookings b join public.quotes q on q.id = b.quote_id
      where b.id = p_booking_id and q.decided_at is not null
     union all
-    select 'booking_created', b.created_at, null from public.bookings b where b.id = p_booking_id
+    select 'booking_created', b.created_at, null::text
+      from public.bookings b where b.id = p_booking_id
     union all
-    select 'booking_accepted', b.accepted_at, null
+    select 'booking_accepted', b.accepted_at, null::text
       from public.bookings b where b.id = p_booking_id and b.accepted_at is not null
     union all
     -- **거절 사유는 싣는다.** 사유 없는 거절은 조율의 근거가 되지 못한다(D-24).
     select 'booking_declined', b.declined_at, b.decline_reason
       from public.bookings b where b.id = p_booking_id and b.declined_at is not null
     union all
-    select 'contract_issued', c.issued_at, null
-      from public.contracts c where c.booking_id = p_booking_id and c.issued_at is not null
+    select 'contract_issued', ct.issued_at, null::text
+      from public.contracts ct where ct.booking_id = p_booking_id and ct.issued_at is not null
     union all
-    select 'contract_activated', c.activated_at, null
-      from public.contracts c where c.booking_id = p_booking_id and c.activated_at is not null
+    select 'contract_activated', ct.activated_at, null::text
+      from public.contracts ct where ct.booking_id = p_booking_id and ct.activated_at is not null
     union all
-    select 'contract_cancelled', c.cancelled_at, null
-      from public.contracts c where c.booking_id = p_booking_id and c.cancelled_at is not null
+    select 'contract_cancelled', ct.cancelled_at, null::text
+      from public.contracts ct where ct.booking_id = p_booking_id and ct.cancelled_at is not null
     union all
-    select 'payment_paid', p.paid_at, null
+    select 'payment_paid', p.paid_at, null::text
       from public.payments p
      where p.booking_id = p_booking_id and p.status = 'paid' and p.paid_at is not null
     union all
-    select 'settled', si.created_at, null
+    select 'settled', si.created_at, null::text
       from public.settlement_items si where si.booking_id = p_booking_id
-  ) chain, allowed
+  ) c
+  where public.is_operator()
   order by 2;
 $$;
 
