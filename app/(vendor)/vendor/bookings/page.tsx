@@ -143,6 +143,20 @@ export default async function VendorBookingsPage() {
                           </p>
                         ) : null}
 
+                        {/*
+                          **거래 상세로 들어가는 자리**(C-1). 이 링크가 없으면 상세 화면은
+                          만들어 놓고 아무도 갈 수 없는 화면이 된다(FIX-25 계열).
+                        */}
+                        <p className="mt-1 text-caption">
+                          <Link
+                            href={`/vendor/bookings/${row.id}`}
+                            className="text-brand-600 underline"
+                            data-testid="vendor-booking-detail-link"
+                          >
+                            거래 상세 보기
+                          </Link>
+                        </p>
+
                         {/* 계약 — 발행할 수 있는가, 없다면 왜인가 */}
                         <p className="mt-2 text-caption text-muted-foreground">
                           {row.contractId !== null ? (

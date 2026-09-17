@@ -8,7 +8,7 @@ import {
 } from "@/lib/core/booking/console";
 import { type ScheduleView, viewSchedules } from "@/lib/core/payment/checkout";
 import { REVIEW_BLOCK_MESSAGE } from "@/lib/core/review/write";
-import { readSetting } from "@/lib/app-settings";
+import { loadChainFacts } from "@/lib/bookings/chain";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -91,161 +91,80 @@ export async function loadBookingDetail(
   bookingId: string,
   now: Date,
 ): Promise<BookingDetail | null> {
-  const supabase = await createClient();
-
-  const { data: bookingRow } = await supabase
-    .from("bookings")
-    .select(
-      "id, status, vendor_id, couple_id, total_amount, created_at, updated_at, accepted_at, declined_at, decline_reason",
-    )
-    .eq("id", bookingId)
-    .maybeSingle();
-
-  const booking = bookingRow as {
-    id: string;
-    status: BookingStatus;
-    vendor_id: string;
-    couple_id: string;
-    total_amount: number;
-    created_at: string;
-    updated_at: string | null;
-    accepted_at: string | null;
-    declined_at: string | null;
-    decline_reason: string | null;
-  } | null;
+  // **사실은 한 자리에서 모은다**(C-1 · `lib/bookings/chain.ts`). 세 면이 같은 거래를
+  // 보므로 조회를 면마다 따로 쓰면 같은 예약이 화면마다 다른 상태로 보이는 날이 온다.
+  // 여기서 하는 일은 **소비자 관점으로 접는 것**뿐이다.
+  const facts = await loadChainFacts(bookingId);
 
   // **RLS 가 안 보여주면 없는 것과 같게 답한다** — 남의 예약의 존재 여부를 알려주지
   // 않는다(`loadReviewFormContext` 와 같은 규칙).
-  if (!booking) return null;
+  if (!facts) return null;
 
-  const [contractResult, paymentResult, escrowResult, reviewResult, nameMap] =
-    await Promise.all([
-      supabase
-        .from("contracts")
-        .select("id, status, issued_at, activated_at, cancelled_at")
-        .eq("booking_id", bookingId)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("payments")
-        .select("paid_at, status")
-        .eq("booking_id", bookingId)
-        .order("paid_at", { ascending: true }),
-      supabase
-        .from("escrow_holds")
-        .select("id")
-        .eq("booking_id", bookingId)
-        .limit(1),
-      supabase
-        .from("reviews")
-        .select("id")
-        .eq("booking_id", bookingId)
-        .limit(1),
-      vendorNames([booking.vendor_id]),
-    ]);
-
-  const contracts = (contractResult.data ?? []) as {
-    id: string;
-    status: string;
-    issued_at: string | null;
-    activated_at: string | null;
-    cancelled_at: string | null;
-  }[];
-  const live =
-    contracts.find((row) => row.status !== "cancelled") ?? contracts[0] ?? null;
-
-  // **회차는 예약이 아니라 계약에 달린다**(`payment_schedules.contract_id`). 임베드로 한 번에
-  // 끌면 공개 조건이 붙은 표에서 행이 조용히 빠진다(함정 1) — 이미 읽은 계약
-  // id 로 따로 묻는다. **취소된 계약의 회차도 포함한다** — 낸 돈은 그대로 사실이다.
-  const contractIds = contracts.map((row) => row.id);
-  const scheduleRows =
-    contractIds.length === 0
-      ? []
-      : (((
-          await supabase
-            .from("payment_schedules")
-            .select("id, seq, amount, status, due_at")
-            .in("contract_id", contractIds)
-            .order("seq", { ascending: true })
-        ).data ?? []) as {
-          id: string;
-          seq: number;
-          amount: number;
-          status: string;
-          due_at: string | null;
-        }[]);
+  const { booking, liveContract: live } = facts;
+  const nameMap = await vendorNames([booking.vendorId]);
 
   const schedules = viewSchedules({
-    schedules: scheduleRows.map((row) => ({
-      id: row.id,
-      seq: row.seq,
-      amount: row.amount,
-      status: row.status as ScheduleView["status"],
-      dueAt: row.due_at,
+    schedules: facts.schedules.map((schedule) => ({
+      id: schedule.id,
+      seq: schedule.seq,
+      amount: schedule.amount,
+      status: schedule.status as ScheduleView["status"],
+      dueAt: schedule.dueAt,
     })),
     contractActive: live?.status === "active",
     now,
   });
 
-  const paidAts = (
-    (paymentResult.data ?? []) as { paid_at: string | null; status: string }[]
-  )
-    .filter((row) => row.status === "paid" && row.paid_at !== null)
-    .map((row) => row.paid_at as string);
-
-  const escrowEnabled = await readEscrowEnabled();
-  const alreadyReviewed =
-    ((reviewResult.data ?? []) as { id: string }[]).length > 0;
   const reviewable =
-    !alreadyReviewed &&
-    (booking.status === "confirmed" || booking.status === "fulfilled");
+    !facts.hasReview && (booking.status === "confirmed" || booking.status === "fulfilled");
 
   const row: BookingListRow = {
     id: booking.id,
     status: booking.status,
-    vendorId: booking.vendor_id,
-    vendorName: nameMap.get(booking.vendor_id) ?? "이름을 불러오지 못했습니다",
-    totalAmount: booking.total_amount,
-    createdAt: booking.created_at,
-    acceptedAt: booking.accepted_at,
-    declinedAt: booking.declined_at,
-    declineReason: booking.decline_reason,
+    vendorId: booking.vendorId,
+    vendorName: nameMap.get(booking.vendorId) ?? "이름을 불러오지 못했습니다",
+    totalAmount: booking.totalAmount,
+    createdAt: booking.createdAt,
+    acceptedAt: booking.acceptedAt,
+    declinedAt: booking.declinedAt,
+    declineReason: booking.declineReason,
   };
 
   return {
     booking: row,
     decision: decisionOf(row),
     timeline: bookingTimeline({
-      createdAt: booking.created_at,
-      acceptedAt: booking.accepted_at,
-      declinedAt: booking.declined_at,
-      declineReason: booking.decline_reason,
-      contractIssuedAt: live?.issued_at ?? null,
-      contractActivatedAt: live?.activated_at ?? null,
-      paidAts,
+      createdAt: booking.createdAt,
+      acceptedAt: booking.acceptedAt,
+      declinedAt: booking.declinedAt,
+      declineReason: booking.declineReason,
+      contractIssuedAt: live?.issuedAt ?? null,
+      contractActivatedAt: live?.activatedAt ?? null,
+      paidAts: facts.paidAts,
       // 해지 시각은 계약이 갖는다 — 예약 표에는 취소 시각 칸이 없고, **없는 칸을
       // 만들지 않는다**(계약이 이미 그 사실을 적고 있다).
-      cancelledAt: live?.cancelled_at ?? null,
+      cancelledAt: live?.cancelledAt ?? null,
       fulfilledAt: null,
     }),
     entries: entryPoints({
       bookingId: booking.id,
       status: booking.status,
-      acceptedAt: booking.accepted_at,
-      declinedAt: booking.declined_at,
+      acceptedAt: booking.acceptedAt,
+      declinedAt: booking.declinedAt,
       contractId: live?.id ?? null,
       contractActive: live?.status === "active",
       hasPayableSchedule: schedules.some((schedule) => schedule.payable),
-      escrowEnabled,
-      hasEscrowHold: ((escrowResult.data ?? []) as { id: string }[]).length > 0,
+      escrowEnabled: facts.escrowEnabled,
+      hasEscrowHold: facts.hasEscrowHold,
       reviewable,
-      reviewBlockedReason: alreadyReviewed
+      reviewBlockedReason: facts.hasReview
         ? REVIEW_BLOCK_MESSAGE.already_written
         : REVIEW_BLOCK_MESSAGE.booking_not_reviewable,
     }),
     schedules,
     contractId: live?.id ?? null,
     contractStatus: live?.status ?? null,
-    escrowEnabled,
+    escrowEnabled: facts.escrowEnabled,
   };
 }
 
@@ -270,16 +189,3 @@ async function vendorNames(
   );
 }
 
-/**
- * `escrow.enabled` — **O-03 대기**.
- *
- * 값이 없으면 **켜진 것으로도 꺼진 것으로도 읽지 않고 꺼짐으로 둔다**: 안전거래는
- * 돈을 붙잡는 기능이라 "모르겠으면 열어 둔다" 가 성립하지 않는다. 화면은 그것을
- * "아직 열려 있지 않다(법무 검토 중)" 로 적는다 — '이 예약에 잔금이 없다' 와 다른
- * 문장이다(함정 2).
- */
-async function readEscrowEnabled(): Promise<boolean> {
-  // **이미 있는 독자를 쓴다.** 같은 키를 두 곳이 다른 모양으로 읽으면
-  // 언젠가 한쪽만 고쳐진다(`lib/escrow/actions.ts` 가 같은 줄을 쓴다).
-  return (await readSetting("escrow.enabled"))?.enabled === true;
-}

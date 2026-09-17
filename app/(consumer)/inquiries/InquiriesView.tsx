@@ -65,6 +65,38 @@ export function InquiriesView({
     }
   }, []);
 
+  /**
+   * 다른 경로를 부를 때 쓴다(C-1 의 `POST /api/bookings`).
+   *
+   * **`call` 을 고쳐 경로를 인자로 받게 하지 않았다** — 그러면 기존 호출 다섯 곳이
+   * 전부 바뀌고, 이 변경의 되돌릴 범위가 문의 화면 전체가 된다.
+   */
+  async function post(path: string, body: unknown, key: string) {
+    setPending(key);
+    setError(null);
+
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+
+      if (!response.ok || !payload.ok) {
+        setError(payload.error?.message ?? "처리하지 못했어요.");
+
+        return;
+      }
+
+      await refresh();
+    } catch {
+      setError("처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPending(null);
+    }
+  }
+
   async function call(body: unknown, key: string) {
     setPending(key);
     setError(null);
@@ -206,6 +238,9 @@ export function InquiriesView({
                           quote.id,
                         )
                       }
+                      onCreateBooking={() =>
+                        void post("/api/bookings", { quoteId: quote.id }, quote.id)
+                      }
                     />
                   ))}
                 </li>
@@ -262,11 +297,14 @@ function QuoteCard({
   now,
   pending,
   onDecide,
+  onCreateBooking,
 }: {
   quote: QuoteView;
   now: Date;
   pending: boolean;
   onDecide: (decision: "accepted" | "declined") => void;
+  /** 수락은 됐는데 예약이 막힌 경우의 재시도. `POST /api/bookings` 를 부른다. */
+  onCreateBooking: () => void;
 }) {
   const expired = isExpired(
     { status: quote.status as never, validUntil: quote.validUntil },
@@ -349,11 +387,45 @@ function QuoteCard({
         </div>
       ) : null}
 
-      {/* 수락해도 계약이 되지는 않는다 — 계약·결제는 5단계다(S5-04·S5-06). */}
+      {/*
+        **수락하면 예약이 생긴다**(C-1). 예전에는 상태만 바뀌고 끝나 이 자리가
+        "계약서 작성과 결제는 준비 중이에요(S5-04·S5-06)" 라고 적혀 있었는데,
+        **그 두 태스크는 이미 완료였다** — 하류는 다 있고 다리만 없었다.
+
+        **예약이 안 만들어진 경우를 감추지 않는다.** 수락은 됐는데 예약이 막힌 상태를
+        조용히 두면 사용자는 다음이 없는 화면을 본다. 다시 시도할 자리를 준다.
+      */}
       {quote.status === "accepted" ? (
-        <p className="mt-2 text-caption text-muted-foreground">
-          진행하기로 표시했어요. 계약서 작성과 결제는 준비 중이에요(S5-04·S5-06).
-        </p>
+        quote.bookingId !== null ? (
+          <div className="mt-2 rounded-md border border-border bg-muted p-3">
+            <p className="text-caption text-muted-foreground">
+              예약을 신청했어요. <strong>업체가 승인하면 계약서가 발행됩니다.</strong>
+            </p>
+            <Link
+              href={`/bookings/${quote.bookingId}`}
+              className="mt-1 inline-block text-sm font-medium text-brand-600 underline"
+              data-testid="quote-booking-link"
+            >
+              예약 상세 보기
+            </Link>
+          </div>
+        ) : (
+          <div className="mt-2 rounded-md border border-border p-3">
+            <p className="text-caption text-muted-foreground">
+              진행하기로 표시했는데 <strong>예약이 아직 만들어지지 않았어요.</strong>
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-1"
+              disabled={pending}
+              onClick={() => onCreateBooking()}
+              data-testid="quote-retry-booking"
+            >
+              예약 다시 신청
+            </Button>
+          </div>
+        )
       ) : null}
     </div>
   );

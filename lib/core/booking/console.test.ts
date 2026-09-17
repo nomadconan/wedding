@@ -14,6 +14,7 @@ import {
   entryPoints,
   groupByLane,
   laneOf,
+  settledLabelOf,
 } from "./console";
 
 const booking = (over: Partial<{ status: BookingStatus; acceptedAt: string | null; declinedAt: string | null }> = {}) => ({
@@ -316,5 +317,24 @@ describe("groupByLane", () => {
     for (const group of groupByLane([])) {
       expect(group.hint.length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("settledLabelOf — 회차 진행 한 줄 (C-1)", () => {
+  it("**회차가 없는 것을 완납으로 적지 않는다** — 돈을 다 받은 것으로 읽힌다", () => {
+    expect(settledLabelOf(0, 0)).toContain("아직 없어요");
+    expect(settledLabelOf(0, 0)).not.toContain("완납");
+  });
+
+  it("전부 냈으면 완납이다", () => {
+    expect(settledLabelOf(3, 3)).toBe("3회차 완납");
+  });
+
+  it("일부만 냈으면 몇 중 몇인지 적는다", () => {
+    expect(settledLabelOf(3, 1)).toBe("3회차 중 1회차 입금");
+  });
+
+  it("경계 — 낸 수가 회차보다 많아도 완납으로 본다(환불·재결제로 어긋날 수 있다)", () => {
+    expect(settledLabelOf(2, 3)).toBe("2회차 완납");
   });
 });
