@@ -13227,9 +13227,11 @@ if (!vendorStaff || !adminUser) {
         values ('00000000-0000-0000-0000-0000000c1002',
                 '00000000-0000-0000-0000-0000000c1001', '${vd}');
       insert into public.quotes (id, inquiry_target_id, product_id,
-                                 total_amount, cap_total, base_price_snapshot, status)
+                                 total_amount, cap_total, base_price_snapshot, status, sent_at)
         values ('00000000-0000-0000-0000-0000000c1003',
-                '00000000-0000-0000-0000-0000000c1002', '${pd}', 1000, 1000, 1000, 'sent');`;
+                '00000000-0000-0000-0000-0000000c1002', '${pd}', 1000, 1000, 1000, 'sent', now());`;
+    // `quotes_sent_pair_chk` 가 **보낸 견적에는 보낸 시각을 요구한다** — CI 가 그것을
+    // 잡았다. 픽스처도 제품이 만들 수 있는 상태여야 한다(FIX-56 이 세운 규칙).
 
     check(
       "**같은 견적으로 두 번 만들면 두 번째가 막힌다** — 실제로 넣어 본다",
