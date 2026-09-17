@@ -21,7 +21,8 @@ import { PriceDistribution } from "./PriceDistribution";
 
 type Params = { region: string; category: string };
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<Params> }): Promise<Metadata> {
+  const params = await props.params;
   const region = decodeURIComponent(params.region);
   const label = VENDOR_CATEGORY_LABEL[params.category as VendorCategory] ?? params.category;
 
@@ -41,7 +42,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
  * 그 경계가 아래의 `notFound()` 를 삼켜 200 이 된다(S3-03 에서 확인). 없는 카테고리에
  * 소프트 404 를 내보내면 검색엔진에 빈 페이지가 쌓인다.
  */
-export default function PriceReportPage({ params }: { params: Params }) {
+export default async function PriceReportPage(props: { params: Promise<Params> }) {
+  const params = await props.params;
   // **카테고리는 값 집합이 정해져 있다.** 없는 코드는 페이지가 성립하지 않으므로 404 다.
   // 지역은 자유 입력이라 같은 판정을 할 수 없다 — 아래에서 '표본 없음'으로 다룬다.
   if (!(VENDOR_CATEGORIES as readonly string[]).includes(params.category)) notFound();

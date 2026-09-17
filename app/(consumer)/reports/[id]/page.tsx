@@ -25,7 +25,8 @@ export const metadata: Metadata = {
  * `/share/[token]` 이 서면서 열렸다 — 없는 화면으로 보내지 않는다는 규칙(S3-11)이
  * 이제 지켜진 채로 링크가 생긴다.
  */
-export default async function ReportDetailPage({ params }: { params: { id: string } }) {
+export default async function ReportDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireUser(`/reports/${params.id}`);
 
   return (

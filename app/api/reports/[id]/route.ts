@@ -20,7 +20,8 @@ import { createClient } from "@/lib/supabase/server";
  *
  * **AI 결과가 포함된 응답이라 고지를 함께 싣는다**(CLAUDE.md §2.3).
  */
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

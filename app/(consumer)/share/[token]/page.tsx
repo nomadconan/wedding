@@ -45,7 +45,8 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function SharePage({ params }: { params: { token: string } }) {
+export default async function SharePage(props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const opened = await openShareLink(params.token);
 
   if (opened.state !== "live") {

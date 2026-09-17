@@ -23,7 +23,8 @@ export const metadata: Metadata = {
  * **없는 것과 못 보는 것을 구분해 알려 주지 않는다** — 남의 대화방이 존재한다는
  * 사실 자체가 정보다. RLS 가 걸러 준 결과를 그대로 404 로 만든다.
  */
-export default async function ChatRoomPage({ params }: { params: { roomId: string } }) {
+export default async function ChatRoomPage(props: { params: Promise<{ roomId: string }> }) {
+  const params = await props.params;
   const user = await requireUser(`/chat/${params.roomId}`);
   const supabase = await createClient();
 

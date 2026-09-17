@@ -23,7 +23,8 @@ import { findMemberVendor } from "@/lib/vendor/products";
  * 한 사람이 커플 당사자이면서 그 업체 멤버일 수는 없다(그런 상태면 애초에 예약이
  * 성립하지 않는다). 그래도 순서를 정해 둔다 — 커플 쪽을 먼저 본다.
  */
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

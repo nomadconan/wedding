@@ -32,11 +32,12 @@ export const metadata: Metadata = {
  * 때문이다("/cart?cart=2"). 활성 장바구니끼리 순번이 유일하므로(0027 `uq_carts_couple_seq`)
  * 가리키는 대상은 하나뿐이며, 낡은 링크는 첫 번째 장바구니로 떨어진다.
  */
-export default async function CartPage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function CartPage(
+  props: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   await requireUser("/cart");
 
   const raw = typeof searchParams.cart === "string" ? Number(searchParams.cart) : NaN;

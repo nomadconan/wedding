@@ -21,7 +21,8 @@ import { createClient } from "@/lib/supabase/server";
  * 순간이 유일하게 '읽었다' 고 말할 수 있는 시점이기 때문이며, **정확성을 약속하지
  * 않는다**(셀 원본을 만들지 않기로 한 결과다 · §3.7 NOTE).
  */
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }
@@ -41,7 +42,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   return ok({ post, unverifiedNote: UNVERIFIED_NOTE });
 }
 
-export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }
@@ -93,7 +95,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   return ok({ postId: params.id });
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }

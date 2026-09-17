@@ -55,11 +55,12 @@ export const metadata: Metadata = {
  * 항목 모드에서 **어느 장바구니의 항목인가**는 `?cart=<순번>` 이 갖는다 — `/cart` 와
  * 같은 파라미터라 두 화면을 오갈 때 선택이 유지된다.
  */
-export default async function ComparePage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function ComparePage(
+  props: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   await requireUser("/explore/compare");
 
   const rawBasis = typeof searchParams.basis === "string" ? searchParams.basis : "";

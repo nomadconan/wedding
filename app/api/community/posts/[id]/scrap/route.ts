@@ -12,7 +12,8 @@ import { createClient } from "@/lib/supabase/server";
  * 무엇을 모아 두는지는 남에게 보일 정보가 아니다(§3.7). 좋아요와 달리 공개된 총합조차
  * 만들지 않은 이유가 그것이다.
  */
-export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }
@@ -30,7 +31,8 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   return ok({ scrapped: true });
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }

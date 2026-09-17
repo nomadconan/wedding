@@ -24,11 +24,12 @@ export const metadata: Metadata = {
  * 로딩 상태(§6 3종)는 `loading.tsx` 가 아니라 **여기 Suspense** 다. 라우트 파일로 두면
  * 그 경계가 자식 라우트까지 감싸서 상세 화면이 404 를 못 낸다(ExploreResults 주석 참조).
  */
-export default function ExplorePage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function ExplorePage(
+  props: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
     if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
