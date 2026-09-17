@@ -86,6 +86,24 @@ for (const file of TARGETS) {
         }
         j += 1;
       }
+
+      // **표는 빈 줄로 끝난다.** 표 행 바로 뒤에 `|` 로 시작하지 않는 비어 있지 않은 줄이
+      // 오면 그것은 **행이 줄바꿈으로 잘린 것**이다 (FIX-63).
+      //
+      // 칸 수만 세면 이것을 못 잡는다 — 잘린 첫 줄이 **우연히 머리글과 같은 칸 수**를
+      // 가질 수 있기 때문이다. 실제로 그랬다: `FIX-60` 행이 내용 안의 줄바꿈 이스케이프로 잘렸는데
+      // 잘린 자리가 하필 다섯 번째 파이프였고, 뒤따르던 상태·발견 칸은 사라진 채 통과했다.
+      // **이 검사가 막으려던 바로 그 상태**(상태가 없는 결함 행)를 검사가 통과시킨 것이다.
+      if (j < lines.length && lines[j].trim() !== "" && !lines[j].trim().startsWith("|")) {
+        problems.push({
+          file,
+          line: j + 1,
+          got: "표 뒤에 이어붙은 줄",
+          want: "빈 줄 또는 다음 행",
+          text: lines[j].trim().slice(0, 60),
+        });
+      }
+
       i = j;
     } else {
       i += 1;
@@ -105,5 +123,6 @@ for (const p of problems) {
 }
 console.error("");
 console.error("fix: escape pipes inside cells as \\| (code spans are NOT safe),");
-console.error("     or add the missing cells so the row matches its header.");
+console.error("     add the missing cells so the row matches its header,");
+console.error("     or join a row that got split by a literal newline (FIX-63).");
 process.exit(1);

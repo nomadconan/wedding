@@ -46,11 +46,12 @@ export const metadata: Metadata = {
  *
  * 하단 탭은 '홈' 을 켠다 — 다섯 칸이 이미 찼고(D-55) 진입은 홈과 업체 상세다.
  */
-export default async function CommunityPage({
-  searchParams,
-}: {
-  searchParams: { board?: string; sort?: string };
-}) {
+export default async function CommunityPage(
+  props: {
+    searchParams: Promise<{ board?: string; sort?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) notFound();
 
   const board = (BOARD_TYPES as readonly string[]).includes(searchParams.board ?? "")

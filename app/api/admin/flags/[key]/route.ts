@@ -45,7 +45,8 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: NextRequest, { params }: { params: { key: string } }) {
+export async function PUT(request: NextRequest, props: { params: Promise<{ key: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
   if (!isOperator(user)) return fail(403, "ADMIN_FORBIDDEN", "권한이 없습니다.");

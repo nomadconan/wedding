@@ -27,7 +27,8 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function NewReviewPage({ params }: { params: { bookingId: string } }) {
+export default async function NewReviewPage(props: { params: Promise<{ bookingId: string }> }) {
+  const params = await props.params;
   const user = await requireUser(`/reviews/new/${params.bookingId}`);
   const context = await loadReviewFormContext(user.id, params.bookingId);
 

@@ -29,7 +29,8 @@ export const metadata: Metadata = {
  * **요금을 보여주지 않는다.** 요율은 `planner_fee_rates` 가 갖고 계약 확정 시
  * 스냅샷된다(D-16) — 프로필에 숫자를 적으면 화면과 실제 청구가 어긋난다.
  */
-export default async function PlannerDetailPage({ params }: { params: { id: string } }) {
+export default async function PlannerDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   return (
     <ConsumerShell title={PROFILE_TITLE}>
       <Suspense fallback={<LoadingState label="프로필을 불러오는 중" rows={3} variant="block" />}>

@@ -23,7 +23,8 @@ export const metadata: Metadata = {
  * **로그인 없이도 열린다** — 어느 업체가 불렀는지 먼저 보여주고 로그인으로 보낸다.
  * 이메일은 마스킹해서 내려온다(토큰만으로 남의 이메일을 알 수 없게).
  */
-export default async function VendorInvitePage({ params }: { params: { token: string } }) {
+export default async function VendorInvitePage(props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const invite = await previewInvite(params.token, new Date());
 
   // 없는 토큰과 남의 토큰을 구분해 알려 주지 않는다 — 404 로 통일한다.

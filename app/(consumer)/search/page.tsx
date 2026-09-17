@@ -25,11 +25,12 @@ export const metadata: Metadata = {
  * 하단 탭은 '탐색' 을 켠 상태로 둔다 — `/search` 는 탭이 아니지만 탐색 계열 화면이고,
  * 아무 탭도 안 켜져 있으면 사용자는 자기가 어디 있는지 알 수 없다.
  */
-export default function SearchPage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function SearchPage(
+  props: {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+  }
+) {
+  const searchParams = await props.searchParams;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
     if (Array.isArray(value)) value.forEach((item) => params.append(key, item));

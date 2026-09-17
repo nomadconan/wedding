@@ -37,7 +37,8 @@ export const metadata: Metadata = {
  * 굳어 `notFound()` 가 404 를 못 만든다. 무거운 나머지(상품·추가금·장바구니 상태)만
  * Suspense 안으로 넣어 로딩 상태를 준다(§6 3종 상태).
  */
-export default async function VendorDetailPage({ params }: { params: { vendorId: string } }) {
+export default async function VendorDetailPage(props: { params: Promise<{ vendorId: string }> }) {
+  const params = await props.params;
   const client = createPublicClient();
 
   const { data: vendor } = await client

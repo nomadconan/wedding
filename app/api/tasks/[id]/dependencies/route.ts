@@ -36,7 +36,7 @@ import { createClient } from "@/lib/supabase/server";
  * 커플 것인지 본다(0042 `owns_task`).
  */
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 async function context() {
   const user = await getSessionUser();
@@ -81,7 +81,8 @@ function toFailure(
   return null;
 }
 
-export async function POST(request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, props: Params) {
+  const params = await props.params;
   const ctx = await context();
   if ("error" in ctx) return ctx.error;
 
@@ -140,7 +141,8 @@ export async function POST(request: NextRequest, { params }: Params) {
  * 않다) 조용히 "아무것도 안 지움" 으로 끝날 수 있다. 지우는 요청이 조용히 실패하는
  * 것은 최악이라 **URL 에 적는다.**
  */
-export async function DELETE(request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, props: Params) {
+  const params = await props.params;
   const ctx = await context();
   if ("error" in ctx) return ctx.error;
 

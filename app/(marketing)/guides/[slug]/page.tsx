@@ -51,7 +51,8 @@ export async function generateStaticParams(): Promise<Params[]> {
   }
 }
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<Params> }): Promise<Metadata> {
+  const params = await props.params;
   if (!isValidSlug(params.slug)) return { title: "가이드 — 웨딩클리어", robots: ROBOTS_META };
 
   const post = await findContent(params.slug);
@@ -76,7 +77,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
-export default async function GuidePage({ params }: { params: Params }) {
+export default async function GuidePage(props: { params: Promise<Params> }) {
+  const params = await props.params;
   // **형식부터 본다.** 조회 전에 막으면 이상한 슬러그로 DB 를 두드리지 않는다.
   if (!isValidSlug(params.slug)) notFound();
 

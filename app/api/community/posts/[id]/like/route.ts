@@ -29,7 +29,8 @@ async function likeCount(postId: string): Promise<number | null> {
   return (data as { like_count: number } | null)?.like_count ?? null;
 }
 
-export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }
@@ -50,7 +51,8 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
   return ok({ liked: true, likeCount: await likeCount(params.id) });
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }

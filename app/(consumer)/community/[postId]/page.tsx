@@ -26,7 +26,8 @@ export const metadata: Metadata = {
  * 프리페치·재렌더로 여러 번 불릴 수 있기 때문이며, **정확성을 약속하지 않는 값**이라도
  * 예측 가능한 자리에서 오르는 편이 낫다.
  */
-export default async function CommunityPostPage({ params }: { params: { postId: string } }) {
+export default async function CommunityPostPage(props: { params: Promise<{ postId: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) notFound();
 
   return (

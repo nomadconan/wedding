@@ -23,7 +23,8 @@ export const metadata: Metadata = {
  * 업체 조회를 **Suspense 밖**에 둔다. 응답이 흘러나가면 상태 코드가 200 으로 굳어
  * `notFound()` 가 404 를 못 만든다(업체 상세와 같은 판단).
  */
-export default async function QnaBoardPage({ params }: { params: { vendorId: string } }) {
+export default async function QnaBoardPage(props: { params: Promise<{ vendorId: string }> }) {
+  const params = await props.params;
   const supabase = await createClient();
   const vendor = await loadVendorName(supabase, params.vendorId);
 

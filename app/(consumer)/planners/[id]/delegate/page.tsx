@@ -38,7 +38,8 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function DelegatePage({ params }: { params: { id: string } }) {
+export default async function DelegatePage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireUser(`/planners/${params.id}/delegate`);
 
   return (

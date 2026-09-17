@@ -20,7 +20,8 @@ import { createClient } from "@/lib/supabase/server";
  * 어느 편인지는 **세션이 판정한다.** 커플은 **owner 만** 요청한다(§3.9 — 결제·계약
  * 서명과 같은 조건이며, 해지는 그 둘보다 되돌리기 어렵다).
  */
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 
@@ -31,7 +32,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   return ok(view);
 }
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

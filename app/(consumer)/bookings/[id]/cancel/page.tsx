@@ -25,7 +25,8 @@ export const metadata: Metadata = {
  * 열려 있고(0031), 배우자에게는 계약은 보이지만 해지 절차는 보이지 않는다.
  * 앱에서 역할을 비교해 감추는 것이 아니라 **RLS 가 안 보여주는 것**이 경계다(§5.5).
  */
-export default async function CancelPage({ params }: { params: { id: string } }) {
+export default async function CancelPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireUser(`/bookings/${params.id}/cancel`);
 
   return (

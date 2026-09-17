@@ -20,7 +20,8 @@ import { createClient } from "@/lib/supabase/server";
  * **답글의 답글은 DB 트리거가 막는다**(2단 제한). 화면이 그 깊이를 자르면 데이터에는
  * 있는데 보이지 않는 댓글이 생긴다.
  */
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }
@@ -34,7 +35,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   return ok({ comments: post.comments, vendorReplyNote: VENDOR_REPLY_ONLY_NOTE });
 }
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   if (!(await isFeatureEnabled(COMMUNITY_FLAG))) {
     return fail(404, "COMMUNITY_CLOSED", communityClosedNotice());
   }

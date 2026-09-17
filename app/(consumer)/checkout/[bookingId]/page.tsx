@@ -26,7 +26,8 @@ export const metadata: Metadata = {
  * 404 로 보인다. 앱에서 역할을 비교해 감추는 방식이 아니라 **RLS 가 안 보여주는
  * 것**이 경계다(§5.5).
  */
-export default async function CheckoutPage({ params }: { params: { bookingId: string } }) {
+export default async function CheckoutPage(props: { params: Promise<{ bookingId: string }> }) {
+  const params = await props.params;
   await requireUser(`/checkout/${params.bookingId}`);
 
   return (

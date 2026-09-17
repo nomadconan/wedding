@@ -158,7 +158,7 @@ sentinel로 넘긴다. `null`·`undefined`를 미정으로 쓰지 않는 이유�
 shadcn/ui 14종(button, input, label, card, badge, dialog, select, checkbox, radio-group,
 tabs, toast, skeleton, separator, progress). 필요할 때 `npx shadcn@2 add <name>`으로 추가한다.
 
-> **CLI 버전 고정** 이 프로젝트는 React 18 / Next 14 / Tailwind 3이다.
+> **CLI 버전 고정** 이 프로젝트는 React 18 / **Next 15** / Tailwind 3이다(2026-09-17 · FIX-61 — **판올림이 React·Tailwind 를 건드리지 않았다**).
 > `shadcn@latest`(4.x)는 Tailwind 4 + React 19 세대라 호환되지 않는다. **`shadcn@2`를 쓴다.**
 
 ---
