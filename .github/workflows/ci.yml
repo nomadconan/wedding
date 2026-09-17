@@ -59,6 +59,14 @@ jobs:
       - name: typecheck
         run: npm run typecheck
 
+      # §7.5 의 'AI 회귀' 행이 요구하는 게이트다(FIX-42). `npm run test` 가 같은 파일을
+      # 함께 돌지만 **이름 붙은 step 으로 따로 세운다** — 룰·프롬프트를 고친 PR 에서
+      # "배포 전 회귀가 실제로 돌았는가" 를 로그 한 줄로 확인할 수 있어야 하고, 전체
+      # 단위 테스트 안에 묻히면 그 확인이 불가능하다. LLM 을 부르지 않으므로(순수 함수)
+      # CI 에서 그대로 돈다 — 키도, 네트워크도, DB 도 필요 없다.
+      - name: AI regression (golden set / FIX-42 · spec 7.5)
+        run: npm run ai:golden
+
       - name: unit tests
         run: npm run test
 

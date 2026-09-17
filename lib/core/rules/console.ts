@@ -204,24 +204,104 @@ export const DEPLOYMENT_LEDGER_EMPTY: DeploymentLedger = {
  * §7.5 는 AI 회귀(검출 룰 20종 × 샘플 계약서 세트, 골든셋 스냅샷 비교)를
  * **"룰·프롬프트 배포 전 필수 실행"** 이라고 적는다.
  *
- * **그 골든셋이 없다.** S8-07 이 품질 지표·검수 큐·오탐 신고를 세웠지만 회귀 세트는
- * 만들지 않았다(FIX-42). 그래서 이 콘솔은 게이트를 **`blocked` 로 보여준다** —
- * 통과했다고도, 해당 없다고도 적지 않는다. **없는 검사를 통과로 적는 것이 이 화면에서
- * 가장 나쁜 실패**이며, 그러면 다음 사람이 게이트가 도는 줄 알고 룰을 고친다.
+ * ── 이 자리가 `blocked` 였다 (FIX-42) ───────────────────────────────────────
+ * S8-06 이 콘솔을 세울 때 그 골든셋이 없었다. **없는 검사를 '통과' 로 적는 것이 이
+ * 화면에서 가장 나쁜 실패**이므로 `blocked` 로 두었다 — 통과로 적으면 다음 사람이
+ * 게이트가 도는 줄 알고 룰을 고친다.
+ *
+ * ── 지금은 실제로 돈다 ──────────────────────────────────────────────────────
+ * 골든셋이 `lib/core/rules/golden` 에 섰다. 이 화면은 **저장된 결과를 읽지 않고 그
+ * 자리에서 돌린다** — 스캔·마스킹·스키마 검증 전부 순수 함수이고 LLM 을 부르지 않으므로
+ * 밀리초 단위다. 저장하면 **결과가 낡는다**: 룰을 고친 뒤 화면이 어제의 초록불을
+ * 보여주는 것은 `blocked` 보다 나쁘다(D-141 이 프롬프트 사용 이력에서 내린 것과 같은
+ * 판단 — 계산되는 값을 저장하지 않는다).
+ *
+ * **`blocked` 를 지우지 않았다.** 케이스가 0건이거나 룰이 전부 꺼지면 게이트는 통과도
+ * 실패도 아니고 **검사 없음**이다. 그 상태를 초록으로 적으면 FIX-42 가 기록된 이유가
+ * 그대로 돌아온다.
  */
 export type ReleaseGate =
-  | { status: "blocked"; reason: "golden_set_missing"; message: string; fix: string }
-  | { status: "passed"; ranAt: string; cases: number };
+  /** 검사 자체가 서지 않는다 — 케이스가 없거나 돌아가는 룰이 없다. */
+  | { status: "blocked"; reason: "golden_set_missing" | "no_active_rule"; message: string; fix: string }
+  | {
+      status: "passed";
+      ruleVersion: string;
+      cases: number;
+      checks: number;
+      rules: number;
+      /** 케이스는 있는데 **꺼져 있어 재지 못한** 룰. 통과 옆에 함께 적는다. */
+      unmeasuredRules: readonly string[];
+    }
+  | {
+      status: "failed";
+      ruleVersion: string;
+      cases: number;
+      checks: number;
+      failed: number;
+      /** 화면이 그대로 읽는 실패 줄. 몇 건인지가 아니라 **무엇이** 깨졌는지를 준다. */
+      lines: readonly string[];
+    };
 
 export const RELEASE_GATE_BLOCKED: ReleaseGate = {
   status: "blocked",
   reason: "golden_set_missing",
   message:
-    "명세 §7.5 는 룰·프롬프트를 배포하기 전에 AI 회귀(검출 룰 20종 × 샘플 계약서 골든셋)를 반드시 돌리라고 적지만, 그 골든셋이 아직 없습니다. 지금 배포 전에 볼 수 있는 것은 품질 지표(검증 실패율·인용 폐기율)뿐입니다.",
+    "명세 §7.5 는 룰·프롬프트를 배포하기 전에 AI 회귀(검출 룰 20종 × 샘플 계약서 골든셋)를 반드시 돌리라고 적는데, 지금 돌릴 케이스가 없습니다. 이 상태는 '통과' 도 '해당 없음' 도 아닙니다.",
   fix: "FIX-42",
 };
 
-/** 게이트 대신 지금 볼 수 있는 것. **빈 자리로 두지 않는다.** */
+export const RELEASE_GATE_NO_RULE: ReleaseGate = {
+  status: "blocked",
+  reason: "no_active_rule",
+  message:
+    "켜져 있는 검출 룰이 없어 회귀를 돌릴 수 없습니다. 룰이 0건이면 분석 자체가 서지 않습니다(S7-01) — 먼저 룰을 켜 주세요.",
+  fix: "FIX-42",
+};
+
+/**
+ * 골든셋 결과를 화면이 읽을 게이트로 접는다.
+ *
+ * **`runGoldenSet` 을 다시 구현하지 않는다** — 테스트가 쓰는 판정과 화면이 보여주는
+ * 판정이 갈리면 화면이 거짓말을 한다(`buildRuleConsole` 과 같은 이유).
+ */
+export function toReleaseGate(result: {
+  usable: boolean;
+  passed: boolean;
+  ruleVersion: string;
+  activeRules: number;
+  cases: { total: number; model: number };
+  checks: { total: number; failed: number };
+  failures: readonly { line: string }[];
+  unmeasuredRules: readonly string[];
+}): ReleaseGate {
+  if (result.activeRules === 0) return RELEASE_GATE_NO_RULE;
+  if (!result.usable) return RELEASE_GATE_BLOCKED;
+
+  const cases = result.cases.total + result.cases.model;
+
+  if (result.passed) {
+    return {
+      status: "passed",
+      ruleVersion: result.ruleVersion,
+      cases,
+      checks: result.checks.total,
+      rules: result.activeRules,
+      unmeasuredRules: result.unmeasuredRules,
+    };
+  }
+
+  return {
+    status: "failed",
+    ruleVersion: result.ruleVersion,
+    cases,
+    checks: result.checks.total,
+    failed: result.failures.length,
+    // 화면은 훑어보는 자리다. 전부 쏟지 않고 **앞의 다섯 줄**만 준다.
+    lines: result.failures.slice(0, 5).map((failure) => failure.line),
+  };
+}
+
+/** 게이트 옆에 함께 두는 것. **골든셋이 재지 않는 것**은 여기서 본다. */
 export const RELEASE_GATE_FALLBACK = {
   href: "/admin/ai-quality",
   label: "AI 품질·비용에서 실패율·폐기율 보기",

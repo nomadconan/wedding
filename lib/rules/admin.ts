@@ -7,11 +7,12 @@ import {
   type PromptFeature,
   type PromptRow,
   type ReleaseGate,
-  RELEASE_GATE_BLOCKED,
   type RuleConsole,
   buildRuleConsole,
+  toReleaseGate,
 } from "@/lib/core/rules/console";
 import { DETECT_RULES } from "@/lib/core/rules/detect-rules";
+import { GOLDEN_UNMEASURED, runGoldenSet } from "@/lib/core/rules/golden";
 import { REPORT_PROMPT_VERSION, REPORT_SYSTEM } from "@/lib/core/report/prompt";
 import { mergeDetectRules } from "@/lib/core/rules/rule-source";
 import { SEARCH_PARSE_PROMPT_VERSION, SEARCH_PARSE_SYSTEM } from "@/lib/core/search/prompt";
@@ -49,6 +50,8 @@ export type RuleConsolePayload = {
   prompts: PromptRow[];
   ledger: DeploymentLedger;
   gate: ReleaseGate;
+  /** 게이트가 **재지 않는 것**. 초록불이 실제보다 넓게 읽히지 않게 화면이 그대로 적는다. */
+  gateUnmeasured: typeof GOLDEN_UNMEASURED;
   /** 위약금 밴드. **비어 있다는 사실도 상태다**(S5-08 이 시드를 넣지 않기로 했다). */
   penaltyBands: { total: number; draft: number };
 };
@@ -125,8 +128,14 @@ export async function loadRuleConsole(): Promise<RuleConsolePayload> {
       (ledgerRows ?? []).length === 0
         ? DEPLOYMENT_LEDGER_EMPTY
         : { status: "used", rows: (ledgerRows ?? []).length },
-    // 골든셋이 없으므로 항상 blocked 다. 생기면 여기서 실제 결과를 읽는다(FIX-42).
-    gate: RELEASE_GATE_BLOCKED,
+    // **그 자리에서 돌린다**(FIX-42). 골든셋은 순수 함수이고 LLM 을 부르지 않으므로
+    // 밀리초 단위이며, 저장된 결과를 읽으면 룰을 고친 뒤에도 어제의 초록불이 뜬다.
+    //
+    // **실행되는 룰로 돌린다.** 운영자가 DB 에서 끈 룰은 스캔에서도 빠지므로(`merged`),
+    // 코드 룰 전체로 돌리면 화면이 "통과" 라고 말하는 동안 실제 파이프라인은 다른 룰로
+    // 돈다 — 게이트가 지키려던 바로 그 어긋남이다.
+    gate: toReleaseGate(runGoldenSet({ rules: merged.rules })),
+    gateUnmeasured: GOLDEN_UNMEASURED,
     penaltyBands: {
       total: bands.length,
       draft: bands.filter((band) => band.is_draft === true).length,
