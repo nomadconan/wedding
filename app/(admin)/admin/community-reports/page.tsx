@@ -32,11 +32,12 @@ export const metadata: Metadata = {
  * 가 쿠키를 읽어 요청이 동적으로 판정되므로 `fetch` 캐시가 붙지 않는다. 플래그 조회만
  * 서비스롤이라 `lib/flags.ts` 가 `no-store` 를 못 박고 있다.
  */
-export default async function AdminCommunityReportsPage({
-  searchParams,
-}: {
-  searchParams: { state?: string };
-}) {
+export default async function AdminCommunityReportsPage(
+  props: {
+    searchParams: Promise<{ state?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   await requireOperator("/admin/community-reports");
 
   const closed = searchParams.state === "closed";

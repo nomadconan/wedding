@@ -24,11 +24,12 @@ export const metadata: Metadata = {
  * **`/planner`(단수)와 다른 화면이다.** 그쪽은 §6.2 가 **AI 플래너 채팅**(F-C-03,
  * 7단계)에 배정한 경로다. 사람 플래너 콘솔은 `/pro` 를 쓴다 — AdminShell 주석 참조.
  */
-export default async function PlannerMarketPage({
-  searchParams,
-}: {
-  searchParams: { sort?: string; category?: string; region?: string };
-}) {
+export default async function PlannerMarketPage(
+  props: {
+    searchParams: Promise<{ sort?: string; category?: string; region?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   return (
     <ConsumerShell title={MARKET_TITLE}>
       <Suspense fallback={<LoadingState label="플래너를 불러오는 중" rows={3} variant="block" />}>

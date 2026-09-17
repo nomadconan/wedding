@@ -21,7 +21,8 @@ import { createClient } from "@/lib/supabase/server";
  * 로 쓰여 있다. 배우자는 계약을 **볼 수는** 있지만 서명하지 않는다 — 계약서 본문에는
  * 양측이 당사자로 적힌다(서명 주체와 계약 당사자는 다른 층위다).
  */
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

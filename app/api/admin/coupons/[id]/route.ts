@@ -32,7 +32,8 @@ const PatchSchema = z.object({
   status: z.enum(COUPON_STATUSES),
 });
 
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
   if (!isOperator(user)) return fail(403, "ADMIN_FORBIDDEN", "권한이 없습니다.");

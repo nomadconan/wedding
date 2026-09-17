@@ -18,7 +18,8 @@ import { createClient } from "@/lib/supabase/server";
  * 실제로 흔한 상태이고, 하나로 합치면 그 상태를 표현할 수 없어 한쪽 주장이 그대로
  * 정산이 된다. 둘이 갈리면 조율 큐로 간다.
  */
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

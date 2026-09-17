@@ -27,7 +27,8 @@ export const metadata: Metadata = {
  * 그 돈이다. 앱에서 역할을 비교해 감추는 것이 아니라 **RLS 가 안 보여주는 것**이
  * 경계다(§5.5).
  */
-export default async function EscrowPage({ params }: { params: { id: string } }) {
+export default async function EscrowPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireUser(`/bookings/${params.id}/escrow`);
 
   return (

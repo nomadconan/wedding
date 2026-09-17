@@ -20,7 +20,8 @@ import { getSessionUser } from "@/lib/supabase/auth";
  */
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 

@@ -52,7 +52,8 @@ function createRsvpClient() {
   });
 }
 
-export default async function RsvpPage({ params }: { params: { token: string } }) {
+export default async function RsvpPage(props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const { data } = await createRsvpClient()
     .rpc("invite_context", { p_token: params.token })
     .maybeSingle();

@@ -53,7 +53,8 @@ type Context = {
   closed: boolean;
 };
 
-export async function GET(_request: NextRequest, { params }: { params: { token: string } }) {
+export async function GET(_request: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const { data } = await createRsvpClient()
     .rpc("invite_context", { p_token: params.token })
     .maybeSingle();
@@ -82,7 +83,8 @@ const REASON_MESSAGE: Record<string, string> = {
   closed: "예식일이 지나 응답을 받지 않아요.",
 };
 
-export async function POST(request: NextRequest, { params }: { params: { token: string } }) {
+export async function POST(request: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   let body: unknown;
   try {
     body = await request.json();

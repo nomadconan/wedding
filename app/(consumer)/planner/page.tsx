@@ -38,11 +38,12 @@ export const metadata: Metadata = {
  * 하단 탭은 '홈' 을 켠 상태로 둔다 — `/planner` 는 탭이 아니고(다섯 칸이 이미 찼다),
  * 진입은 홈의 클리어 카드다.
  */
-export default async function PlannerPage({
-  searchParams,
-}: {
-  searchParams: { c?: string };
-}) {
+export default async function PlannerPage(
+  props: {
+    searchParams: Promise<{ c?: string }>;
+  }
+) {
+  const searchParams = await props.searchParams;
   await requireUser("/planner");
 
   return (

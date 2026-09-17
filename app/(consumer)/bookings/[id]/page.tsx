@@ -43,7 +43,8 @@ export const metadata: Metadata = {
  */
 export const dynamic = "force-dynamic";
 
-export default async function BookingDetailPage({ params }: { params: { id: string } }) {
+export default async function BookingDetailPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireUser(`/bookings/${params.id}`);
 
   return (
