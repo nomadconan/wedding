@@ -7,6 +7,7 @@ import {
   statusAfter,
 } from "@/lib/core/privacy/deletion";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { UserRole } from "@/lib/supabase/auth";
 
 /**
  * 삭제 요청 처리 (S8-04 · F-A-08)
@@ -24,7 +25,7 @@ export type ResolveInput = {
   action: DeletionAction;
   reason: string;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
   now: string;
 };
 

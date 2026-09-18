@@ -2,6 +2,7 @@ import { recordEvent } from "@/lib/audit/record";
 import type { VendorTemplateView } from "@/lib/core/schemas/vendor-settings";
 import { validateTemplatePayload } from "@/lib/core/schemas/vendor-settings";
 import type { TemplateKind } from "@/lib/core/vendor/vendor-settings";
+import type { Json } from "@/types/database";
 
 /**
  * 업체 템플릿 (S4-04 빠른 답변 · S4-12 견적 이월)
@@ -33,7 +34,7 @@ export async function loadTemplates(
     id: string;
     kind: TemplateKind;
     title: string;
-    payload_json: Record<string, unknown>;
+    payload_json: Record<string, Json | undefined>;
     sort_order: number;
   }[]).map((row) => ({
     id: row.id,

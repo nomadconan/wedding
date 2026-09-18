@@ -19,6 +19,7 @@ import { applyRefund } from "@/lib/payments/charge";
 import { addAdjustment } from "@/lib/settlements/actions";
 import { loadPenaltyRuleSet } from "@/lib/pricing/penalty-rule-set";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Json } from "@/types/database";
 
 /**
  * 계약 해지 · 위약금 절차 (S5-08 · F-A-17 · §7.7 · D-23 · D-24)
@@ -704,7 +705,7 @@ async function reversePlannerSettlement(input: {
 async function notify(
   context: CancellationContext,
   templateKey: "contract.cancel_requested" | "contract.cancel_settled",
-  params: Record<string, unknown>,
+  params: Record<string, Json | undefined>,
 ): Promise<void> {
   await sendNotification({
     userId: context.ownerId,

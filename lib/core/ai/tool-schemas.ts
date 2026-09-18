@@ -5,6 +5,7 @@ import { SEARCH_FIELDS } from "../schemas/search";
 import { STYLE_TAGS } from "../schemas/onboarding";
 import { VENDOR_CATEGORIES } from "../schemas/vendor";
 import { PLANNER_CATEGORIES } from "../planner/scope";
+import type { JsonObject } from "../json";
 
 /**
  * 툴 입력 스키마 (S7-20 · 명세서 §5.6 · CLAUDE.md §6)
@@ -286,7 +287,7 @@ export function hasToolSchema(name: string): boolean {
 export const SEARCH_TOOL_SHARED_FIELDS = SEARCH_FIELDS;
 
 export type ToolArgsResult =
-  | { ok: true; args: Record<string, unknown> }
+  | { ok: true; args: JsonObject }
   | { ok: false; message: string };
 
 /**
@@ -313,5 +314,5 @@ export function parseToolArgs(name: string, raw: unknown): ToolArgsResult {
     return { ok: false, message: detail };
   }
 
-  return { ok: true, args: parsed.data as Record<string, unknown> };
+  return { ok: true, args: parsed.data as JsonObject };
 }

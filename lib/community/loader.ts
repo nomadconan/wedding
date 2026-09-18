@@ -8,6 +8,7 @@ import {
   type PostStatus,
 } from "@/lib/core/community/community";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 /**
  * 커뮤니티 조회 (S7-15 · 명세서 §6.2)
@@ -72,7 +73,7 @@ const POST_COLUMNS =
 
 /** 업체명은 공개 데이터라 익명 클라이언트로 읽는다(승인 업체만 보인다). */
 async function vendorNames(
-  publicClient: SupabaseClient,
+  publicClient: SupabaseClient<Database>,
   ids: readonly string[],
 ): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
@@ -83,8 +84,8 @@ async function vendorNames(
 }
 
 async function decorate(
-  client: SupabaseClient,
-  publicClient: SupabaseClient,
+  client: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   posts: readonly PostRecord[],
   viewerId: string | null,
 ): Promise<CommunityPostRow[]> {
@@ -135,8 +136,8 @@ async function decorate(
 }
 
 export async function listPosts(
-  client: SupabaseClient,
-  publicClient: SupabaseClient,
+  client: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   options: { board: BoardType | null; sort: CommunitySort; viewerId: string | null },
 ): Promise<CommunityPostRow[]> {
   let query = client.from("community_posts").select(POST_COLUMNS).eq("status", "published");
@@ -152,8 +153,8 @@ export async function listPosts(
 }
 
 export async function loadPost(
-  client: SupabaseClient,
-  publicClient: SupabaseClient,
+  client: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   postId: string,
   viewerId: string | null,
 ): Promise<CommunityPostDetail | null> {
@@ -256,7 +257,7 @@ export type VendorMention = {
 };
 
 export async function vendorMentions(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   vendorId: string,
   limit = 5,
 ): Promise<VendorMention[]> {

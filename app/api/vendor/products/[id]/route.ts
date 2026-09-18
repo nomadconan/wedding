@@ -16,6 +16,7 @@ import { createClient } from "@/lib/supabase/server";
 
 import { loadOptions } from "@/lib/vendor/product-options";
 import { PRODUCT_COLUMNS, findMemberVendor, publishBlockersOf } from "@/lib/vendor/products";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * PATCH/DELETE /api/vendor/products/[id] — 상품 수정·게시·삭제 (F-V-03, §4.3)
@@ -99,7 +100,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
   }
 
-  const patch: Record<string, unknown> = {};
+  const patch: TablesUpdate<"products"> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.category !== undefined) patch.category = input.category;
   if (input.basePriceTotal !== undefined) patch.base_price_total = input.basePriceTotal;

@@ -10,6 +10,8 @@ import {
 } from "@/lib/core/booking/console";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * 업체 예약 보드 · 승인·거절 (S5-10 · F-V-08 · §6.3 `/vendor/bookings`)
@@ -180,7 +182,7 @@ export async function decideBooking(input: {
   decision: "accept" | "decline";
   reason: string | null;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
 }): Promise<DecideResult> {
   const supabase = await createClient();
 
@@ -248,12 +250,13 @@ export async function decideBooking(input: {
   const admin = createAdminClient();
   const now = new Date().toISOString();
 
-  const patch =
+  const patch = (
     input.decision === "accept"
       ? { accepted_at: now, accepted_by: input.actorId }
       : // 거절은 예약을 끝낸다. 상태를 함께 옮기지 않으면 화면이 이 예약을 계속
         // 진행 중으로 그리고 재고도 잡힌 채 남는다(CHECK 이 짝을 강제한다).
-        { declined_at: now, decline_reason: reason, status: "cancelled" as const };
+        { declined_at: now, decline_reason: reason, status: "cancelled" as const }
+  ) satisfies TablesUpdate<"bookings">;
 
   const { error } = await admin.from("bookings").update(patch).eq("id", input.bookingId);
 

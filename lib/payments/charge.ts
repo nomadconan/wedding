@@ -22,6 +22,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { MAX_PAYMENT_ATTEMPTS, canRetryPayment } from "./adapter";
 import { resolveChargeAdapterName, type ChargeAdapter } from "./charge-adapter";
 import { createNoopChargeAdapter, createStubChargeAdapter } from "./charge-stub";
+import type { Json } from "@/types/database";
 
 /**
  * 회차 결제 실행 (S5-06 · §3.4 · §4.2 · D-18 · D-23 · D-28)
@@ -543,7 +544,7 @@ async function linkSettlement(input: {
 async function notifyCouple(
   userId: string,
   templateKey: "payment.succeeded" | "payment.failed" | "payment.fully_paid",
-  params: Record<string, unknown>,
+  params: Record<string, Json | undefined>,
 ): Promise<void> {
   await sendNotification({
     userId,

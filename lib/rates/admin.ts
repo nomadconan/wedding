@@ -19,6 +19,7 @@ import {
   type RateRecord,
 } from "@/lib/core/pricing/rates";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { TablesInsert } from "@/types/database";
 
 /**
  * 요율 관리 (S5-03 · F-A-15 · §3.8 · §4.3 · D-16 · D-23 · O-02)
@@ -45,10 +46,10 @@ export function isRateFailure(value: unknown): value is RateFailure {
   return typeof value === "object" && value !== null && "code" in value && "status" in value;
 }
 
-const TABLE: Record<RateType, string> = {
+const TABLE = {
   commission: "commission_rates",
   planner: "planner_fee_rates",
-};
+} as const satisfies Record<RateType, string>;
 
 type Reader = Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>;
 
@@ -179,8 +180,16 @@ export async function createRate(input: {
 
   if (!overlap.ok) return failure(409, "RATE_OVERLAP", overlap.detail);
 
-  const payload: Record<string, unknown> = {
-    scope_type: input.draft.scopeType,
+  /**
+   * **두 표는 `scope_type` enum 이 서로 다르다**(`commission_scope_type` 은 vendor,
+   * `planner_rate_scope_type` 은 planner). 그래서 한 payload 를 두 표에 넣을 수 없고,
+   * 갈래마다 그 표의 생성된 모양으로 넣는다 — 컬럼 이름이 틀리면 여기서 안 넘어간다.
+   *
+   * `scope_type` 만 좁히는 단언이 남는데, **그 값이 이 갈래에서 쓸 수 있는 것인지는
+   * 위의 `validateRate` 가 이미 거절한다**(`allowed.includes(draft.scopeType)`).
+   * 타입이 못 따라오는 자리일 뿐 검사가 없는 자리가 아니다.
+   */
+  const common = {
     scope_key: input.draft.scopeKey,
     fee_rate_bp: input.draft.feeRateBp,
     effective_from: input.draft.effectiveFrom,
@@ -189,13 +198,25 @@ export async function createRate(input: {
     updated_by: input.actorId,
   };
 
-  if (input.draft.type === "planner") payload.service_level = input.draft.serviceLevel ?? null;
-
-  const { data, error } = await admin
-    .from(TABLE[input.draft.type])
-    .insert(payload)
-    .select("id")
-    .maybeSingle();
+  const { data, error } =
+    input.draft.type === "planner"
+      ? await admin
+          .from("planner_fee_rates")
+          .insert({
+            ...common,
+            scope_type: input.draft.scopeType as TablesInsert<"planner_fee_rates">["scope_type"],
+            service_level: input.draft.serviceLevel ?? null,
+          })
+          .select("id")
+          .maybeSingle()
+      : await admin
+          .from("commission_rates")
+          .insert({
+            ...common,
+            scope_type: input.draft.scopeType as TablesInsert<"commission_rates">["scope_type"],
+          })
+          .select("id")
+          .maybeSingle();
 
   if (error || !data) {
     // 동시 입력이 EXCLUDE 에 걸린 경우다. 위에서 본 목록 뒤에 다른 행이 들어왔다.

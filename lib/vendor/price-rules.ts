@@ -1,5 +1,6 @@
 import type { EvaluablePriceRule } from "@/lib/core/pricing/dynamic";
 import type { PriceRuleCondition, PriceRuleType } from "@/lib/core/schemas/price-rule";
+import type { Json } from "@/types/database";
 
 /**
  * 프라이싱 룰 공통 조각 (S2-06)
@@ -14,7 +15,7 @@ export type PriceRuleRow = {
   vendor_id: string;
   product_id: string | null;
   rule_type: PriceRuleType;
-  condition_json: Record<string, unknown>;
+  condition_json: Record<string, Json | undefined>;
   adjust_type: string;
   adjust_value: number | string;
   floor_price: number | null;
@@ -48,7 +49,7 @@ export function toEvaluableRule(row: PriceRuleRow): EvaluablePriceRule {
 }
 
 /** 조건에서 판별자를 뺀 나머지만 `condition_json` 에 넣는다. 룰 종류는 컬럼이 갖는다. */
-export function toConditionJson(condition: PriceRuleCondition): Record<string, unknown> {
+export function toConditionJson(condition: PriceRuleCondition): Record<string, Json | undefined> {
   const { ruleType: _ruleType, ...rest } = condition;
 
   return rest;

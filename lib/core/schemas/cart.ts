@@ -3,6 +3,8 @@ import { z } from "zod";
 import { CART_NAME_MAX_LENGTH, isValidCartName, normalizeCartName } from "../cart/multi-cart";
 import { AMOUNT_UNKNOWN, isUnknownAmount, type Amount } from "../pricing/amount";
 
+import { jsonObjectSchema } from "./json";
+
 /**
  * 장바구니 · 찜 (S3-05 · 명세서 §2.1 F-C-25·F-C-26, §4.2, §6.2, D-19)
  *
@@ -54,7 +56,7 @@ export const CartMutationSchema = z.discriminatedUnion("action", [
     action: z.literal("add"),
     productId: z.string().uuid("상품을 찾을 수 없습니다."),
     /** 선택한 옵션. 같은 상품이라도 옵션이 다르면 별개 항목이다(S3-04). */
-    options: z.record(z.unknown()).default({}),
+    options: jsonObjectSchema.default({}),
     cartId: CartIdSchema.optional(),
   }),
   z.object({
@@ -65,7 +67,7 @@ export const CartMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("set_options"),
     itemId: z.string().uuid(),
-    options: z.record(z.unknown()).default({}),
+    options: jsonObjectSchema.default({}),
   }),
   /** 찜에서 장바구니로 옮긴다. 찜 행은 지운다 — 같은 것을 두 곳에 두면 상태가 갈린다. */
   z.object({

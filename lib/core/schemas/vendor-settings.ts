@@ -3,6 +3,7 @@ import { z } from "zod";
 import { NOTIFICATION_CHANNELS } from "./notification";
 import { RECIPIENT_MODES, TEMPLATE_KINDS } from "../vendor/vendor-settings";
 import { VENDOR_MEMBER_ROLES } from "./vendor-member";
+import type { JsonObject } from "../json";
 
 /**
  * 업체 설정·초대 API 스키마 (S4-14 · S2-09 · 명세서 §4.3)
@@ -107,7 +108,7 @@ export type VendorSettingsAction = z.infer<typeof VendorSettingsActionSchema>;
 export function validateTemplatePayload(
   kind: (typeof TEMPLATE_KINDS)[number],
   payload: unknown,
-): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
+): { ok: true; value: JsonObject } | { ok: false; message: string } {
   const schema = kind === "quick_reply" ? QuickReplyPayloadSchema : QuoteTemplatePayloadSchema;
   const parsed = schema.safeParse(payload);
 
@@ -121,7 +122,7 @@ export function validateTemplatePayload(
     };
   }
 
-  return { ok: true, value: parsed.data as Record<string, unknown> };
+  return { ok: true, value: parsed.data as JsonObject };
 }
 
 // =============================================================================

@@ -8,6 +8,7 @@ import {
   type TaggedPostState,
 } from "@/lib/core/community/vendor-reply";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 /**
  * 업체의 커뮤니티 대응 (S7-16 · 명세서 §2.2 F-V-18 · §4.3)
@@ -46,7 +47,7 @@ type CommentRow = { id: string; post_id: string; author_id: string; body: string
  * 조직으로 센다.
  */
 export async function loadTaggedPosts(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { vendorId: string; memberIds: readonly string[]; viewerId: string },
 ): Promise<TaggedPost[]> {
   const { data: tagRows } = await client
@@ -120,7 +121,7 @@ export type ReplyResult =
  * 글에도 답변이 들어간다.
  */
 export async function replyToTaggedPost(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { postId: string; vendorId: string; memberIds: readonly string[]; viewerId: string; body: string },
 ): Promise<ReplyResult> {
   const posts = await loadTaggedPosts(client, {
@@ -183,7 +184,7 @@ export async function replyToTaggedPost(
  * 작성자 본인만 허용하므로(0038) 남의 답변은 0행으로 끝난다.
  */
 export async function editReply(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { commentId: string; body: string; viewerId: string },
 ): Promise<ReplyResult> {
   const { data: updated } = await client

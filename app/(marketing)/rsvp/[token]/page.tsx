@@ -6,6 +6,7 @@ import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import type { RsvpStatus } from "@/lib/core/guest/guest";
 
 import { RsvpForm } from "./RsvpForm";
+import type { Database } from "@/types/database";
 
 /**
  * /rsvp/[token] — 하객 참석 응답 (F-C-22 · §6.2 신설)
@@ -44,7 +45,7 @@ function createRsvpClient() {
 
   if (!url || !anonKey) throw new Error("Supabase 공개 환경변수가 설정되지 않았습니다.");
 
-  return createSupabaseClient(url, anonKey, {
+  return createSupabaseClient<Database>(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
       fetch: (input, init) => fetch(input as RequestInfo, { ...init, cache: "no-store" }),

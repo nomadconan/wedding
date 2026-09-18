@@ -10,6 +10,7 @@
 // (S1-02 의 `AMOUNT_UNKNOWN`, S2-04 의 '없음' vs '미등록' 과 같은 원칙).
 
 import { z } from "zod";
+import type { JsonObject } from "../json";
 
 export const ONBOARDING_QUESTIONS = [
   "wedding_date",
@@ -165,7 +166,7 @@ export const OnboardingAnswerInputSchema = OnboardingAnswerSchema.superRefine((a
 });
 
 /** 답변 하나를 `onboarding_answers.answer_json` 모양으로. 문항 키는 컬럼이 갖는다. */
-export function toAnswerJson(answer: OnboardingAnswer): Record<string, unknown> {
+export function toAnswerJson(answer: OnboardingAnswer): JsonObject {
   const { question: _question, ...rest } = answer;
 
   return rest;

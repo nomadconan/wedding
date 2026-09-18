@@ -8,6 +8,7 @@ import { findMyCouple } from "@/lib/couple/membership";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * PUT/DELETE /api/me — 프로필 수정 · 커플 연동 해제 (F-C-23)
@@ -37,7 +38,7 @@ export async function PUT(request: NextRequest) {
   const input = parsed.data;
   const supabase = await createClient();
 
-  const values: Record<string, unknown> = {
+  const values: TablesUpdate<"profiles"> = {
     display_name: input.displayName,
     marketing_opt_in: input.marketingOptIn,
   };

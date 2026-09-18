@@ -13,6 +13,7 @@
  */
 
 import { calculateSettlement } from "../pricing/rates";
+import type { JsonObject } from "../json";
 
 /** 금액·비율 입력이 규약을 벗어날 때 던진다. */
 export class PaymentError extends Error {
@@ -626,15 +627,18 @@ export const WEBHOOK_SNAPSHOT_KEYS = [
   "methodType",
 ] as const;
 
-export function minimizeWebhook(payload: Record<string, unknown>): Record<string, unknown> {
-  const snapshot: Record<string, unknown> = {};
+export function minimizeWebhook(payload: Record<string, unknown>): JsonObject {
+  const snapshot: JsonObject = {};
 
   for (const key of WEBHOOK_SNAPSHOT_KEYS) {
     const value = payload[key];
 
     // 객체·배열은 담지 않는다. 중첩 안에 식별정보가 숨어 들어오는 경로다.
-    if (value === undefined || value === null) continue;
-    if (typeof value === "object") continue;
+    // **있는 것만 골라 남긴다** — 없는 것을 빼는 식으로 적으면 `unknown` 이 그대로
+    // 남아 타입이 “원시값만 들어있다” 는 사실을 못 말한다.
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      continue;
+    }
 
     snapshot[key] = value;
   }

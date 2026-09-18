@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 import {
   annotate,
@@ -67,7 +68,7 @@ function toNode(row: TaskRow): TaskNode {
 }
 
 export async function loadChecklist(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; today: string },
 ): Promise<ChecklistView> {
   const { data: taskRows } = await client
@@ -121,7 +122,7 @@ export async function loadChecklist(
  * 두 화면이 같은 3건을 말한다.
  */
 export async function loadNextTasks(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; today: string },
 ): Promise<AnnotatedTask[]> {
   return (await loadChecklist(client, input)).next;
@@ -129,7 +130,7 @@ export async function loadNextTasks(
 
 /** 완료로 옮길 때 선행이 남아 있는가. **막지 않고 기록만 한다**(§3.2). */
 export async function outOfOrderOnComplete(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; taskId: string },
 ): Promise<boolean> {
   const { data: taskRows } = await client

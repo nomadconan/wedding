@@ -23,6 +23,7 @@ import { calculateOrderTotal, type OrderTotal } from "@/lib/core/pricing/order";
 import type { OrderAddOns } from "@/lib/core/schemas/order";
 import { summarizeAddOns } from "@/lib/core/schemas/product-option";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 /**
  * 장바구니 조회 · 합계 (S3-05 → IDEA-01 · F-C-25, D-16 · D-17 · D-19)
@@ -213,8 +214,8 @@ export async function loadCoreCategories(): Promise<string[] | null> {
  *                공개 카탈로그여야 하고, 내려간 상품이 장바구니에서만 살아 있으면 안 된다.
  */
 export async function loadCarts(
-  session: SupabaseClient,
-  publicClient: SupabaseClient,
+  session: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   params: { coupleId: string; viewerId: string; memberIds: string[] },
 ): Promise<CartsView> {
   const [{ limit, configured }, coreCategories] = await Promise.all([
@@ -327,7 +328,7 @@ export async function loadCarts(
  * 보인다" 는 경계가 RLS 가 아니라 `eq("couple_id", ...)` 를 잊지 않는 코드가 된다.
  */
 export async function loadCartTargets(
-  session: SupabaseClient,
+  session: SupabaseClient<Database>,
   coupleId: string,
 ): Promise<{ choices: CartChoice[]; productCarts: Map<string, string[]> }> {
   const { data: cartRows } = await session
@@ -402,7 +403,7 @@ export function pickCart(view: CartsView, cartId: string | null): CartView | nul
  * 서버 안에서만 도는 `Map` 으로 옆에 든다.
  */
 async function buildItemViews(
-  publicClient: SupabaseClient,
+  publicClient: SupabaseClient<Database>,
   items: ItemRow[],
   params: { viewerId: string; memberIds: string[]; coupleId: string },
 ): Promise<{ views: CartItemView[]; rates: Map<string, number | null> }> {

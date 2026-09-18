@@ -11,6 +11,7 @@ import { createPublicClient } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { Database, Json, TablesInsert } from "@/types/database";
 
 /**
  * GET/POST/DELETE /api/cart — 장바구니 (F-C-25, 명세서 §4.2)
@@ -82,7 +83,7 @@ export async function GET() {
 type CreateResult = { cartId: string; seq: number } | { status: number; code: string; message: string };
 
 async function createCart(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   coupleId: string,
   name: string | null,
 ): Promise<CreateResult> {
@@ -104,9 +105,21 @@ async function createCart(
     };
   }
 
+  /**
+   * **`seq` 를 넣지 않는다.** `trg_carts_assign_slot`(BEFORE INSERT)이 **빈 번호를
+   * 찾아** 채운다(0027) — 앱이 넣으면 그 규칙을 여기서 다시 구현하는 꼴이고 동시
+   * 요청에서 번호가 겹친다. 생성된 타입은 트리거를 모르므로 `seq` 를 필수로 보지만
+   * 사실이 아니다. `Omit` 으로 그 사실을 적고, **나머지 칸 이름은 그대로 검사한다.**
+   */
+  const payload = {
+    couple_id: coupleId,
+    status: "active",
+    name,
+  } satisfies Omit<TablesInsert<"carts">, "seq">;
+
   const { data: created, error } = await supabase
     .from("carts")
-    .insert({ couple_id: coupleId, status: "active", name })
+    .insert(payload as TablesInsert<"carts">)
     .select("id, seq")
     .maybeSingle();
 
@@ -138,7 +151,7 @@ async function createCart(
  * 것으로 가고, 하나도 없으면 만든다.
  */
 async function resolveCart(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   coupleId: string,
   requested: string | undefined,
 ): Promise<{ cartId: string; created: boolean } | { status: number; code: string; message: string }> {
@@ -317,7 +330,7 @@ export async function POST(request: NextRequest) {
 
     for (const row of (items ?? []) as {
       product_id: string;
-      options_json: Record<string, unknown>;
+      options_json: Record<string, Json | undefined>;
       planner_selected: boolean;
     }[]) {
       const product = await availableProduct(row.product_id);
@@ -393,7 +406,7 @@ export async function POST(request: NextRequest) {
         cart_id: target.cartId,
         vendor_id: product.vendor_id,
         product_id: product.id,
-        options_json: (source.options_json ?? {}) as Record<string, unknown>,
+        options_json: (source.options_json ?? {}) as Record<string, Json | undefined>,
         planner_selected: source.planner_selected as boolean,
         added_by: user.id,
         price_at_add: product.base_price_total,
@@ -457,7 +470,7 @@ export async function POST(request: NextRequest) {
 
   // ── 담기 (찜에서 옮기기 포함) ─────────────────────────────────────────────
   let productId: string;
-  let options: Record<string, unknown> = {};
+  let options: Record<string, Json | undefined> = {};
   let wishlistId: string | null = null;
 
   if (parsed.data.action === "move_from_wishlist") {

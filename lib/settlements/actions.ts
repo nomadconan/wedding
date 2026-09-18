@@ -20,6 +20,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 import { canRetryPayout, resolvePayoutAdapterName, type PayoutAdapter } from "./payout-adapter";
 import { createNoopPayoutAdapter, createStubPayoutAdapter } from "./payout-stub";
+import type { Json, TablesUpdate } from "@/types/database";
 
 /**
  * 정산 집행 (S5-07 · F-V-09 · F-A-11 · §3.4 · §3.8 · D-16 · D-23 · D-27 · D-28)
@@ -249,7 +250,12 @@ export async function runSettlement(input: {
     );
   }
 
-  const patch =
+  /**
+   * **`satisfies` 다**(FIX-67). `: SettlementPatch` 로 적으면 모든 칸이 optional 이 되어
+   * 아래에서 `patch.status` 를 되읽을 때 `undefined` 가 섞인다. `satisfies` 는 **칸 이름을
+   * 검사하면서 좁은 타입을 그대로 남긴다** — 이름이 틀리면(`net_amout`) 여기서 멈춘다.
+   */
+  const patch = (
     build.status === "blocked"
       ? {
           status: "blocked" as const,
@@ -274,7 +280,8 @@ export async function runSettlement(input: {
           coupon_deduction: build.couponDeduction,
           payout_amount: null,
           calculated_at: now.toISOString(),
-        };
+        }
+  ) satisfies SettlementPatch;
 
   const settlementId = existing
     ? await updateSettlement(existing.id, patch)
@@ -440,7 +447,13 @@ export async function runSettlementAggregate(now: Date): Promise<AggregateResult
   return result;
 }
 
-type SettlementPatch = Record<string, unknown>;
+/**
+ * **정산서의 생성된 모양 그대로다**(FIX-67). 전에는 `Record<string, unknown>` 이라
+ * `net_amount` 를 `net_amout` 로 적어도 컴파일이 됐고, PostgREST 가 모르는 칸을
+ * 거절하면 `updateSettlement` 는 그저 `null` 을 돌려줬다 — **금액이 안 적힌 것과
+ * 안 적힌 이유를 구별할 수 없는 자리**였다. 이제 칸 이름이 틀리면 여기서 멈춘다.
+ */
+type SettlementPatch = TablesUpdate<"settlements">;
 
 async function insertSettlement(input: {
   vendorId: string;
@@ -775,7 +788,7 @@ export async function addAdjustment(input: {
 async function notifyVendorOwner(
   vendorId: string,
   templateKey: "settlement.confirmed" | "settlement.paid",
-  params: Record<string, unknown>,
+  params: Record<string, Json | undefined>,
 ): Promise<void> {
   const admin = createAdminClient();
 

@@ -14,6 +14,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { findMemberVendor } from "@/lib/vendor/products";
+import type { UserRole } from "@/lib/supabase/auth";
 
 /**
  * POST /api/vendor/inventory/bulk — 슬롯 일괄 등록·반복 규칙·CSV·블록 (F-V-05, §4.3)
@@ -158,7 +159,7 @@ export async function POST(request: NextRequest) {
  * 타임라인에서 정작 무슨 일이 있었는지 읽히지 않는다.
  */
 async function writeEvent(
-  user: { id: string; role: string | null },
+  user: { id: string; role: UserRole | null },
   vendorId: string,
   action: string,
   count: number,

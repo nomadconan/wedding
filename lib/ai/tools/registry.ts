@@ -5,6 +5,7 @@ import { registrableTools, toolGaps, type ToolSpec } from "@/lib/core/ai/tools";
 
 import type { ToolContext } from "./context";
 import { TOOL_HANDLERS, hasToolHandler } from "./handlers";
+import type { JsonObject } from "@/lib/core/json";
 
 /**
  * 툴 레지스트리 (S7-20 · 명세서 §5.6)
@@ -53,7 +54,7 @@ export function plannerSystemPrompt(): string {
  */
 export type ToolCallAudit = {
   toolName: string;
-  argumentsJson: Record<string, unknown>;
+  argumentsJson: JsonObject;
   resultSummary: string;
   latencyMs: number;
   error: string | null;
@@ -83,7 +84,7 @@ export async function runTool(
   const audit = (
     result: ToolResult,
     error: string | null,
-    args: Record<string, unknown>,
+    args: JsonObject,
     count?: number,
   ): ToolCallAudit => ({
     toolName: name,

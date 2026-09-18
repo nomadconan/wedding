@@ -16,6 +16,8 @@ import {
 import type { ContentType } from "@/lib/core/content/content";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * 콘텐츠 CMS (S8-08 · F-A-05)
@@ -176,7 +178,7 @@ export type CmsResult =
   | { ok: true; postId: string }
   | { ok: false; status: number; code: string; message: string };
 
-function toSeoJson(seo: ContentSeoInput): Record<string, unknown> {
+function toSeoJson(seo: ContentSeoInput): Record<string, Json | undefined> {
   // DB 는 snake_case 를 읽고(`parseSeo` 가 둘 다 받지만) **쓰는 쪽에서 한 모양으로
   // 고정한다** — 두 표기가 섞이면 어느 쪽이 최신인지 알 수 없다.
   return {
@@ -195,7 +197,7 @@ async function appendRevision(
     postId: string;
     title: string;
     bodyMd: string | null;
-    seoJson: Record<string, unknown>;
+    seoJson: Record<string, Json | undefined>;
     publishedAt: string | null;
     editorId: string;
     note: string;
@@ -224,7 +226,7 @@ async function appendRevision(
 }
 
 export async function createPost(
-  input: ContentCreateInput & { operatorId: string; operatorRole: string | null; now: Date },
+  input: ContentCreateInput & { operatorId: string; operatorRole: UserRole | null; now: Date },
 ): Promise<CmsResult> {
   const admin = createAdminClient();
   const seoJson = toSeoJson(input.seo);
@@ -288,7 +290,7 @@ export async function createPost(
 }
 
 export async function updatePost(
-  input: ContentUpdateInput & { operatorId: string; operatorRole: string | null; now: Date },
+  input: ContentUpdateInput & { operatorId: string; operatorRole: UserRole | null; now: Date },
 ): Promise<CmsResult> {
   const admin = createAdminClient();
 
@@ -370,7 +372,7 @@ export async function updatePost(
  * 다시 올릴 때 같은 슬러그로 돌아온다.
  */
 export async function unpublishPost(
-  input: ContentUnpublishInput & { operatorId: string; operatorRole: string | null; now: Date },
+  input: ContentUnpublishInput & { operatorId: string; operatorRole: UserRole | null; now: Date },
 ): Promise<CmsResult> {
   const admin = createAdminClient();
 
@@ -406,7 +408,7 @@ export async function unpublishPost(
     postId: input.postId,
     title: current.title,
     bodyMd: current.body_md,
-    seoJson: (current.seo_json ?? {}) as Record<string, unknown>,
+    seoJson: (current.seo_json ?? {}) as Record<string, Json | undefined>,
     publishedAt: null,
     editorId: input.operatorId,
     note: input.note,
@@ -442,12 +444,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

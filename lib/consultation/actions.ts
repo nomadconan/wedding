@@ -14,6 +14,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 import { loadAvailability, loadConsultationSettings, loadTakenSlots } from "./loader";
 import { notifyConsultation } from "./notify";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * 상담·탐방 쓰기 (S4-07 · S4-08 골격 · S4-09)
@@ -458,10 +459,11 @@ export async function submitConfirmation(
     };
   }
 
-  const patch =
+  const patch = (
     input.side === "couple"
       ? { couple_outcome: input.outcome, couple_confirmed_at: input.now.toISOString() }
-      : { vendor_outcome: input.outcome, vendor_confirmed_at: input.now.toISOString() };
+      : { vendor_outcome: input.outcome, vendor_confirmed_at: input.now.toISOString() }
+  ) satisfies TablesUpdate<"consultations">;
 
   // 자기 칸에만, 한 번만 — 0025 트리거가 강제한다. 여기서 다시 판정하지 않는다.
   const { error } = await supabase

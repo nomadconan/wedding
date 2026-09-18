@@ -2043,6 +2043,46 @@ D-29 를 붙인 채로 굳었다 — 한쪽만 틀린 것이 아니라 둘 다 �
 - **못 센 것은 -1 이다.** `Number("")` 가 0 이라 **"못 셌다" 가 "없다" 로** 적히던 자리를
   함께 고쳤다 — CI 로그가 "계정 0개" 라고 말했는데 실제로는 세지 못한 것이었다.
 
+### D-203 (2026.9) DB 타입은 **팩토리가 아니라 경계에서** 지켜진다 [확정]
+
+- **결정** — 세 팩토리(`server`·`client`·`admin`)에 `<Database>` 를 달고, **클라이언트를
+  주고받는 모든 자리**도 `SupabaseClient<Database>` 로 적는다. 맨몸 `SupabaseClient` 는
+  쓰지 않는다.
+- **왜 팩토리만으로 부족한가.** 이 리포에서 타입이 실제로 버려지던 곳은 팩토리가 아니라
+  **경계**였다. 로더들이 인자를 `client: SupabaseClient` 로 받았는데 **그 기본값이
+  `Database = any`** 다 — 팩토리를 아무리 좁혀도 **함수 안으로 들어가는 순간 전부 도로
+  풀렸다.** 63자리 · 17파일이었고, 그것까지 좁히자 **한 번도 검사된 적 없던 코드에서
+  오류 4건**이 새로 나왔다.
+- **라이브러리 짝이 어긋나면 타입이 `never` 가 되고, 그것은 오류처럼 안 보인다.**
+  `@supabase/ssr@0.5.2` 는 `SupabaseClient<Database, SchemaName, Schema>` 를 돌려주는데
+  `@supabase/supabase-js@2.112` 에서 **3번째 자리의 뜻이 `SchemaName` 으로 바뀌었다.**
+  스키마 객체가 이름 자리에 박히면 행이 통째로 **`never`** 가 되고, `skipLibCheck: true`
+  가 그 제약 위반을 **가린다.** 이것 하나가 오류 491건 중 **399건**이었다 —
+  고칠 것을 찾다가 라이브러리 짝을 의심하기까지 가설 넷을 반증했다(중복 패키지 ·
+  `__InternalSupabase` 누락 · 틀린 컬럼 이름 · tsconfig). → **`@supabase/ssr` 을 0.12.4 로
+  올린다**(supabase-js 는 2.112 그대로 · peer `^2.111.0`).
+- **`Record<string, unknown>` 은 jsonb 에 못 쓴다.** `unknown` 은 JSON 임을 증명하지
+  못해서 단언을 붙이게 되고, **단언을 붙이는 순간 함수·undefined 까지 통과한다.**
+  타입은 `lib/core/json.ts` 의 `JsonValue`·`JsonObject`, 파싱은 `lib/core/schemas/json.ts`
+  의 `jsonObjectSchema` 를 쓴다. **`lib/core` 는 생성물에 기대지 않으므로**(§3.1) 타입을
+  따로 적고 **같은 모양인지는 테스트가 지킨다**(`json.test.ts`) — `schemas.test.ts` 가
+  `finding_severity` 를 지키는 방식 그대로다.
+- **쓰기는 `satisfies` 로 검사한다.** `const patch = {...}` 를 그냥 두면 **칸 이름이
+  틀려도 통과한다**(추론된 뒤에 함수 인자로 들어가므로 잉여 속성 검사가 안 걸린다).
+  `: TablesUpdate<...>` 로 적으면 모든 칸이 optional 이 되어 **되읽을 때 `undefined` 가
+  섞인다.** `satisfies` 가 **이름은 검사하고 좁은 타입은 남긴다.** 정산 패치를 일부러
+  `net_amout` 으로 바꿔 보고서야 이 차이를 알았다 — `: SettlementPatch` 판은 **그 오타를
+  통과시켰다**(§7.0b).
+- **재발을 검사로 막는다** — `lib/supabase/typing.test.ts`. 망가지는 길이 셋이고 셋 다
+  본다: ssr 이 어긋나면 행이 `never`, `<Database>` 를 지우면 **칸 값이** `any`,
+  컬럼·표 이름이 틀리면 `.select()` 가 안 넘어간다. **가운데를 행으로 보면 안 된다** —
+  `<Database>` 를 지워도 행은 `{ role: any }` 라 `any` 가 아니어서 **통과했다.** 칸을 봐야
+  잡힌다(일부러 지워 보고서야 알았다). 경계 쪽은 원본 훑기로 본다.
+- **CI 가 `db:types` 낡음을 본다.** 원장은 "CI 가 드리프트를 본다" 고 적고 있었지만
+  `.github/workflows/` 에 `db:types` 가 **한 번도 없었다.** 스택이 떠 있는 integration
+  잡에 넣었다 — 생성하고 `git diff --exit-code` 한다. **잡 이름은 그대로 둔다**(required
+  status check 컨텍스트다).
+
 ## 옮겨 적을 때 함께 할 일
 
 1. ~~**`D-29` 겹침 처리.**~~ **닫혔다.** T-00j 가 장바구니를 `D-77` 로 확정했고,

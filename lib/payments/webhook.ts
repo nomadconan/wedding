@@ -6,6 +6,7 @@ import { payloadDigest } from "@/lib/contract/hash";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { applyRefund, cancelPendingPayment } from "./charge";
+import type { Json } from "@/types/database";
 
 /**
  * 결제 웹훅 수신 (S5-06 · §3.4 payment_webhook_events · §7.3 · D-23 · D-28)
@@ -64,9 +65,9 @@ export async function handleWebhook(input: {
 
   const signatureOk = verifyWebhookSignature(input.rawBody, input.signature);
 
-  let payload: Record<string, unknown>;
+  let payload: Record<string, Json | undefined>;
   try {
-    payload = JSON.parse(input.rawBody) as Record<string, unknown>;
+    payload = JSON.parse(input.rawBody) as Record<string, Json | undefined>;
   } catch {
     // 읽을 수 없는 본문은 서명이 맞아도 처리할 수 없다.
     return { status: "rejected", reason: "bad_signature" };

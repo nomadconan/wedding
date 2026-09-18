@@ -19,6 +19,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 import { loadPlannerRateRecords, resolvePlannerRateBp } from "./rates";
+import type { UserRole } from "@/lib/supabase/auth";
 
 /**
  * 카테고리별 부분 선택 과금 (S6-03 · F-C-31 · §4.2 `GET/PUT /api/planner-scopes`)
@@ -272,7 +273,7 @@ export async function updateScopes(input: {
   coupleId: string;
   desired: readonly ScopeSelection[];
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
   now: Date;
 }): Promise<ScopeWriteResult> {
   const supabase = await createClient();

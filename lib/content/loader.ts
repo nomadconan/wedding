@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 import {
   parseSeo,
@@ -72,7 +73,7 @@ function createContentClient() {
     throw new Error("Supabase 공개 환경변수가 설정되지 않았습니다.");
   }
 
-  return createSupabaseClient(url, anonKey, {
+  return createSupabaseClient<Database>(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
@@ -96,9 +97,13 @@ function toSummary(row: Row): ContentSummary {
 }
 
 export async function listContent(type?: ContentType): Promise<ContentSummary[]> {
-  const { data, error } = await createContentClient().rpc("published_content", {
-    p_type: type ?? null,
-  });
+  // **인자를 빼서 기본값을 쓴다.** SQL 은 `p_type content_post_type DEFAULT NULL` 이라
+  // 안 넘기는 것과 null 을 넘기는 것이 같은 뜻인데, 생성된 타입은 **생략 가능**으로만
+  // 적는다(기본값이 있는 인자를 nullable 로 적지 않는다). 뜻이 같으니 생략한다.
+  const { data, error } = await createContentClient().rpc(
+    "published_content",
+    type ? { p_type: type } : {},
+  );
 
   // **목록이 없는 것과 못 읽은 것을 같게 다루지 않는다.** 호출부가 빈 목록을
   // "아직 글이 없어요" 로 그리므로, 조회 실패를 빈 배열로 삼키면 화면이 거짓을 말한다.
@@ -127,7 +132,7 @@ export async function listContentByType(): Promise<Record<ContentType, ContentSu
 export async function findContent(slug: string): Promise<ContentDetail | null> {
   // 집합 반환 함수에 조건을 얹는다 — 목록을 전부 받아 와서 고르지 않는다.
   const { data, error } = await createContentClient()
-    .rpc("published_content", { p_type: null })
+    .rpc("published_content", {})
     .eq("slug", slug)
     .maybeSingle();
 

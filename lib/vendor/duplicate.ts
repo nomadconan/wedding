@@ -7,6 +7,8 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 import { PRODUCT_COLUMNS } from "./products";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { JsonValue } from "@/lib/core/json";
 
 /**
  * 상품 복제 (C-3 · F-V-03 · `POST /api/vendor/products/[id]/duplicate`)
@@ -50,7 +52,7 @@ const fail = (status: number, code: string, message: string): DuplicateFailure =
 export async function duplicateProduct(input: {
   sourceId: string;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
 }): Promise<DuplicateResult | DuplicateFailure> {
   const supabase = await createClient();
 
@@ -67,7 +69,7 @@ export async function duplicateProduct(input: {
         category: string;
         name: string;
         base_price_total: number;
-        included_items_json: unknown[] | null;
+        included_items_json: JsonValue[] | null;
         capacity_min: number | null;
         capacity_max: number | null;
         price_includes_vat: boolean | null;
@@ -137,7 +139,7 @@ export async function duplicateProduct(input: {
     name: string;
     price: number;
     is_mandatory: boolean;
-    trigger_condition: unknown;
+    trigger_condition: JsonValue | null;
   }[];
 
   let copiedOptionCount = 0;

@@ -30,6 +30,7 @@ import {
   type SearchRankingCode,
 } from "@/lib/core/search/rank";
 import { searchVendors, type ExploreResult, type ExploreRow } from "@/lib/explore/query";
+import type { Database } from "@/types/database";
 
 /**
  * 조건 검색 조회 (S7-02 · 명세서 §5.5 · §4.2 GET/POST /api/search)
@@ -214,7 +215,7 @@ export async function parseConditions(input: { query: string; asOf: string }) {
 }
 
 export async function conditionSearch(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: SearchInput,
 ): Promise<SearchOutcome> {
   const parsed = await parseConditions({ query: input.query, asOf: input.asOf });

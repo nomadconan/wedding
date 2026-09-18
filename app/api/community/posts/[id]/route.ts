@@ -9,6 +9,7 @@ import { loadPost } from "@/lib/community/loader";
 import { createPublicClient } from "@/lib/explore/query";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * GET/PUT/DELETE /api/community/posts/[id] — 상세·수정·삭제 (F-C-32, §4.2)
@@ -63,7 +64,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
 
   const supabase = await createClient();
 
-  const values: Record<string, unknown> = {};
+  const values: TablesUpdate<"community_posts"> = {};
   if (parsed.data.title !== undefined) values.title = parsed.data.title;
   if (parsed.data.body !== undefined) values.body = parsed.data.body;
 

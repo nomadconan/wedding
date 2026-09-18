@@ -1,5 +1,6 @@
 import { conversationTitle, type PlannerMessageView, type ToolCard } from "@/lib/core/ai/conversation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Json } from "@/types/database";
 
 /**
  * 대화 저장·조회 (S7-06 · 명세서 §3.6)
@@ -95,7 +96,7 @@ export async function createConversation(input: {
     .insert({
       couple_id: input.coupleId,
       title: conversationTitle(input.firstMessage),
-      context_snapshot_json: (input.contextSnapshot ?? {}) as Record<string, unknown>,
+      context_snapshot_json: (input.contextSnapshot ?? {}) as Record<string, Json | undefined>,
     })
     .select("id")
     .maybeSingle();
@@ -122,7 +123,7 @@ export async function appendMessage(input: {
       // 카드는 **툴이 돌려준 값**이지 모델의 말이 아니다. 다시 열었을 때 같은 카드가
       // 보이도록 메시지와 함께 둔다 — 재조회하면 그 사이 값이 바뀌어 "그때 본 것" 이
       // 아니게 된다.
-      tool_calls_json: input.cards === undefined ? null : input.cards,
+      tool_calls_json: input.cards === undefined ? null : [...input.cards],
       token_in: input.tokenIn ?? null,
       token_out: input.tokenOut ?? null,
     })

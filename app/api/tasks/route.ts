@@ -10,6 +10,7 @@ import { generateChecklist } from "@/lib/tasks/generate";
 import { loadChecklist, outOfOrderOnComplete } from "@/lib/tasks/loader";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * GET/POST/PATCH /api/tasks — 체크리스트 (F-C-04, 명세서 §4.2)
@@ -142,7 +143,7 @@ export async function PATCH(request: NextRequest) {
 
   const supabase = await createClient();
 
-  const values: Record<string, unknown> = {};
+  const values: TablesUpdate<"tasks"> = {};
   if (parsed.data.title !== undefined) values.title = parsed.data.title;
   if (parsed.data.dueDate !== undefined) values.due_date = parsed.data.dueDate;
   if (parsed.data.status !== undefined) values.status = parsed.data.status;

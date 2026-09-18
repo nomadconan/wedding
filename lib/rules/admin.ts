@@ -18,6 +18,8 @@ import { mergeDetectRules } from "@/lib/core/rules/rule-source";
 import { SEARCH_PARSE_PROMPT_VERSION, SEARCH_PARSE_SYSTEM } from "@/lib/core/search/prompt";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * 룰·프롬프트 콘솔 (S8-06 · F-A-03)
@@ -168,7 +170,7 @@ export async function updateRule(input: {
   basisRef: string | null;
   reason: string;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
 }): Promise<RuleActionResult> {
   const admin = createAdminClient();
 
@@ -243,12 +245,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin
