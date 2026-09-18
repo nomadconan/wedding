@@ -2848,9 +2848,38 @@ async function main() {
   console.log("");
 }
 
-main().catch((error) => {
+/**
+ * **조용히 끝나지 못하게 붙잡는다** (FIX-70).
+ *
+ * `supabase db reset` 직후처럼 게이트웨이가 안 선 상태에서 첫 `fetch` 가 걸리면,
+ * 노드가 **대기 중인 약속을 남긴 채 이벤트 루프를 비우고 종료 코드 0 으로 끝난다** —
+ * 배너만 찍고 아무것도 안 한 채로. 그러면 부르는 쪽(사람 · CI · `db:reseed`)이
+ * **"0 이니까 시드가 섰다"** 고 읽고 **빈 DB 위에서 다음 단계를 돌린다.**
+ *
+ * `AbortSignal.timeout()` 으로는 못 막는다 — **그 타이머는 unref 라 루프를 붙잡지
+ * 않는다.** 실제로 그것만 붙였을 때 CI 는 여전히 0.2초 만에 0 으로 끝났다.
+ * 여기 `setTimeout` 은 **ref 라 루프를 붙잡으므로** 노드가 조용히 못 빠져나간다.
+ *
+ * **조용히 성공을 주장하는 것이 가장 나쁘다.** 오래 걸리는 것은 고칠 수 있는 사고이고,
+ * 안 한 것을 했다고 적는 것은 되돌릴 수 없다.
+ */
+const WATCHDOG_MS = 120_000;
+const watchdog = setTimeout(() => {
   console.error("");
-  console.error(`FAIL  ${error.message}`);
+  console.error(`FAIL  ${WATCHDOG_MS / 1000}초 안에 끝나지 않았다. 스택이 아직 안 섰을 수 있다.`);
+  console.error("      `npx supabase status` 로 확인하고 `npm run db:reseed` 로 되돌린다.");
   console.error("");
   process.exit(1);
-});
+}, WATCHDOG_MS);
+
+main()
+  .then(() => {
+    clearTimeout(watchdog);
+  })
+  .catch((error) => {
+    clearTimeout(watchdog);
+    console.error("");
+    console.error(`FAIL  ${error.message}`);
+    console.error("");
+    process.exit(1);
+  });
