@@ -126,7 +126,11 @@ jobs:
   # **왜 postgres 서비스 컨테이너가 아닌가.** `db:rls` 는 `auth.uid()` · `authenticated`
   # 롤 · PostgREST · GoTrue 관리 API 를 전부 쓴다. 맨 Postgres 로는 절반이 안 돈다.
   integration:
-    name: integration (supabase / build / bundle / db:rls / walks)
+    # **이 이름은 장식이 아니다 — 브랜치 규칙의 required status check 컨텍스트다.**
+    # 이번에 `/ walks` 를 붙여 봤더니 규칙이 요구하는 옛 이름이 **영영 보고되지 않아**
+    # 검사 셋이 전부 초록인데도 PR 이 `BLOCKED` 로 막혔다. 바꾸려면 규칙셋
+    # (`gh api repos/:owner/:repo/rulesets`)을 **같은 커밋에서** 함께 고쳐야 한다.
+    name: integration (supabase / build / bundle / db:rls)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
