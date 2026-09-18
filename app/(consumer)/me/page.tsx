@@ -408,20 +408,24 @@ async function MeSection() {
       ) : null}
 
       {/* ── 아직 없는 것 ───────────────────────────────────────────────── */}
-      <section className="space-y-2">
-        <h2 className="text-base font-semibold text-foreground">
-          준비 중인 기능
-        </h2>
-        <div className="space-y-2" data-testid="me-pending">
-          {ME_PENDING_SECTIONS.map((section) => (
-            <MetricTile
-              key={section.key}
-              label={section.label}
-              metric={mePendingMetric(section.key)}
-            />
-          ))}
-        </div>
-      </section>
+      {/* **목록이 비면 절을 그리지 않는다** — 홈이 S7-11 에서 정한 방식 그대로다.
+          빈 제목만 남기면 화면이 "준비 중인 것이 있는데 못 세고 있다" 로 읽힌다. */}
+      {ME_PENDING_SECTIONS.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="text-base font-semibold text-foreground">
+            준비 중인 기능
+          </h2>
+          <div className="space-y-2" data-testid="me-pending">
+            {ME_PENDING_SECTIONS.map((section) => (
+              <MetricTile
+                key={section.key}
+                label={section.label}
+                metric={mePendingMetric(section.key)}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

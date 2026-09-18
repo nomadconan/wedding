@@ -12,6 +12,7 @@ import { dateTimeAttr, formatTimestamp } from "@/lib/core/format/timestamp";
 import { requireUser } from "@/lib/supabase/auth";
 
 import { DecidePanel } from "./DecidePanel";
+import { IssuePanel } from "./IssuePanel";
 
 export const metadata: Metadata = {
   title: "예약·계약 — 웨딩클리어",
@@ -170,6 +171,14 @@ export default async function VendorBookingsPage() {
                             ""
                           )}
                         </p>
+
+                        {/* **발행 버튼**(C-1b). 위 문장이 "할 수 있다" 고 적어 두고도
+                            누를 자리가 없어 사슬이 여기서 끊겼다 — IssuePanel 머리말 참조. */}
+                        {row.canIssue ? (
+                          <div className="mt-3">
+                            <IssuePanel bookingId={row.id} quoteId={row.quoteId} />
+                          </div>
+                        ) : null}
 
                         <div className="mt-3">
                           {row.canDecide ? (

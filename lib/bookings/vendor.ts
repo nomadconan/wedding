@@ -31,6 +31,7 @@ export type VendorBookingRow = {
   declinedAt: string | null;
   declineReason: string | null;
   productName: string | null;
+  quoteId: string | null;
   contractId: string | null;
   contractStatus: string | null;
   canDecide: boolean;
@@ -50,7 +51,7 @@ export async function loadVendorBookings(vendorId: string): Promise<VendorBoard>
   const { data, error } = await supabase
     .from("bookings")
     .select(
-      "id, status, couple_id, product_id, total_amount, deposit_amount, created_at, accepted_at, declined_at, decline_reason",
+      "id, status, couple_id, product_id, quote_id, total_amount, deposit_amount, created_at, accepted_at, declined_at, decline_reason",
     )
     .eq("vendor_id", vendorId)
     .order("created_at", { ascending: false })
@@ -63,6 +64,7 @@ export async function loadVendorBookings(vendorId: string): Promise<VendorBoard>
     status: BookingStatus;
     couple_id: string;
     product_id: string | null;
+    quote_id: string | null;
     total_amount: number;
     deposit_amount: number;
     created_at: string;
@@ -103,6 +105,7 @@ export async function loadVendorBookings(vendorId: string): Promise<VendorBoard>
       declineReason: row.decline_reason,
       // **"상품 없음" 으로 접지 않는다** — 상품 없이 만든 예약(직접 견적)이 실제로 있다.
       productName: row.product_id === null ? null : (products.get(row.product_id) ?? null),
+      quoteId: row.quote_id,
       contractId: contract?.id ?? null,
       contractStatus: contract?.status ?? null,
       canDecide: decide.allowed,

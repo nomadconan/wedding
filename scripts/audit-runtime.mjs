@@ -17,7 +17,14 @@
 //   npm run audit:runtime    둘 다
 //
 // 옵션:  --accounts=guest,admin   축을 좁힌다
-//        --routes=/home,/cart     경로를 좁힌다 (부분 일치)
+//        --routes=home,cart       경로를 좁힌다 (부분 일치)
+//
+// **`--routes` 에 앞 슬래시를 붙이지 않는다** (C-1b 가 여기서 두 번 헛돌았다).
+// Git Bash(MSYS)는 `/` 로 시작하는 인자를 **윈도우 경로로 번역한다** — `--routes=/home`
+// 이 `--routes=C:/Program Files/Git/home` 으로 바뀌어 도착하고, 그러면 아무 라우트도
+// 안 맞아 **조용히 0건을 점검하고 성공으로 끝난다.** 오류가 안 나므로 더 나쁘다.
+// 부분 일치라 슬래시는 필요 없다 — `--routes=design-system` 으로 쓴다.
+// (CMD 에서는 번역이 없어 어느 쪽이든 된다.)
 //        --headful                창을 띄운다 (눈으로 볼 때)
 //        --out=tmp/x.json         결과 파일 경로
 //
@@ -168,6 +175,17 @@ function segmentValue(name, routeHint) {
 
   // `[id]` 는 라우트마다 가리키는 것이 다르다. 접두어로 고른다.
   const byPrefix = [
+    /**
+     * **페이지 라우트도 여기에 적어야 한다**(C-1b).
+     *
+     * `/contracts/[id]` 와 `/vendor/bookings/[id]` 는 **시드에 실제 id 가 있는데도**
+     * 아래 목록에 없어서 매번 `MISSING_UUID` 로 열렸다 — 열 번 다 404 였고, 그것이
+     * '못 찾음 경로가 깨끗이 끝나는가' 로 읽혀 **표는 전수 완료라고 적었다.**
+     * 하필 **C-1 이 새로 만든 화면 둘**이 정확히 그 둘이었다. 이 목록에 없는 것은
+     * 점검되지 않는다 — `fixtureMissing` 집계(아래 요약)가 그것을 소리 내게 한다.
+     */
+    ["/contracts/", FIX.contract],
+    ["/vendor/bookings/", FIX.booking],
     ["/bookings/", FIX.booking],
     ["/reports/", FIX.analysis],
     ["/planners/", FIX.planner],
@@ -426,6 +444,25 @@ async function visit(cdp, sessionId, url, state) {
 
 /** 화면 상태를 한 낱말로 분류한다. 표에 들어가는 값이다. */
 function classify(requestedPath, r) {
+  /**
+   * **`(dev)` 그룹은 막히는 것이 정답이다**(S8-05 · C-1b).
+   *
+   * 프로덕션 빌드에서 미들웨어가 `new NextResponse(null, { status: 404 })` 를 돌려주는데
+   * **본문이 없어서** CDP 가 내비 실패로 보고한다. 아래 `navError` 가지가 먼저 걸리는
+   * 바람에 표가 **의도된 차단을 '오류(내비 실패)' 로 열 줄 적었다** — 개발 서버에서만
+   * 돌리던 동안에는 이 화면이 늘 200 이라 드러나지 않았다.
+   *
+   * 판정을 맨 앞으로 올리고 **두 결과를 다 받는다** — 개발 서버면 카탈로그가 뜨고
+   * 프로덕션이면 막힌다. 둘 다 맞는 답이고, 틀린 것은 **빈 화면이 뜨는 것**뿐이다.
+   */
+  if (requestedPath === "/design-system") {
+    if (r.status === 404 || r.notFound || r.navError) return "차단(dev 라우트 · S8-05)";
+
+    // 카탈로그는 **세 상태를 일부러 다 그린다.** 상태 마커로 판정하면 정상 화면이 늘
+    // '오류 상태' 로 잡힌다 — 표가 거짓말하는 쪽이 더 나쁘다.
+    return (r.textLength ?? 0) > 200 ? "정상(카탈로그)" : "오류(빈 화면)";
+  }
+
   if (r.navError) return "오류(내비 실패)";
   if (r.timedOut) return "오류(응답 없음)";
   if (r.crash) return "오류(렌더 실패)";
@@ -436,11 +473,6 @@ function classify(requestedPath, r) {
     return search.includes("denied=1") ? "권한 거부" : "로그인 요구";
   }
   if (r.status === 404 || r.notFound) return "404";
-  // 컴포넌트 카탈로그는 **세 상태를 일부러 다 그린다**. 상태 마커로 판정하면
-  // 정상 화면이 늘 '오류 상태' 로 잡힌다 — 표가 거짓말하는 쪽이 더 나쁘다.
-  if (requestedPath === "/design-system") {
-    return (r.textLength ?? 0) > 200 ? "정상(카탈로그)" : "오류(빈 화면)";
-  }
   if (path !== requestedPath) return `리다이렉트(→${path})`;
   // **ErrorState 는 두 가지를 그린다.** 하나는 진짜 실패(질의 오류)이고 다른 하나는
   // **전제 미충족**이다 — 온보딩 전 계정의 `/cart` 는 `COUPLE_NOT_FOUND` 를 그리는데
@@ -744,6 +776,25 @@ async function main() {
     ),
   );
   console.log(`\n${OUT} 에 저장했다.`);
+
+  /**
+   * **가짜 픽스처로 돈 건수를 요약에 싣는다**(C-1b).
+   *
+   * `fixtureMissing` 은 처음부터 행마다 기록되고 있었는데 **요약이 말하지 않아**
+   * 아무도 안 봤다. 그래서 `/contracts/[id]` 가 열 번 다 없는 id 로 404 를 받고도
+   * "전수 완료" 로 세어졌다. **본 적 없는 화면을 봤다고 적지 않는다.**
+   */
+  const faked = screens.filter((r) => r.fixtureMissing);
+  if (faked.length > 0) {
+    const routes = [...new Set(faked.map((r) => r.route))];
+    console.log(
+      `\n가짜 픽스처로 연 화면 ${faked.length}건 (${routes.length}종) — **실제로 본 것이 아니다**:`,
+    );
+    for (const route of routes) console.log(`  ${route}`);
+    console.log("  시드에 값이 있는데 여기 뜨면 `segmentValue` 의 목록에 그 경로가 없는 것이다.");
+  } else {
+    console.log("가짜 픽스처로 연 화면 0건 — 전부 실제 id 로 열었다.");
+  }
 
   // **하드 실패와 '오류 상태' 를 갈라 센다.** 후자는 화면이 제 일을 한 경우가 섞여
   // 있다(전제 미충족). 한 수로 합치면 정상을 결함으로 세게 된다.

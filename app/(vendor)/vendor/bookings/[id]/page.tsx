@@ -246,9 +246,14 @@ function ActionLine({
 }) {
   return (
     <div className="rounded-md border border-border p-3" data-testid="vendor-booking-action">
-      <p className="text-sm font-medium text-foreground">
-        {label} {open ? <Badge className="ml-1">지금 가능</Badge> : null}
-      </p>
+      {/* **<p> 이 아니라 <div> 다**(C-1b). `Badge` 는 `<div>` 라 `<p>` 안에 넣으면
+          HTML 이 문단을 강제로 닫아 **서버와 클라이언트의 트리가 엇갈리고 하이드레이션이
+          깨졌다.** 하필 **지금 할 일이 있을 때만**(`open`) 배지가 떠서, 업체가 조치해야
+          하는 **바로 그 순간에만** 깨졌다 — 사슬 주행의 음성 대조에서 잡혔다. */}
+      <div className="flex items-center gap-1 text-sm font-medium text-foreground">
+        <span>{label}</span>
+        {open ? <Badge>지금 가능</Badge> : null}
+      </div>
       {/* **막힌 문을 감추지 않는다.** 감추면 "그런 기능이 없다" 로 읽힌다. */}
       {!open && blocked !== null ? (
         <p className="mt-1 text-caption text-muted-foreground">{blocked}</p>

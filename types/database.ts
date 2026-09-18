@@ -348,6 +348,7 @@ export type Database = {
           deposit_amount: number
           id: string
           product_id: string | null
+          quote_id: string | null
           slot_id: string | null
           status: Database["public"]["Enums"]["booking_status"]
           total_amount: number
@@ -366,6 +367,7 @@ export type Database = {
           deposit_amount?: number
           id?: string
           product_id?: string | null
+          quote_id?: string | null
           slot_id?: string | null
           status?: Database["public"]["Enums"]["booking_status"]
           total_amount: number
@@ -384,6 +386,7 @@ export type Database = {
           deposit_amount?: number
           id?: string
           product_id?: string | null
+          quote_id?: string | null
           slot_id?: string | null
           status?: Database["public"]["Enums"]["booking_status"]
           total_amount?: number
@@ -403,6 +406,13 @@ export type Database = {
             columns: ["product_id"]
             isOneToOne: false
             referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bookings_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
             referencedColumns: ["id"]
           },
           {
@@ -5732,6 +5742,34 @@ export type Database = {
       }
       admin_metrics: { Args: { p_from: string; p_to: string }; Returns: Json }
       admin_purge_audit: { Args: never; Returns: Json }
+      admin_transaction_chain: {
+        Args: { p_booking_id: string }
+        Returns: {
+          detail: string
+          occurred_at: string
+          stage: string
+        }[]
+      }
+      admin_transaction_rows: {
+        Args: { p_limit?: number }
+        Returns: {
+          accepted_at: string
+          booking_id: string
+          booking_status: string
+          contract_id: string
+          contract_status: string
+          couple_id: string
+          created_at: string
+          declined_at: string
+          paid_count: number
+          quote_id: string
+          schedule_count: number
+          settled: boolean
+          total_amount: number
+          vendor_id: string
+          vendor_name: string
+        }[]
+      }
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
       booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }

@@ -143,12 +143,15 @@ export default async function AdminOpsPage() {
                     className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border p-3 text-sm"
                   >
                     <div className="min-w-0 space-y-1">
-                      <p className="font-medium text-foreground">
+                      {/* **<p> 가 아니라 <div> 다**(C-1b). `Badge` 는 `<div>` 라
+                          `<p>` 안에 넣으면 HTML 이 문단을 강제로 닫고 하이드레이션이
+                          깨진다. 이 줄은 **항상** 배지를 그리므로 이 화면은 늘 깨져 있었다. */}
+                      <div className="font-medium text-foreground">
                         {row.label}{" "}
                         <Badge variant={row.ready ? "secondary" : "destructive"}>
                           {row.ready ? `${row.liveCount}건` : "없음"}
                         </Badge>
-                      </p>
+                      </div>
                       {/* **갖춰졌을 때는 결과를 말하지 않는다** — 없을 때만 무슨 일이
                           나는지 적는다. 늘 적으면 경고가 배경이 된다. */}
                       {row.ready ? null : (
