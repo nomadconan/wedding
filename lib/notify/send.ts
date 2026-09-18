@@ -15,6 +15,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 import { resolveAdapterName, type SendResult } from "./adapter";
 import { createNoopAdapter, createStubAdapter } from "./stub";
+import type { Json } from "@/types/database";
 
 /**
  * 알림 발송 (S4-13 · D-23 · D-28 · §7.3)
@@ -38,7 +39,7 @@ export type SendNotificationInput = {
   channel: NotificationChannel;
   templateKey: TemplateKey;
   /** 틀에 끼울 **참조 ID와 숫자만**. 이름·주소 같은 식별정보를 넣지 않는다(§7.3). */
-  params: Record<string, unknown>;
+  params: Record<string, Json | undefined>;
   /** 멱등 열쇠. `lib/core/schemas/notification.ts` 의 `dedupeKey()` 로 만든다. */
   dedupeKey?: string | null;
   /** 이메일 채널이 쓰는 주소. 저장하지 않고 어댑터에만 넘긴다. */
@@ -200,7 +201,7 @@ export async function retryNotification(id: string): Promise<SendNotificationRes
     return { status: "failed", id, reason: "문장 틀이 없습니다.", retryable: false };
   }
 
-  const body = renderBody(templateKey, (row.payload_json ?? {}) as Record<string, unknown>);
+  const body = renderBody(templateKey, (row.payload_json ?? {}) as Record<string, Json | undefined>);
   if (body === null) {
     return { status: "failed", id, reason: "문장 틀이 없습니다.", retryable: false };
   }
@@ -218,7 +219,7 @@ export async function retryNotification(id: string): Promise<SendNotificationRes
       topic: row.topic as NotificationTopic,
       channel: row.channel as NotificationChannel,
       templateKey,
-      params: (row.payload_json ?? {}) as Record<string, unknown>,
+      params: (row.payload_json ?? {}) as Record<string, Json | undefined>,
     },
     body,
     row.attempt_count + 1,

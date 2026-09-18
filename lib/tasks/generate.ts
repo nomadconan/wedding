@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { recordEvent } from "@/lib/audit/record";
 import { generateFromTemplates, mapTemplateEdges } from "@/lib/core/schedule/graph";
+import type { Database } from "@/types/database";
 
 /**
  * 역산 자동 생성 (S7-08 · 명세서 §2.1 F-C-04 · §3.2 · IDEA-02)
@@ -33,7 +34,7 @@ export type GenerateResult = {
 type TemplateRow = { code: string; category: string; title: string; offset_days: number };
 
 export async function generateChecklist(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; actorId: string; weddingDate: string | null },
 ): Promise<GenerateResult> {
   const { data: templateRows } = await client

@@ -21,6 +21,7 @@ import {
   type SeatingLayout,
 } from "@/lib/core/guest/guest";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database, TablesUpdate } from "@/types/database";
 
 /**
  * 하객·좌석 조회·갱신 (S7-09 · 명세서 §2.1 F-C-22 · §4.2 · §7.3)
@@ -88,7 +89,7 @@ export function hashContact(contact: string): string {
  * 나와야 하고, 따로 읽으면 그 사이에 바뀐 행 때문에 두 숫자가 어긋난다.
  */
 export async function loadGuests(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; today: string },
 ): Promise<GuestsView> {
   const { data } = await client
@@ -155,7 +156,7 @@ export async function loadGuests(
 export type GuestFailure = { status: number; code: string; message: string };
 
 export async function createGuest(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: {
     coupleId: string;
     userId: string;
@@ -197,7 +198,7 @@ export async function createGuest(
 }
 
 export async function updateGuest(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: {
     coupleId: string;
     userId: string;
@@ -208,7 +209,7 @@ export async function updateGuest(
     rsvpStatus?: RsvpStatus;
   },
 ): Promise<{ updated: boolean } | GuestFailure> {
-  const patch: Record<string, unknown> = {};
+  const patch: TablesUpdate<"guests"> = {};
 
   if (input.name !== undefined) patch.name = input.name.trim();
   if (input.side !== undefined) patch.side = input.side;
@@ -274,7 +275,7 @@ export async function updateGuest(
 }
 
 export async function deleteGuest(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; userId: string; guestId: string },
 ): Promise<{ deleted: boolean } | GuestFailure> {
   const { data } = await client
@@ -309,7 +310,7 @@ export async function deleteGuest(
 export const INVITE_TOKEN_BYTES = 32;
 
 export async function issueInvite(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; userId: string; guestId: string; weddingDate: string | null },
 ): Promise<{ token: string } | GuestFailure> {
   // **예식일이 없으면 발급하지 않는다.** 언제까지 받을지 모르는 채로 여는 것은
@@ -364,7 +365,7 @@ export async function issueInvite(
 }
 
 export async function revokeInvite(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; userId: string; guestId: string },
 ): Promise<{ revoked: boolean } | GuestFailure> {
   const { data: owned } = await client
@@ -401,7 +402,7 @@ export async function revokeInvite(
 // =============================================================================
 
 export async function saveSeating(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; userId: string; layout: SeatingLayout },
 ): Promise<{ saved: boolean } | GuestFailure> {
   const { data: current } = await client

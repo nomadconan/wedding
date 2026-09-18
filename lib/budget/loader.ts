@@ -19,6 +19,7 @@ import {
   type RecommendationSummary,
 } from "@/lib/core/budget/budget";
 import { loadPriceIndexMap } from "@/lib/pricing/price-index-query";
+import type { Database } from "@/types/database";
 
 /**
  * 예산 조회 (S7-07 · 명세서 §6.2 `/budget` · §4.2 `GET/PUT /api/budget`)
@@ -63,7 +64,7 @@ type BudgetRow = { id: string; allocation_json: Record<string, unknown> | null }
 
 /** 예산 부모 행. **없으면 만든다** — 카테고리 계획이 매달릴 곳이 필요하다. */
 export async function ensureBudget(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   coupleId: string,
 ): Promise<string | null> {
   const { data: existing } = await client
@@ -107,7 +108,7 @@ export async function ensureBudget(
  * 가 코드↔DB 를 대조한다.
  */
 async function contractedByCategory(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   coupleId: string,
 ): Promise<{ contracted: Map<BudgetCategory, number>; paid: Map<BudgetCategory, number> }> {
   const contracted = new Map<BudgetCategory, number>();
@@ -130,8 +131,8 @@ async function contractedByCategory(
 }
 
 export async function loadBudget(
-  client: SupabaseClient,
-  publicClient: SupabaseClient,
+  client: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   input: { coupleId: string },
 ): Promise<BudgetView> {
   const { data: couple } = await client
@@ -218,7 +219,7 @@ export async function loadBudget(
  * 칸을 볼지 정할 수 없고, 임의의 지역을 골라 권하면 그 값은 이 커플과 무관한 숫자다.
  */
 async function recommendationOf(
-  publicClient: SupabaseClient,
+  publicClient: SupabaseClient<Database>,
   regionCode: string | null,
 ): Promise<{ recommendations: Recommendation[]; recommendation: RecommendationSummary }> {
   if (regionCode === null) {
@@ -261,8 +262,8 @@ export type BudgetGauge = {
 };
 
 export async function loadBudgetGauge(
-  client: SupabaseClient,
-  publicClient: SupabaseClient,
+  client: SupabaseClient<Database>,
+  publicClient: SupabaseClient<Database>,
   input: { coupleId: string },
 ): Promise<BudgetGauge> {
   const view = await loadBudget(client, publicClient, input);

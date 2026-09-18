@@ -2,6 +2,8 @@ import { recordEvent } from "@/lib/audit/record";
 import { type FlagRow, buildFlagConsole, specOf } from "@/lib/core/flags/registry";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * 피처 플래그 콘솔 (S8-12 · F-A-10)
@@ -76,7 +78,7 @@ export async function setFlag(input: {
   partials: Record<string, boolean> | null;
   reason: string;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
 }): Promise<FlagResult> {
   const spec = specOf(input.key);
 
@@ -158,9 +160,9 @@ export async function setFlag(input: {
   return { ok: true, key: input.key };
 }
 
-function asObject(value: unknown): Record<string, unknown> {
+function asObject(value: unknown): Record<string, Json | undefined> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
+    ? (value as Record<string, Json | undefined>)
     : {};
 }
 
@@ -169,12 +171,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

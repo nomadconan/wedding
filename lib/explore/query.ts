@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 import type { ZodIssue } from "zod";
 
 import { compareByGap, priceGapBp } from "@/lib/core/pricing/price-index";
@@ -150,8 +151,8 @@ export function toFilterInput(params: URLSearchParams) {
  * **투명 가격이 이 서비스의 근간이다**(D-03). 그 화면이 옛 가격을 말하면 고객은
  * 없는 가격을 보고 담고, 업체는 올린 가격이 반영 안 된 것을 모른다.
  */
-export function createPublicClient(): SupabaseClient {
-  return createSupabaseClient(
+export function createPublicClient(): SupabaseClient<Database> {
+  return createSupabaseClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -195,7 +196,7 @@ type VendorRow = {
   style_tags: string[] | null;
 };
 
-function baseProductQuery(client: SupabaseClient, filter: ExploreFilter) {
+function baseProductQuery(client: SupabaseClient<Database>, filter: ExploreFilter) {
   let query = client
     .from("products")
     .select(PRODUCT_SELECT, { count: "exact" })
@@ -235,7 +236,7 @@ function baseProductQuery(client: SupabaseClient, filter: ExploreFilter) {
 
 /** 업체 조건(지역·카테고리·스타일)에 맞는 업체 id. null 이면 업체 조건이 없다는 뜻이다. */
 async function vendorIdsFor(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   filter: ExploreFilter,
 ): Promise<string[] | null> {
   const hasVendorFilter =
@@ -264,7 +265,7 @@ async function vendorIdsFor(
  * 하는 것**이 된다. 날짜를 보고 고르는 화면에서 그건 그냥 틀린 정보다.
  */
 async function availabilityByProduct(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   products: { id: string; vendor_id: string }[],
   date: string | null,
 ): Promise<Map<string, AvailabilityState>> {
@@ -301,7 +302,7 @@ async function availabilityByProduct(
 
 /** 추가금 사전표 요약을 상품별로 모은다. */
 async function addOnsByProduct(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   productIds: string[],
 ): Promise<Map<string, { count: number; total: number }>> {
   const map = new Map<string, { count: number; total: number }>();
@@ -321,7 +322,7 @@ async function addOnsByProduct(
 }
 
 /** 결과 건수만 센다. 0건 안내에서 "이걸 풀면 몇 건" 을 말하기 위한 것이다. */
-async function countFor(client: SupabaseClient, filter: ExploreFilter): Promise<number> {
+async function countFor(client: SupabaseClient<Database>, filter: ExploreFilter): Promise<number> {
   const vendorIds = await vendorIdsFor(client, filter);
   if (vendorIds !== null && vendorIds.length === 0) return 0;
 
@@ -340,7 +341,7 @@ async function countFor(client: SupabaseClient, filter: ExploreFilter): Promise<
 }
 
 export async function searchVendors(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: unknown,
   options?: SearchVendorsOptions,
 ): Promise<{ ok: true; result: ExploreResult } | { ok: false; issues: ZodIssue[] }> {
@@ -504,7 +505,7 @@ export async function searchVendors(
 }
 
 async function vendorsByIds(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   ids: string[],
 ): Promise<Map<string, VendorRow>> {
   const map = new Map<string, VendorRow>();
@@ -527,7 +528,7 @@ async function vendorsByIds(
  * "조건을 바꿔 보세요" 는 안내가 아니다. 무엇을 바꿔야 하는지 모르면 사용자는
  * 아무거나 지우다 나간다. 조건을 하나씩 뺀 건수를 실제로 세서 효과 순으로 제안한다.
  */
-async function hintsFor(client: SupabaseClient, filter: ExploreFilter): Promise<RelaxationHint[]> {
+async function hintsFor(client: SupabaseClient<Database>, filter: ExploreFilter): Promise<RelaxationHint[]> {
   const keys = activeFilterKeys(filter);
   if (keys.length === 0) return [];
 

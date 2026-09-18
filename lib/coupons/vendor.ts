@@ -13,6 +13,7 @@ import {
 } from "@/lib/core/coupon/issue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
 
 /**
  * 업체 쿠폰 발행·관리 (S5-13 · F-V-19 · §6.3 `/vendor/coupons`)
@@ -179,7 +180,7 @@ export async function createVendorCoupon(input: {
   vendorId: string;
   form: CouponForm;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
 }): Promise<CouponWriteResult> {
   const platformRateCapBp = await readRateCap();
   const errors = validateCouponForm(input.form, platformRateCapBp);
@@ -260,7 +261,7 @@ export async function updateVendorCoupon(input: {
   form: CouponForm;
   status: CouponStatus;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
 }): Promise<CouponWriteResult> {
   const supabase = await createClient();
 

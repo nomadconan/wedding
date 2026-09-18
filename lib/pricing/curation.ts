@@ -1,5 +1,5 @@
 import { readIntSetting } from "@/lib/app-settings";
-import { recordEvent } from "@/lib/audit/record";
+import { recordEvent, type EventSource } from "@/lib/audit/record";
 import {
   type AnomalyFlag,
   type AnomalyScan,
@@ -20,6 +20,8 @@ import {
 import { PRICE_INDEX_ALL, buildPriceIndex } from "@/lib/core/pricing/price-index";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json, TablesInsert, TablesUpdate } from "@/types/database";
 
 /**
  * 가격 큐레이션·이상 탐지 로더 (S8-10 · F-A-02 · F-A-14)
@@ -328,8 +330,19 @@ export async function recalculateIndex(input: {
   regionCode: string;
   category: string;
   reason: string;
-  operatorId: string;
-  operatorRole: string | null;
+  /**
+   * **배치는 null 이다**(FIX-71). 주기 재계산에는 사람이 없는데 전에는 0 으로 채운
+   * uuid 를 넣었고, `actor_id` 는 `auth.users` 를 참조하므로 **FK 에 걸려 증적이
+   * 통째로 사라졌다** — 넣는 쪽이 결과를 안 봐서 조용히 사라졌다. 두 컬럼 다 nullable
+   * 이니 **없는 것은 없다고 적는다.**
+   */
+  operatorId: string | null;
+  operatorRole: UserRole | null;
+  /**
+   * 누가 실행했나. **배치는 `"system"` 이다**(D-173) — 사람이 없는 전이에
+   * `"admin"` 을 적으면 증적이 "운영자가 눌렀다" 고 거짓말을 한다.
+   */
+  source?: EventSource;
 }): Promise<RecalculateResult> {
   const admin = createAdminClient();
 
@@ -401,7 +414,8 @@ export async function recalculateIndex(input: {
     source_type: "registered_price",
     collected_at: now,
     version: now.slice(0, 10),
-  };
+    // 아래에서 **insert 와 update 둘 다에** 쓰므로 두 모양을 다 만족해야 한다.
+  } satisfies TablesUpdate<"price_index"> & TablesInsert<"price_index">;
 
   const { data: saved, error: saveError } = indexId
     ? await admin.from("price_index").update(patch).eq("id", indexId).select("id").maybeSingle()
@@ -436,7 +450,7 @@ export async function recalculateIndex(input: {
     actor: { id: input.operatorId, role: input.operatorRole },
     beforeState: null,
     afterState: result.ok ? "published" : "insufficient_sample",
-    source: "admin",
+    source: input.source ?? "admin",
     // **사유 본문을 담지 않는다**(§7.3). 남길 사실은 표본 수다.
     memo: `samples:${result.ok ? result.sampleSize : result.sampleSize}`,
   });
@@ -499,7 +513,7 @@ export async function applyCuration(input: {
   action: CurationAction;
   reason: string;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
 }): Promise<CurationResult> {
   const admin = createAdminClient();
 
@@ -527,12 +541,13 @@ export async function applyCuration(input: {
     };
   }
 
-  const patch =
+  const patch = (
     input.action === "exclude"
       ? { excluded_reason: input.reason, verified_by: input.operatorId }
       : input.action === "restore"
         ? { excluded_reason: null, verified_by: input.operatorId }
-        : { verified_by: input.operatorId };
+        : { verified_by: input.operatorId }
+  ) satisfies TablesUpdate<"price_sources">;
 
   const { error: updateError } = await admin
     .from("price_sources")
@@ -586,7 +601,7 @@ export async function applyAnomalyAction(input: {
   action: string;
   reason: string;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
 }): Promise<CurationResult> {
   const admin = createAdminClient();
 
@@ -620,12 +635,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

@@ -8,6 +8,7 @@ import {
   type PurgeState,
 } from "@/lib/core/report/pipeline";
 import type { RuleSeverity } from "@/lib/core/rules/types";
+import type { Database } from "@/types/database";
 
 /**
  * 리포트 조회 (S7-03 · 명세서 §6.2 `/reports`·`/reports/[id]`)
@@ -74,7 +75,7 @@ type AnalysisRow = {
 
 const DOCUMENT_COLUMNS = "id, created_at, purged_at, purge_scheduled_at";
 
-export async function listReports(client: SupabaseClient): Promise<ReportListRow[]> {
+export async function listReports(client: SupabaseClient<Database>): Promise<ReportListRow[]> {
   const { data: documents } = await client
     .from("documents")
     .select(DOCUMENT_COLUMNS)
@@ -119,7 +120,7 @@ export async function listReports(client: SupabaseClient): Promise<ReportListRow
 }
 
 export async function loadReport(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   analysisId: string,
 ): Promise<ReportDetail | null> {
   const { data: analysisRow } = await client
@@ -180,7 +181,7 @@ export async function loadReport(
 }
 
 /** 홈이 쓰는 최근 리포트 한 건(§6.2 `/home`). 없으면 null 이다. */
-export async function latestReport(client: SupabaseClient): Promise<ReportListRow | null> {
+export async function latestReport(client: SupabaseClient<Database>): Promise<ReportListRow | null> {
   const rows = await listReports(client);
 
   return rows[0] ?? null;

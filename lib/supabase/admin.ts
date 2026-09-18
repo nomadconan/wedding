@@ -1,5 +1,7 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
+import type { Database } from "@/types/database";
+
 /**
  * 서비스롤 클라이언트 (S2-01)
  *
@@ -47,7 +49,7 @@ export function createAdminClient() {
     throw new Error("Supabase 서버 환경변수가 설정되지 않았습니다.");
   }
 
-  return createSupabaseClient(url, serviceRoleKey, {
+  return createSupabaseClient<Database>(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
       // **금액·재고·권한은 캐시되면 안 된다**(FIX-22). 기본을 안전한 쪽에 둔다.

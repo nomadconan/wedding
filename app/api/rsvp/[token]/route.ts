@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { RsvpAnswerSchema } from "@/lib/core/schemas/guest";
+import type { Database } from "@/types/database";
 
 /**
  * GET/POST /api/rsvp/[token] — 하객 참석 응답 (F-C-22 · §4.2 신설)
@@ -37,7 +38,7 @@ function createRsvpClient() {
 
   if (!url || !anonKey) throw new Error("Supabase 공개 환경변수가 설정되지 않았습니다.");
 
-  return createSupabaseClient(url, anonKey, {
+  return createSupabaseClient<Database>(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
       fetch: (input, init) => fetch(input as RequestInfo, { ...init, cache: "no-store" }),

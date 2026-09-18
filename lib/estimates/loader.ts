@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 import {
   COMPARE_MAX,
@@ -69,12 +70,12 @@ type LineRow = {
  * 있는 값이 아니다 — 그것을 비교표에 올리면 **오지 않은 제안을 견주는** 셈이 된다.
  */
 export async function listEstimateCandidates(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string },
 ): Promise<EstimateCandidate[]> {
+  // `p_quote_ids` 는 SQL 기본값이 NULL 이다 — 생략이 곧 "전부" 다.
   const { data } = await client.rpc("estimate_quote_sources", {
     p_couple_id: input.coupleId,
-    p_quote_ids: null,
   });
 
   return ((data ?? []) as SourceRow[]).map(toCandidate);
@@ -102,7 +103,7 @@ export type NormalizeFailure = { status: number; code: string; message: string }
  * 답하면 **비교표가 조용히 다른 것을 견주게** 된다(§5.1 부분 결과 비노출과 같은 판단).
  */
 export async function normalizeEstimates(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; quoteIds: string[]; now?: Date },
 ): Promise<NormalizedEstimate[] | NormalizeFailure> {
   const ids = [...new Set(input.quoteIds)];
@@ -179,7 +180,7 @@ export type EstimateCompareView = {
 };
 
 export async function buildComparison(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { coupleId: string; quoteIds: string[]; now?: Date },
 ): Promise<EstimateCompareView | NormalizeFailure> {
   const estimates = await normalizeEstimates(client, input);

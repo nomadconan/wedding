@@ -13,6 +13,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 import { resolveEscrowAdapterName, type EscrowAdapter } from "./adapter";
 import { createNoopEscrowAdapter, createStubEscrowAdapter } from "./stub";
+import type { Json, TablesUpdate } from "@/types/database";
 
 /**
  * 에스크로 절차 (S5-09 · F-C-16 · §4.2 · D-21 · D-23 · D-24 · D-28 · O-03)
@@ -223,7 +224,7 @@ export async function confirmFulfillment(input: {
   const coupleConfirmed = input.side === "couple" ? input.confirmed : hold.coupleConfirmed;
   const vendorConfirmed = input.side === "vendor" ? input.confirmed : hold.vendorConfirmed;
 
-  const patch: Record<string, unknown> =
+  const patch: TablesUpdate<"escrow_holds"> =
     input.side === "couple"
       ? { couple_confirmed: input.confirmed, couple_confirmed_at: now.toISOString() }
       : { vendor_confirmed: input.confirmed, vendor_confirmed_at: now.toISOString() };
@@ -651,7 +652,7 @@ async function settleHold(input: {
 async function notifyCouple(
   bookingId: string,
   templateKey: "escrow.held" | "escrow.released" | "escrow.refunded",
-  params: Record<string, unknown>,
+  params: Record<string, Json | undefined>,
 ): Promise<void> {
   const admin = createAdminClient();
 

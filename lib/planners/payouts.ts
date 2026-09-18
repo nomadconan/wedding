@@ -21,6 +21,7 @@ import {
 import { resolveGraceDays, type PlannerSettlementStatus } from "@/lib/core/payment/payment";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
 
 /**
  * 플래너 정산·지급 (S6-05 · §3.4 · §4.5 · D-21 · D-28)
@@ -349,7 +350,7 @@ export function isPlannerPayoutFailure(value: unknown): value is PlannerPayoutFa
 export async function payPlannerSettlement(input: {
   settlementId: string;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
   attempt?: number;
   now?: Date;
 }): Promise<PlannerPayOutcome | PlannerPayoutFailure> {

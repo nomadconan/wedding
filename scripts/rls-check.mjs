@@ -13979,6 +13979,77 @@ if (!vendorStaff || !adminUser) {
       source.includes("send-inquiry") && source.includes("/inquiries/new"),
     );
   }
+
+  // ── 배치는 사람을 지어내지 않는다 (FIX-71 · D-173) ────────────────────────
+  /**
+   * **참가격 재계산 배치가 남긴 증적이 통째로 사라지고 있었다.**
+   *
+   * `operatorId` 에 0 으로 채운 uuid 를, `operatorRole` 에 `"system"` 을 넣었는데
+   * **둘 다 DB 가 거절한다** — `actor_id` 는 `auth.users` 를 참조하고 `actor_role` 은
+   * `user_role` enum 이라 `"system"` 이 없다. 넣는 쪽이 결과를 안 보므로
+   * **배치는 성공을 보고했고 감사 로그와 전이 기록만 사라졌다**(그 침묵 자체는 FIX-72).
+   *
+   * 로컬에서 재현해 확인했다 — 옛 값으로는 `{"ok":true,"built":1}` 인데 `audit_logs` 0건 ·
+   * `entity_events` 0건이고, 고친 뒤에는 둘 다 1건이다.
+   *
+   * **없는 것은 없다고 적는다**(D-173). 두 컬럼 다 nullable 이고 실행자는 `source` 가 말한다.
+   */
+  {
+    const jobSource = srcOf("app/api/jobs/price-index-refresh/route.ts");
+
+    check(
+      "**배치가 0 uuid 를 행위자로 넣지 않는다**(FIX-71) — `auth.users` FK 가 거절해 증적이 사라진다",
+      !/00000000-0000-0000-0000-000000000000/.test(jobSource),
+    );
+    check(
+      "**배치가 enum 에 없는 역할을 넣지 않는다**(FIX-71) — `user_role` 에 `system` 은 없다",
+      !/operatorRole:\s*["'`]system["'`]/.test(jobSource),
+    );
+    check(
+      "**배치가 행위자를 null 로 넘긴다**(D-173) — 사람이 없는 전이에 계정을 빌리지 않는다",
+      /operatorId:\s*null/.test(jobSource) && /operatorRole:\s*null/.test(jobSource),
+    );
+    check(
+      "**그 대신 `source` 가 실행자를 말한다**(D-173) — 안 적으면 증적이 운영자를 가리킨다",
+      /source:\s*["'`]system["'`]/.test(jobSource),
+    );
+  }
+
+  // ── 클라이언트 타입이 경계에서 버려지지 않는가 (FIX-67 · D-203) ───────────
+  /**
+   * 값은 `lib/supabase/typing.test.ts` 가 본다 — 판정은 `tsc` 가 한다. 여기서는
+   * **그 검사 자체가 지워지지 않았는지**를 본다. 검사를 지우면 아무도 안 운다.
+   */
+  {
+    const typing = srcOf("lib/supabase/typing.test.ts");
+
+    /**
+     * **단언 이름을 낱말 경계로 본다.**
+     *
+     * 두 번 틀렸다. 처음엔 `includes("IsAny")` 로 봤는데 `IsAny` → `IsAnyX` 로 바꿔도
+     * 통과했고, 단언 이름으로 바꾼 뒤에도 `..._NOT_ANY` → `..._NOT_ANYX` 가 통과했다 —
+     * **둘 다 부분 문자열이라서** 다. 이름을 바꾸는 것도 검사를 없애는 방법이므로
+     * 낱말 경계로 봐야 잡힌다(§7.0b — 되돌려 놓고 FAIL 하는지 확인한다).
+     *
+     * **여기가 보는 것은 "파일이 세 면을 여전히 단언하는가" 까지다.** 단언 *한 줄*만
+     * 지우는 경우는 여기서 안 잡히고 **`tsc` 가 잡는다**(`Cannot find name ...` —
+     * 아래 `expect` 가 그 이름을 쓰므로). 둘로 나눠 막는다.
+     */
+    check(
+      "**클라이언트 타입 검사가 살아 있다**(FIX-67) — 지우면 `any`·`never` 로 조용히 돌아간다",
+      ["SERVER", "BROWSER", "ADMIN"].every(
+        (face) =>
+          new RegExp(`\\b${face}_ROW_IS_RESOLVED\\b`).test(typing) &&
+          new RegExp(`\\b${face}_COL_IS_NOT_ANY\\b`).test(typing),
+      ),
+    );
+    check(
+      "**세 팩토리가 `<Database>` 를 달고 있다**(FIX-67)",
+      ["lib/supabase/server.ts", "lib/supabase/client.ts", "lib/supabase/admin.ts"].every(
+        (file) => /<Database>/.test(srcOf(file)),
+      ),
+    );
+  }
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

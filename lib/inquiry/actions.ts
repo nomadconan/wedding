@@ -11,6 +11,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 import { notifyCouple, notifyInquiryReceived } from "./notify";
 import { quoteCapFor } from "./pricing";
+import type { Json } from "@/types/database";
 
 /**
  * 문의·견적 쓰기 (S4-12)
@@ -49,7 +50,7 @@ export async function createInquiry(
     budgetTotal: number | null;
     categories: string[];
     note: string | null;
-    requestJson: Record<string, unknown>;
+    requestJson: Record<string, Json | undefined>;
     threshold: SlaThreshold | null;
   },
 ): Promise<{ inquiryId: string; targetCount: number } | ActionFailure> {

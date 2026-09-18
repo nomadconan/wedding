@@ -1,6 +1,8 @@
 import type { User } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 
+import type { Database } from "@/types/database";
+
 import { createClient } from "./server";
 
 /**
@@ -15,14 +17,23 @@ import { createClient } from "./server";
 /** 운영자 역할. §1.4 의 ops·admin 이다. */
 export const OPERATOR_ROLES = ["ops", "admin"] as const;
 
+/**
+ * `profiles.role` 그대로 — **생성된 enum 이지 `string` 이 아니다**(FIX-67).
+ *
+ * 전에는 `string | null` 이라 `isOperator` 의 `=== "ops"` 가 **오타까지 통과**했고,
+ * `audit_logs.actor_role` 에 그대로 실려 들어갔다. DB 는 enum 이므로 틀린 값이면
+ * INSERT 가 깨지는데 **증적 적재는 결과를 안 본다** — 조용히 사라질 자리였다.
+ */
+export type UserRole = Database["public"]["Enums"]["user_role"];
+
 export type SessionUser = {
   id: string;
   email: string | null;
   /** profiles.role. 프로필 행이 아직 없으면 null 이다. */
-  role: string | null;
+  role: UserRole | null;
 };
 
-function toSessionUser(user: User, role: string | null): SessionUser {
+function toSessionUser(user: User, role: UserRole | null): SessionUser {
   return { id: user.id, email: user.email ?? null, role };
 }
 

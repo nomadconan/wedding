@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DECLINE_REASONS, INQUIRY_NOTE_MAX } from "../inquiry/inquiry";
+import { jsonObjectSchema } from "./json";
 
 /**
  * 문의·견적 API 입출력 스키마 (S4-12 · 명세서 §4.2 `/api/inquiries`, §4.3 `/api/vendor/quotes`)
@@ -42,7 +43,7 @@ export const CreateInquirySchema = z.object({
   categories: z.array(z.string().max(40)).min(1).max(20),
   note: z.string().max(INQUIRY_NOTE_MAX).nullable().default(null),
   /** 표준 폼의 나머지(필수 옵션 선택 등). 날짜·하객수는 여기 두지 않는다. */
-  requestJson: z.record(z.unknown()).default({}),
+  requestJson: jsonObjectSchema.default({}),
 });
 
 export type CreateInquiryInput = z.infer<typeof CreateInquirySchema>;

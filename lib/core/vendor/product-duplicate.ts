@@ -28,6 +28,8 @@
  */
 
 /** 복제본 이름 꼬리. 목록에서 원본과 구분되는 것이 목적이다. */
+import type { JsonValue } from "../json";
+
 export const COPY_SUFFIX = " (사본)";
 
 /** `products.name` 의 상한(zod `ProductInputFieldsSchema` 와 같은 값). */
@@ -37,7 +39,7 @@ export type DuplicateSource = {
   name: string;
   category: string;
   basePriceTotal: number;
-  includedItems: unknown[];
+  includedItems: JsonValue[];
   capacityMin: number | null;
   capacityMax: number | null;
   priceIncludesVat: boolean;
@@ -47,7 +49,7 @@ export type DuplicateDraft = {
   name: string;
   category: string;
   basePriceTotal: number;
-  includedItems: unknown[];
+  includedItems: JsonValue[];
   capacityMin: number | null;
   capacityMax: number | null;
   priceIncludesVat: boolean;

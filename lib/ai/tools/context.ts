@@ -4,6 +4,7 @@ import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import type { Database } from "@/types/database";
 
 /**
  * 툴 실행 맥락 (S7-20 · 명세서 §5.6)
@@ -26,9 +27,9 @@ export type ToolContext = {
   /** 온보딩 전이면 null 이다. 커플 스코프 툴은 그때 `no_couple` 로 답한다. */
   coupleId: string | null;
   /** 커플 데이터용 — RLS 가 적용되는 세션 클라이언트. */
-  supabase: SupabaseClient;
+  supabase: SupabaseClient<Database>;
   /** 공개 데이터용(업체·상품·참가격) — 익명 클라이언트. */
-  publicClient: SupabaseClient;
+  publicClient: SupabaseClient<Database>;
   /** 기준일 YYYY-MM-DD. 응답에 실어 돌려준다. */
   asOf: string;
 };

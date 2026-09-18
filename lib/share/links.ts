@@ -13,6 +13,7 @@ import {
 import type { EstimateComparison, NormalizedEstimate } from "@/lib/core/estimate/normalize";
 import { loadReport, type ReportDetail } from "@/lib/reports/loader";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 /**
  * 만료형 공유 링크 (S7-12 · 명세서 §2.1 F-C-20 · §4.2 · §6.2)
@@ -57,7 +58,7 @@ function createShareClient() {
     throw new Error("Supabase 서버 환경변수가 설정되지 않았습니다.");
   }
 
-  return createSupabaseClient(url, serviceRoleKey, {
+  return createSupabaseClient<Database>(url, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: {
       fetch: (input, init) => fetch(input as RequestInfo, { ...init, cache: "no-store" }),
@@ -197,7 +198,7 @@ async function loadTtlHours(): Promise<number | null> {
  * 둘이 다른 답을 낸다**(D-30 과 같은 이유).
  */
 async function canReach(
-  session: SupabaseClient,
+  session: SupabaseClient<Database>,
   resourceType: string,
   resourceId: string,
 ): Promise<boolean> {
@@ -221,7 +222,7 @@ async function canReach(
 }
 
 export async function createShareLink(
-  session: SupabaseClient,
+  session: SupabaseClient<Database>,
   input: { resourceType: string; resourceId: string; actorId: string; now?: Date },
 ): Promise<{ token: string; expiresAt: string; id: string } | ShareFailure> {
   if (!shareableResourceTypes().includes(input.resourceType)) {
@@ -288,7 +289,7 @@ export async function createShareLink(
 // =============================================================================
 
 export async function revokeShareLink(
-  session: SupabaseClient,
+  session: SupabaseClient<Database>,
   input: { id: string; actorId: string },
 ): Promise<{ revoked: boolean } | ShareFailure> {
   const admin = createShareClient();
@@ -349,7 +350,7 @@ export type ShareLinkRow = {
  * 이기 때문이다. "누가 밖으로 보냈나" 를 커플이 함께 알아야 한다.
  */
 export async function listShareLinks(
-  session: SupabaseClient,
+  session: SupabaseClient<Database>,
   input: { resourceType: string; resourceId: string; now?: Date },
 ): Promise<ShareLinkRow[]> {
   if (!(await canReach(session, input.resourceType, input.resourceId))) return [];

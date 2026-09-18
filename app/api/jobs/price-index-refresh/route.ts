@@ -67,9 +67,15 @@ export async function POST(request: NextRequest) {
         regionCode: cell.region_code,
         category: cell.category,
         reason: "주기 재계산",
-        // 배치에는 사람이 없다. 시스템 실행임을 증적이 그대로 말한다.
-        operatorId: "00000000-0000-0000-0000-000000000000",
-        operatorRole: "system",
+        // 배치에는 사람이 없다 — **없는 것은 없다고 적는다**(FIX-71).
+        // 전에는 0 uuid 와 "system" 을 넣었는데 `actor_id` 는 `auth.users` 를 참조하고
+        // `actor_role` 은 `user_role` enum 이라 **둘 다 DB 가 거절했다.** 넣는 쪽이
+        // 결과를 안 보므로 배치는 성공을 보고했고 증적만 사라졌다.
+        // 시스템 실행임은 `action`·`source` 가 말한다.
+        operatorId: null,
+        operatorRole: null,
+        // 사람이 없는 전이의 실행자는 `source` 가 말한다(D-173).
+        source: "system",
       });
 
       if (!result.ok) continue;

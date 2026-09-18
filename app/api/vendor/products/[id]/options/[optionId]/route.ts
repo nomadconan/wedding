@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { OPTION_COLUMNS } from "@/lib/vendor/product-options";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * PATCH/DELETE /api/vendor/products/[id]/options/[optionId] (F-V-04, §4.3)
@@ -62,7 +63,7 @@ export async function PATCH(
     ]);
   }
 
-  const patch: Record<string, unknown> = {};
+  const patch: TablesUpdate<"product_options"> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.price !== undefined) patch.price = input.price;
   if (input.isMandatory !== undefined) patch.is_mandatory = input.isMandatory;

@@ -68,7 +68,10 @@ function walk(dir: string, out: string[] = []): string[] {
  * 타입만 import 하는 파일도 대상이 아니다.
  */
 function createsServerClient(text: string): boolean {
-  return /\b(createSupabaseClient|createServerClient)\s*\(/.test(text);
+  // **타입 인자를 건너뛴다.** FIX-67 이 모든 자리에 `<Database>` 를 붙이자 `\s*\(` 가
+  // 하나도 안 맞아 **목록이 통째로 비었다.** 위의 "자리를 실제로 찾았다" 검사가 없었으면
+  // 그 아래 검사 셋이 **빈 목록으로 조용히 통과**했을 것이다(§7.0b 가 말하는 바로 그 일).
+  return /\b(createSupabaseClient|createServerClient)\s*(<[^>]*>)?\s*\(/.test(text);
 }
 
 const files = [...walk(join(ROOT, "app")), ...walk(join(ROOT, "lib"))]

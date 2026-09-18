@@ -9,6 +9,7 @@ import {
   type RecipientMode,
 } from "@/lib/core/vendor/vendor-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { TablesInsert } from "@/types/database";
 
 /**
  * 업체 조직 설정 (S4-14 · F-V-14)
@@ -215,7 +216,7 @@ export async function saveVendorSettings(
     }>;
   },
 ): Promise<{ settings: VendorSettings } | SettingsFailure> {
-  const row: Record<string, unknown> = { vendor_id: input.vendorId };
+  const row: TablesInsert<"vendor_settings"> = { vendor_id: input.vendorId };
 
   if (input.patch.recipientMode !== undefined) row.recipient_mode = input.patch.recipientMode;
   if (input.patch.defaultAssigneeId !== undefined) {

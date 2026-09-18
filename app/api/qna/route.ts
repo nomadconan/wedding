@@ -6,6 +6,7 @@ import { QnaActionSchema } from "@/lib/core/schemas/qna";
 import { loadQnaPosts, loadSimilarQuestions, loadVendorName } from "@/lib/qna/loader";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * GET/POST /api/qna — 업체별 문의게시판 (F-C-28, §4.2)
@@ -123,7 +124,7 @@ export async function POST(request: NextRequest) {
   // ── 수정 (작성자만) ───────────────────────────────────────────────────────
   // 공개 전환도 여기로만 가능하다 — 0021 트리거가 "비공개 → 공개는 작성자만" 을
   // 강제하므로, 업체가 이 경로로 들어와도 DB 가 거절한다.
-  const patch: Record<string, unknown> = {};
+  const patch: TablesUpdate<"qna_posts"> = {};
   if (action.title !== undefined) patch.title = action.title;
   if (action.body !== undefined) patch.body = action.body;
   if (action.isPublic !== undefined) patch.is_public = action.isPublic;

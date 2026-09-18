@@ -15,6 +15,7 @@ import { maskText } from "@/lib/core/masking";
 import { scanDocument } from "@/lib/core/rules/scan";
 import type { RuleSeverity } from "@/lib/core/rules/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 /**
  * 컴플라이언스 자가 진단 실행 (S7-13 · 명세서 §2.3 F-V-10 · §4.2)
@@ -111,7 +112,7 @@ function reviveFindings(raw: unknown): ComplianceFinding[] {
  * 그 경계가 RLS 다. 진단 결과에는 업체가 고치는 중인 자기 약관의 약점이 들어 있다.
  */
 export async function loadLatestScan(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { vendorId: string },
 ): Promise<Omit<ScanResult, "maskedKinds"> | null> {
   const { data } = await client

@@ -7,6 +7,8 @@ import {
   statusAfter,
 } from "@/lib/core/dispute/mediation";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * 예약 분쟁 조율 (S8-03 · F-A-12 · D-24)
@@ -26,7 +28,7 @@ export type MediateInput = {
   coupleAgreed: boolean;
   vendorAgreed: boolean;
   operatorId: string;
-  operatorRole: string | null;
+  operatorRole: UserRole | null;
   now: string;
 };
 
@@ -75,7 +77,7 @@ export async function mediateDispute(input: MediateInput): Promise<MediateResult
   const after = statusAfter(input.action);
   const terminal = isTerminal(after);
 
-  const patch: Record<string, unknown> = {
+  const patch: TablesUpdate<"disputes"> = {
     status: after,
     // 동의 여부는 조치와 무관하게 기록한다 — 조율 중에도 한쪽이 먼저 동의할 수 있고
     // 그 진행 상태를 화면이 보여줘야 한다.

@@ -11,6 +11,8 @@ import {
 } from "@/lib/core/support/ticket";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * CS·신고 콘솔 (S8-09 · F-A-06)
@@ -163,7 +165,7 @@ export type SupportResult =
  * 된다. 다른 사람에게 넘기려면 그 사람이 직접 맡는다.
  */
 export async function applyTicketAction(
-  input: TicketActionInput & { operatorId: string; operatorRole: string | null },
+  input: TicketActionInput & { operatorId: string; operatorRole: UserRole | null },
 ): Promise<SupportResult> {
   const admin = createAdminClient();
 
@@ -249,7 +251,7 @@ export async function applyTicketAction(
  * 심사 큐에서 사라지고, 되돌릴 때 어느 상태로 돌아가야 하는지 알 수 없다.
  */
 export async function applyVendorSanction(
-  input: VendorSanctionInput & { operatorId: string; operatorRole: string | null },
+  input: VendorSanctionInput & { operatorId: string; operatorRole: UserRole | null },
 ): Promise<SupportResult> {
   const admin = createAdminClient();
 
@@ -324,12 +326,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

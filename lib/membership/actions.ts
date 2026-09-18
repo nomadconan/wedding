@@ -14,6 +14,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { createMembershipAdapter } from "./stub";
+import type { Database } from "@/types/database";
 
 /**
  * 멤버십 구독 (S7-11 · 명세서 §2.1 F-C-19 · §3.1 · D-28)
@@ -62,7 +63,7 @@ function toRow(row: Row | null): MembershipRow | null {
  * 경로를 만들지 않는다.
  */
 export async function loadMembership(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { now?: Date } = {},
 ): Promise<{ state: MembershipState; row: MembershipRow | null; id: string | null }> {
   const { data } = await client
@@ -121,7 +122,7 @@ export async function loadMembershipPrice(): Promise<MembershipPrice> {
 // =============================================================================
 
 export async function startMembership(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { userId: string; now?: Date },
 ): Promise<{ expiresAt: string; adapter: string } | MembershipFailure> {
   const current = await loadMembership(client, { now: input.now });
@@ -238,7 +239,7 @@ export async function startMembership(
  * 기한은 그대로 둔다 — 등급 판정은 기한이 한다(`membershipState`).
  */
 export async function cancelMembership(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   input: { userId: string; now?: Date },
 ): Promise<{ canceled: boolean; expiresAt: string | null } | MembershipFailure> {
   const current = await loadMembership(client, { now: input.now });

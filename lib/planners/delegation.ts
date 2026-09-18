@@ -13,6 +13,8 @@ import {
 import type { DelegationOfferInput } from "@/lib/core/schemas/planner";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * 플래너 권한 위임 (S6-04 · F-C-18 · §3.7 · §6.2)
@@ -285,7 +287,7 @@ export async function offerDelegation(input: {
   plannerId: string;
   form: DelegationOfferInput;
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
   now: Date;
 }): Promise<DelegationWriteResult> {
   if (input.coupleRole !== "owner") {
@@ -403,7 +405,7 @@ export async function respondToDelegation(input: {
   engagementId: string;
   action: "accept" | "decline" | "revoke";
   actorId: string;
-  actorRole: string | null;
+  actorRole: UserRole | null;
   /** 커플 구성원이면 그 커플 id 와 역할. */
   couple: { coupleId: string; role: string } | null;
   /** 플래너면 그 플래너 행 id. */
@@ -455,7 +457,7 @@ export async function respondToDelegation(input: {
     };
   }
 
-  const patch: Record<string, unknown> = { status: target };
+  const patch: TablesUpdate<"planner_engagements"> = { status: target };
   // 시각은 트리거가 적는다. **행위자만** 넘긴다 — 서비스롤 세션에는 auth.uid() 가
   // 없어 트리거가 "누가 거뒀는가" 를 알 수 없기 때문이다(로그인 세션이 직접 두드린
   // 경우에는 트리거가 auth.uid() 를 우선한다 — 위조할 수 없다).

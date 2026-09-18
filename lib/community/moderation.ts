@@ -22,6 +22,7 @@ import {
 } from "@/lib/core/community/moderation";
 import { readIntSetting } from "@/lib/app-settings";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/types/database";
 
 /**
  * 모더레이션 실행 (S7-17 · 명세서 §2.3 F-A-18 · §3.9 · D-62)
@@ -84,7 +85,7 @@ const EXCERPT_LENGTH = 200;
  * 열어 두므로(0038 `community_posts_select_operator`) 같은 클라이언트로 읽는다.
  */
 export async function loadQueue(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   options: { closed: boolean; now: number },
 ): Promise<QueueItem[]> {
   const { data } = await client
@@ -175,7 +176,7 @@ export async function loadQueue(
  * 않는다**: 무엇이 어뷰징인지는 O-14 다.
  */
 async function abuseSignals(
-  client: SupabaseClient,
+  client: SupabaseClient<Database>,
   reports: readonly ReportRecord[],
   posts: readonly { id: string; author_id: string }[],
 ): Promise<Map<string, AbuseSignals>> {

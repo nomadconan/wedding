@@ -18,6 +18,8 @@ import {
 import type { ReviewModerationInput } from "@/lib/core/review/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * 후기 관리 콘솔 (S8-11 · F-A-13)
@@ -246,7 +248,7 @@ export type ModerationResult =
  * 작성자가 거뒀다는 사실이 운영자 조치처럼 읽힌다.
  */
 export async function moderateReview(
-  input: ReviewModerationInput & { operatorId: string; operatorRole: string | null },
+  input: ReviewModerationInput & { operatorId: string; operatorRole: UserRole | null },
 ): Promise<ModerationResult> {
   const admin = createAdminClient();
 
@@ -339,7 +341,7 @@ export async function moderateReview(
  * "내릴 근거를 찾지 못했다" 이다. 우리는 판정자가 아니라 조율자다.
  */
 export async function resolveReviewReport(
-  input: ReviewReportResolveInput & { operatorId: string; operatorRole: string | null },
+  input: ReviewReportResolveInput & { operatorId: string; operatorRole: UserRole | null },
 ): Promise<ModerationResult> {
   const admin = createAdminClient();
 
@@ -425,12 +427,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

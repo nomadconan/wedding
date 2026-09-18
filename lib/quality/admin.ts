@@ -19,6 +19,8 @@ import {
 } from "@/lib/core/quality/review";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/lib/supabase/auth";
+import type { Json } from "@/types/database";
 
 /**
  * AI 품질·비용 콘솔 (S8-07 · F-A-04 · §5.8)
@@ -265,7 +267,7 @@ export type QualityResult =
  * 지금 그 결정이 없다.
  */
 export async function recordReportReview(
-  input: ReportReviewInput & { reviewerId: string; reviewerRole: string | null },
+  input: ReportReviewInput & { reviewerId: string; reviewerRole: UserRole | null },
 ): Promise<QualityResult> {
   const admin = createAdminClient();
 
@@ -342,7 +344,7 @@ export async function recordReportReview(
  * F-A-03(S8-06) 소관이다. 여기서 하는 일은 **신호를 남기는 것**까지다.
  */
 export async function resolveFindingReport(
-  input: FindingReportResolveInput & { operatorId: string; operatorRole: string | null },
+  input: FindingReportResolveInput & { operatorId: string; operatorRole: UserRole | null },
 ): Promise<QualityResult> {
   const admin = createAdminClient();
 
@@ -414,12 +416,12 @@ async function writeAuditLog(
   admin: ReturnType<typeof createAdminClient>,
   input: {
     actorId: string;
-    actorRole: string | null;
+    actorRole: UserRole | null;
     action: string;
     targetType: string;
     targetId: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
+    before: Record<string, Json | undefined>;
+    after: Record<string, Json | undefined>;
   },
 ): Promise<void> {
   const { data: basisRows } = await admin

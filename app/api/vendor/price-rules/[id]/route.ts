@@ -9,6 +9,7 @@ import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PRICE_RULE_COLUMNS, toConditionJson } from "@/lib/vendor/price-rules";
 import { findMemberVendor } from "@/lib/vendor/products";
+import type { TablesUpdate } from "@/types/database";
 
 /**
  * PATCH/DELETE /api/vendor/price-rules/[id] (F-V-06, §4.3)
@@ -60,7 +61,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
   if (!before) return fail(404, "VENDOR_PRICE_RULE_NOT_FOUND", "룰을 찾을 수 없습니다.");
 
-  const patch: Record<string, unknown> = {};
+  const patch: TablesUpdate<"price_rules"> = {};
   if (input.ruleType !== undefined) patch.rule_type = input.ruleType;
   if (input.condition !== undefined) patch.condition_json = toConditionJson(input.condition);
   if (input.adjustType !== undefined) patch.adjust_type = input.adjustType;
