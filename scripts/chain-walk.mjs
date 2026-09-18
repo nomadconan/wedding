@@ -101,6 +101,12 @@ async function launchChrome() {
     "--window-size=1440,960",
   ];
   if (!has("--headful")) args.push("--headless=new");
+  /**
+   * **CI 에서는 샌드박스를 끈다.** 러너는 컨테이너 안에서 돌고 user namespace 가
+   * 막혀 있는 경우가 있어 Chrome 이 아예 안 뜬다 — 그러면 검사가 "화면이 없다" 가
+   * 아니라 **"크롬이 없다"** 로 죽고, 둘은 다른 사실이다. 로컬에서는 켠 채로 둔다.
+   */
+  if (process.env.CI) args.push("--no-sandbox", "--disable-dev-shm-usage");
 
   const proc = spawn(findChrome(), args, { stdio: "ignore", detached: false });
   for (let i = 0; i < 300; i += 1) {
@@ -297,6 +303,25 @@ async function login(face) {
   throw new Error(`로그인이 이동하지 않았다(${face.key})`);
 }
 
+/** 값을 넣는다. React 가 보게 네이티브 setter 로 넣고 input 이벤트를 쏜다. */
+async function fill(face, selector, value) {
+  const done = await evaluate(
+    face,
+    `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return false;
+      const proto = el.tagName === "TEXTAREA"
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, ${JSON.stringify(String(value))});
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`,
+  );
+  if (!done) throw new Error(`입력칸이 없다: ${selector}`);
+  await sleep(150);
+}
+
 /**
  * 화면 안의 무언가를 누른다. **없으면 없다고 말한다** — 못 찾은 것을 조용히 넘기면
  * 이 점검은 "다 됐다" 고 거짓말하게 된다.
@@ -407,7 +432,7 @@ try {
 
   // ── 0. 입점 승인 ───────────────────────────────────────
   await step("운영자가 업체 신청을 승인한다", admin, async () => {
-    if (chain.vendorStatusBefore === "active") return "이미 active — 건너뛰다";
+    if (chain.vendorStatusBefore === "active") return "이미 active — 건너뛴다";
 
     const info = await goto(admin, "/admin/vendors");
     if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
@@ -430,30 +455,94 @@ try {
   });
 
   /**
-   * **문의를 만드는 화면이 없다**(FIX-66). `POST /api/inquiries` 의 `action:"create"` 를
-   * 부르는 클라이언트가 리포에 하나도 없다 — 업체 상세의 '문의하기' 는 채팅을 연다.
-   * 사슬을 이어 보려면 여기서 **세션 fetch 로 우회**할 수밖에 없고, 그 사실을 이
-   * 점검이 매번 소리 내어 적는다. 화면이 생기면 이 단계를 클릭으로 바꾼다.
+   * **우회를 걷었다**(FIX-66 해소). C-1b·C-3 때는 이 칸에 화면이 없어 세션 fetch 로
+   * 넘어갔고, **실주행이 우회하는 단계는 실주행이 지키지 못했다.** 이제 업체 상세에서
+   * 폼까지 걸어가 실제로 보낸다 — 사슬의 첫 칸도 클릭으로 지난다.
    */
-  await step("문의를 만든다 (※ UI 없음 — 세션 fetch 우회 · FIX-66)", consumer, async () => {
-    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
-    const result = await evaluate(
+  await step("업체 상세가 **견적 요청으로 잇는다**(FIX-66)", consumer, async () => {
+    const info = await goto(consumer, `/explore/${chain.vendorId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const href = await evaluate(
       consumer,
-      `fetch("/api/inquiries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create",
-          vendorIds: [${JSON.stringify(chain.vendorId)}],
-          eventDate: ${JSON.stringify(eventDate)},
-          categories: ["hall"],
-          note: "C-1b 사슬 주행"
-        })
-      }).then(async (r) => ({ status: r.status, body: await r.text() }))`,
+      `(document.querySelector('[data-testid="vendor-inquiry-link"]') || {}).getAttribute
+         ? document.querySelector('[data-testid="vendor-inquiry-link"]').getAttribute("href")
+         : null`,
     );
-    if (result.status >= 300) throw new Error(`${result.status} ${result.body.slice(0, 200)}`);
-    chain.inquiryId = sql(`select id::text from public.inquiries order by created_at desc limit 1;`);
-    return `inquiry=${chain.inquiryId.slice(0, 8)} · ${result.status}`;
+    if (!href) throw new Error("업체 상세에 견적 요청으로 가는 자리가 없다");
+    if (!String(href).includes(chain.vendorId)) {
+      throw new Error(`이 업체가 안 딸려 간다: ${href}`);
+    }
+
+    await click(consumer, '[data-testid="vendor-inquiry-link"]');
+
+    // **고정 대기를 쓰지 않는다.** 개발 서버는 처음 여는 라우트를 그 자리에서
+    // 컴파일하므로 클라이언트 내비가 몇 초 걸린다 — 1.2초로 재다가 실제로 틀렸다.
+    const until = Date.now() + 30000;
+    for (;;) {
+      const after = await snapshot(consumer);
+      if (after.path.startsWith("/inquiries/new")) return after.path;
+      if (Date.now() > until) throw new Error(`폼으로 가지 않았다: ${after.path}`);
+      await sleep(500);
+    }
+  });
+
+  await step("**표준 폼을 채우고 보낸다** — 사슬의 첫 칸(F-C-13)", consumer, async () => {
+    // 업체 상세에서 왔으므로 그 업체가 미리 골라져 있어야 한다.
+    const preselected = await evaluate(
+      consumer,
+      `(() => {
+        const box = document.querySelector('#vendor-${chain.vendorId}');
+        if (!box) return "후보에 없음";
+        return box.getAttribute("data-state") === "checked" || box.getAttribute("aria-checked") === "true"
+          ? "미리 골라짐" : "안 골라짐";
+      })()`,
+    );
+    if (preselected !== "미리 골라짐") throw new Error(`업체가 ${preselected}`);
+
+    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    await fill(consumer, "#inquiry-date", eventDate);
+    await click(consumer, "#category-hall");
+    await sleep(400);
+
+    // **보내기 전에 막는 이유가 사라졌는지 본다** — 잠긴 버튼을 누르면 아무 일도
+    // 안 일어나고, 그러면 "안 보내졌다" 가 "못 눌렀다" 와 구분되지 않는다.
+    const blocked = await evaluate(
+      consumer,
+      `(document.querySelector('[data-testid="inquiry-blocked"]') || {}).innerText || null`,
+    );
+    if (blocked) throw new Error(`아직 막혀 있다: ${String(blocked).slice(0, 80)}`);
+
+    await click(consumer, '[data-testid="send-inquiry"]');
+
+    const until = Date.now() + 25000;
+    for (;;) {
+      const id = sql(`select id::text from public.inquiries order by created_at desc limit 1;`);
+      const targets = id
+        ? sql(`select count(*) from public.inquiry_targets
+                 where inquiry_id = '${id}' and vendor_id = '${chain.vendorId}';`)
+        : "0";
+      if (id && targets !== "0") {
+        chain.inquiryId = id;
+
+        return `inquiry=${id.slice(0, 8)} · 이 업체에 대상 행 생성`;
+      }
+      if (Date.now() > until) {
+        const info = await snapshot(consumer);
+        throw new Error(`문의가 생기지 않았다: ${info.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**보낸 뒤 화면이 몇 곳에 갔는지 말한다** — 간 적 없는 곳에 갔다고 적지 않는다", consumer, async () => {
+    const sent = await evaluate(
+      consumer,
+      `(document.querySelector('[data-testid="inquiry-sent"]') || {}).innerText || ""`,
+    );
+    if (!String(sent).trim()) throw new Error("보낸 뒤 아무 말도 없다");
+
+    return String(sent).replace(/\s+/g, " ").trim().slice(0, 80);
   });
 
   // ── 2. 견적 ────────────────────────────────────────────────────────────────
@@ -517,10 +606,19 @@ try {
   await step("수락한 견적이 예약 화면으로 잇는다", consumer, async () => {
     await goto(consumer, "/inquiries");
     await click(consumer, '[data-testid="quote-booking-link"]');
-    await sleep(1200);
-    const info = await snapshot(consumer);
-    if (!info.path.startsWith("/bookings/")) throw new Error(`예약 화면으로 가지 않았다: ${info.path}`);
-    return info.path;
+
+    /**
+     * **고정 대기를 쓰지 않는다.** 여기가 C-3 이 한 번 보고 재현하지 못한 25/26 이었다 —
+     * 개발 서버는 처음 여는 라우트를 그 자리에서 컴파일하므로 `/bookings/[id]` 로 가는
+     * 내비가 1.2초를 넘길 때가 있다. 그러면 검사가 **화면이 아니라 컴파일 속도를** 잰다.
+     */
+    const until = Date.now() + 30000;
+    for (;;) {
+      const info = await snapshot(consumer);
+      if (info.path.startsWith("/bookings/")) return info.path;
+      if (Date.now() > until) throw new Error(`예약 화면으로 가지 않았다: ${info.path}`);
+      await sleep(500);
+    }
   });
 
   // ── 4. 업체 승인 ──────────────────────────────────────────────────────────

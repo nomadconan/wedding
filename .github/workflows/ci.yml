@@ -126,9 +126,13 @@ jobs:
   # **왜 postgres 서비스 컨테이너가 아닌가.** `db:rls` 는 `auth.uid()` · `authenticated`
   # 롤 · PostgREST · GoTrue 관리 API 를 전부 쓴다. 맨 Postgres 로는 절반이 안 돈다.
   integration:
+    # **이 이름은 장식이 아니다 — 브랜치 규칙의 required status check 컨텍스트다.**
+    # 이번에 `/ walks` 를 붙여 봤더니 규칙이 요구하는 옛 이름이 **영영 보고되지 않아**
+    # 검사 셋이 전부 초록인데도 PR 이 `BLOCKED` 로 막혔다. 바꾸려면 규칙셋
+    # (`gh api repos/:owner/:repo/rulesets`)을 **같은 커밋에서** 함께 고쳐야 한다.
     name: integration (supabase / build / bundle / db:rls)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -169,6 +173,50 @@ jobs:
 
       - name: db:rls
         run: npm run db:rls
+
+      # ── 실주행 (C-1b · C-3 · FIX-66) ────────────────────────────────────
+      #
+      # **왜 CI 에 넣는가.** 여기까지의 검사 어디에도 "한 거래가 흘러가는가" 가 없다.
+      # 실제로 화면 97개가 전부 정상이고 API 1,330건이 전부 맞는 상태에서 사슬이
+      # 계약 발행에서 끊겨 있었다(FIX-65) — **부를 자리가 없는 API 는 라우트 점검도
+      # 화면 점검도 통과한다.** 그것을 `chain:walk` 이 찾았는데 **그 검사가 CI 에
+      # 없어서** 버튼이 지워져도 PR 은 초록불이었다.
+      #
+      # **개발 서버여야 한다.** `resolveChargeAdapterName()` 이 프로덕션에서 `noop` 을
+      # 고르고 noop 은 **일부러 실패**를 돌려준다("받지 않은 돈이 들어왔다고 기록되는
+      # 사고" 를 막는 장치다) — 프로덕션 빌드로 돌리면 결제 단계가 영영 안 끝난다.
+      # 위의 `npm run build` 는 번들 스캔용이고 여기서는 `npm run dev` 를 따로 띄운다.
+      #
+      # **차단이다**(경고가 아니다). 지금 둘 다 통과하므로 늘 빨간 게이트가 되지
+      # 않는다(S8-05) — 빨개지면 그것은 진짜 회귀다.
+      - name: start dev server
+        run: |
+          # `nohup` + `disown` — 단계가 끝나도 서버가 살아 다음 단계에서 쓰인다.
+          nohup npm run dev > /tmp/dev.log 2>&1 &
+          disown || true
+          for i in $(seq 1 120); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 http://localhost:3000/login || true)
+            if [ "$code" = "200" ]; then echo "dev up after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "dev server did not come up"; tail -50 /tmp/dev.log; exit 1
+
+      # 사슬 — 입점 승인부터 결제까지 한 거래를 실제 Chrome 으로 민다.
+      - name: chain:walk
+        run: npm run chain:walk
+
+      # 주행이 DB 를 더럽힌다. **되돌리고 다음 주행을 돌린다** — 안 되돌리면 앞 주행이
+      # 만든 문의가 뒤 주행의 인박스에 섞여 둘이 서로를 흔든다.
+      - name: reseed between walks
+        run: npm run db:reseed
+
+      # 업체 — 상품 등록·복제·템플릿. 사슬 주행은 상품 등록을 한 번도 지나지 않는다.
+      - name: vendor:walk
+        run: npm run vendor:walk
+
+      - name: dev server log (on failure)
+        if: failure()
+        run: tail -100 /tmp/dev.log || true
 
       - name: stop supabase stack
         if: always()

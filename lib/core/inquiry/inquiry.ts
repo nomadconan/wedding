@@ -30,7 +30,10 @@ export const CONTACT_PATHS = [
     label: "문의·견적 요청",
     when: "여러 업체에서 같은 조건으로 견적을 받아 비교하고 싶을 때",
     result: "업체별 표준 견적서",
-    href: "/inquiries",
+    // **보내는 자리로 보낸다**(FIX-66). 예전에는 문의함(`/inquiries`)을 가리켰는데
+    // 거기에는 **보내는 자리가 없었다** — 안내가 "이렇게 하세요" 라고 해 놓고
+    // 할 수 없는 화면으로 보내고 있었다.
+    href: "/inquiries/new",
   },
   {
     key: "chat",

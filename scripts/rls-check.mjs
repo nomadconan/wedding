@@ -13750,5 +13750,236 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// =============================================================================
+// FIX-66 — 문의 생성 화면 (사슬의 첫 칸)
+// =============================================================================
+/**
+ * **뚫린 곳이 없어도 검사로 남긴다**(§5.5).
+ *
+ * 이 회차는 소비자가 **남의 커플 이름으로** 쓸 수 있는 화면을 새로 열었다 —
+ * 문의를 만드는 폼이다. 표를 만지기 전에 세 층을 눌러 봤고 **열아홉 자리가 전부
+ * 막혀 있었다.** 그런데 "봤는데 괜찮았다" 는 다음 사람에게 남지 않는다.
+ */
+{
+  const coupleOwner = idOf("couple-linked-a@local.test");
+  const couplePartner = idOf("couple-linked-b@local.test");
+  const outsiderUser = idOf("couple-a@local.test");
+  const vendorOwnerUser = idOf("vendor@local.test");
+  const demoVendorId = vendorOwnerUser
+    ? sql(`select vendor_id from public.vendor_members where user_id = '${vendorOwnerUser}' limit 1;`)
+    : "";
+  const linkedCoupleId = coupleOwner
+    ? sql(`select couple_id from public.couple_members where user_id = '${coupleOwner}' limit 1;`)
+    : "";
+  const strangerVendorId = "00000000-0000-0000-0000-000000000901";
+  const spareCoupleId = "00000000-0000-0000-0000-0000000f66c1";
+
+  check(
+    "**문의 감사 픽스처가 있다** — 없으면 아래 경계 검사가 통째로 헛돈다",
+    Boolean(coupleOwner) && Boolean(couplePartner) && Boolean(outsiderUser) &&
+      Boolean(demoVendorId) && Boolean(linkedCoupleId),
+    `couple=${linkedCoupleId ? "있음" : "없음"} vendor=${demoVendorId ? "있음" : "없음"}`,
+  );
+
+  if (coupleOwner && couplePartner && outsiderUser && demoVendorId && linkedCoupleId) {
+    const INQ = "00000000-0000-0000-0000-0000000f6601";
+    const TGT = "00000000-0000-0000-0000-0000000f6602";
+    const fixtureFor = (vendorId) => `
+      insert into public.couples (id, owner_id)
+      values ('${spareCoupleId}', '${vendorOwnerUser}') on conflict do nothing;
+      insert into public.inquiries (id, couple_id, event_date, categories, status)
+      values ('${INQ}', '${linkedCoupleId}', '2027-05-15', array['hall'], 'open');
+      insert into public.inquiry_targets (id, inquiry_id, vendor_id, status)
+      values ('${TGT}', '${INQ}', '${vendorId}', 'pending');`;
+    const FIX = fixtureFor(demoVendorId);
+    const FIX_OTHER = fixtureFor(strangerVendorId);
+
+    // ── 층1 : 표/컬럼 권한 · CHECK · cascade ────────────────────────────────
+    check(
+      "**남의 커플 이름으로 문의를 만들 수 없다**(층1)",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${outsiderUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.inquiries (couple_id, event_date, categories)
+             values ('${linkedCoupleId}', '2027-05-15', array['hall']);
+             rollback;`)),
+    );
+    check(
+      "**자기 문의를 남의 커플로 옮길 수 없다** — `with check` 는 바뀐 **뒤**의 행을 본다",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             ${fixtureFor(demoVendorId)}
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${coupleOwner}","role":"authenticated","aud":"authenticated"}', true);
+             update public.inquiries set couple_id = '${spareCoupleId}' where id = '${INQ}';
+             rollback;`)),
+    );
+    /**
+     * **DELETE GRANT 는 있고 정책이 없다**(FIX-48 과 같은 모양). 오늘은 RLS 가 막지만
+     * DELETE 정책 한 줄이면 **누가 거절했는지가 통째로 사라진다**(`inquiry_targets`
+     * 가 cascade 다). 그날 이 검사가 운다.
+     */
+    check(
+      "**당사자도 문의를 지울 수 없다** — 지우면 `inquiry_targets` 가 함께 사라진다(cascade)",
+      asUser(coupleOwner, `with d as (delete from public.inquiries where id = '${INQ}' returning 1)
+                           select count(*) from d;`, FIX) === "0",
+    );
+    check(
+      "**대상 행도 지울 수 없다** — 누가 거절했는지는 증적이다",
+      asUser(coupleOwner, `with d as (delete from public.inquiry_targets where id = '${TGT}' returning 1)
+                           select count(*) from d;`, FIX) === "0",
+    );
+    check(
+      "**업체가 `vendor_id` 를 남의 업체로 못 바꾼다** — 컬럼 UPDATE 목록에 없다(층1)",
+      rejectedWith(/permission denied/, () =>
+        sql(`begin;
+             ${FIX}
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${vendorOwnerUser}","role":"authenticated","aud":"authenticated"}', true);
+             update public.inquiry_targets set vendor_id = '${strangerVendorId}' where id = '${TGT}';
+             rollback;`)),
+    );
+    check(
+      "**업체가 `sla_deadline` 을 못 미룬다** — 미루면 미응답이 사라진다",
+      rejectedWith(/permission denied/, () =>
+        sql(`begin;
+             ${FIX}
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${vendorOwnerUser}","role":"authenticated","aud":"authenticated"}', true);
+             update public.inquiry_targets set sla_deadline = now() + interval '30 days' where id = '${TGT}';
+             rollback;`)),
+    );
+    check(
+      "**견적 없이 `responded` 로 못 옮긴다** — 응답은 주장이 아니라 결과다",
+      rejectedWith(/./, () =>
+        sql(`begin;
+             ${FIX}
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${vendorOwnerUser}","role":"authenticated","aud":"authenticated"}', true);
+             update public.inquiry_targets set status = 'responded' where id = '${TGT}';
+             rollback;`)),
+    );
+    check(
+      "**거절은 할 수 있다** — 없을 때 막는지만 보지 말고 있을 때 조용한지도 본다",
+      asUser(vendorOwnerUser,
+        `with u as (update public.inquiry_targets
+                    set status = 'declined', declined_at = now(), decline_reason_code = 'unavailable'
+                    where id = '${TGT}' returning 1)
+         select count(*) from u;`, FIX) === "1",
+    );
+
+    // ── 층2 : 자식 정책이 부모 정책에만 기대는가 ────────────────────────────
+    /**
+     * `inquiry_targets_insert` 는 `is_couple_member(inquiry_couple_id(inquiry_id))` 다 —
+     * 부모를 definer 함수로 풀고 **소유자 조건을 건다.** C-3 이 기록한
+     * `product_options_select_public`(자기 조건이 없다)과 **다른 모양**이다.
+     */
+    check(
+      "**남의 문의에 대상 행을 끼워 넣을 수 없다**(층2 — 부모 소유자 조건이 있다)",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             ${FIX}
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${outsiderUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.inquiry_targets (inquiry_id, vendor_id) values ('${INQ}', '${demoVendorId}');
+             rollback;`)),
+    );
+    check(
+      "**남은 남의 문의를 못 본다**",
+      asUser(outsiderUser, `select count(*) from public.inquiries where id = '${INQ}';`, FIX) === "0",
+    );
+    check(
+      "**남은 남의 대상 행도 못 본다**",
+      asUser(outsiderUser, `select count(*) from public.inquiry_targets where id = '${TGT}';`, FIX) === "0",
+    );
+    check(
+      "**배우자는 본다** — 같은 커플이다(있을 때 조용한가)",
+      asUser(couplePartner, `select count(*) from public.inquiries where id = '${INQ}';`, FIX) === "1",
+    );
+    check(
+      "**받은 업체는 문의 본문을 본다**(`is_inquiry_vendor` · 있을 때 조용한가)",
+      asUser(vendorOwnerUser, `select count(*) from public.inquiries where id = '${INQ}';`, FIX) === "1",
+    );
+    check(
+      "**안 받은 업체는 문의 본문을 못 본다**",
+      asUser(vendorOwnerUser, `select count(*) from public.inquiries where id = '${INQ}';`, FIX_OTHER) === "0",
+    );
+
+    // ── 층3 : 자격의 근거 표 ────────────────────────────────────────────────
+    check(
+      "**남이 남의 커플 멤버가 될 수 없다**(층3) — 되면 문의가 통째로 보인다",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${outsiderUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.couple_members (couple_id, user_id, member_role)
+             values ('${linkedCoupleId}', '${outsiderUser}', 'partner');
+             rollback;`)),
+    );
+    check(
+      "**자기 멤버 행의 `couple_id` 를 남의 커플로 못 바꾼다**(층3)",
+      asUser(outsiderUser, `with u as (update public.couple_members set couple_id = '${linkedCoupleId}'
+                                       where user_id = auth.uid() returning 1)
+                            select count(*) from u;`) === "0",
+    );
+  }
+
+  // ── 화면이 실재하고 들어가는 자리가 있는가 ────────────────────────────────
+  check(
+    "**문의 생성 화면이 실재한다**(FIX-66 · F-C-13) — 사슬의 첫 칸이다",
+    existsSync("app/(consumer)/inquiries/new/page.tsx") &&
+      existsSync("app/(consumer)/inquiries/new/InquiryForm.tsx"),
+  );
+  check(
+    "**폼이 `action:\"create\"` 를 부른다** — 리포 전체에 부르는 자리가 없던 API 다",
+    srcOf("app/(consumer)/inquiries/new/InquiryForm.tsx").includes('"/api/inquiries"') &&
+      srcOf("lib/core/inquiry/request-form.ts").includes('action: "create"'),
+  );
+  check(
+    "**문의함이 폼으로 잇는다**(빈 상태 포함) — 안 이으면 URL 을 아는 사람만 연다",
+    srcOf("app/(consumer)/inquiries/InquiriesView.tsx").includes("/inquiries/new"),
+  );
+  check(
+    "**업체 상세가 폼으로 잇는다** — 그 업체가 딸려 간다",
+    srcOf("app/(consumer)/explore/[vendorId]/page.tsx").includes("/inquiries/new?vendor="),
+  );
+  check(
+    "**세 경로 안내가 보내는 자리를 가리킨다**(S4-01) — 예전에는 보낼 수 없는 문의함이었다",
+    srcOf("lib/core/inquiry/inquiry.ts").includes('href: "/inquiries/new"'),
+  );
+  check(
+    "**폼과 서버가 같은 판정 함수를 쓴다** — 따로 쓰면 화면은 통과인데 서버가 422 다",
+    srcOf("lib/core/inquiry/request-form.ts").includes("requestProblem") &&
+      srcOf("lib/core/inquiry/request-form.ts").includes("targetCountProblem") &&
+      srcOf("lib/core/inquiry/request-form.ts").includes("isPastDate") &&
+      srcOf("app/api/inquiries/route.ts").includes("requestProblem"),
+  );
+  check(
+    "**폼이 클라이언트 번들로 서버 클라이언트를 끌지 않는다** — `tsc` 가 못 보는 경계다",
+    !srcOf("app/(consumer)/inquiries/new/InquiryForm.tsx").includes("@/lib/inquiry/candidates"),
+  );
+
+  // ── 실주행이 이 칸을 우회하지 않는가 (FIX-66 의 요지) ─────────────────────
+  /**
+   * **실주행이 우회하는 단계는 실주행이 지키지 못한다.**
+   *
+   * C-1b·C-3 때 두 주행이 이 칸을 세션 `fetch` 로 넘어갔고, 그래서 화면이 없다는
+   * 사실을 **주행이 통과시켰다.** 이제 클릭으로 지나므로 **우회가 돌아오지 못하게**
+   * 막는다 — 누군가 화면을 지우고 다시 fetch 를 넣으면 여기서 운다.
+   */
+  for (const walk of ["scripts/chain-walk.mjs", "scripts/vendor-walk.mjs"]) {
+    const source = srcOf(walk);
+    check(
+      `**${walk} 이 문의 생성을 우회하지 않는다**(FIX-66)`,
+      !/fetch\(\s*["'`]\/api\/inquiries/.test(source),
+    );
+    check(
+      `**${walk} 이 폼을 실제로 누른다** — 우회를 지웠는데 아무것도 안 하면 칸이 빈다`,
+      source.includes("send-inquiry") && source.includes("/inquiries/new"),
+    );
+  }
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

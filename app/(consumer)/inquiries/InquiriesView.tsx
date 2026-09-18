@@ -128,14 +128,26 @@ export function InquiriesView({
       <div className="space-y-4">
         <ContactPathGuide current="inquiry" />
 
+        {/* **빈 문의함이 '업체 둘러보기' 로만 보내고 있었다**(FIX-66) — 그쪽에도
+            문의를 보내는 자리가 없어서 **안내문이 없는 것을 가리켰다.** 이제 폼으로
+            직접 보낸다. 둘러보기는 후보가 없을 때 갈 곳이라 함께 남긴다. */}
         <EmptyState
           assetId="explore.empty"
           title={INQUIRIES_EMPTY_TITLE}
           description={INQUIRIES_EMPTY_DESCRIPTION}
           action={
-            <Link href="/explore" className="text-sm font-medium text-brand-600">
-              업체 둘러보기
-            </Link>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link
+                href="/inquiries/new"
+                className="text-sm font-medium text-brand-600"
+                data-testid="new-inquiry-link"
+              >
+                견적 요청하기
+              </Link>
+              <Link href="/explore" className="text-sm text-muted-foreground">
+                업체 둘러보기
+              </Link>
+            </div>
           }
         />
       </div>
@@ -146,9 +158,19 @@ export function InquiriesView({
     <div className="space-y-4" data-testid="inquiries">
       <ContactPathGuide current="inquiry" />
 
-      <p className="text-caption text-muted-foreground">
-        한 번에 {maxTargets}곳까지 같은 조건으로 보낼 수 있어요.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-caption text-muted-foreground">
+          한 번에 {maxTargets}곳까지 같은 조건으로 보낼 수 있어요.
+        </p>
+        {/* 이미 보낸 문의가 있어도 **또 보낼 수 있어야 한다**(FIX-66). */}
+        <Link
+          href="/inquiries/new"
+          className="text-sm font-medium text-brand-600"
+          data-testid="new-inquiry-link"
+        >
+          견적 요청하기
+        </Link>
+      </div>
 
       {error ? (
         <p role="alert" className="text-sm text-danger">

@@ -92,6 +92,12 @@ async function launchChrome() {
     "--window-size=1440,960",
   ];
   if (!has("--headful")) args.push("--headless=new");
+  /**
+   * **CI 에서는 샌드박스를 끈다.** 러너는 컨테이너 안에서 돌고 user namespace 가
+   * 막혀 있는 경우가 있어 Chrome 이 아예 안 뜬다 — 그러면 검사가 "화면이 없다" 가
+   * 아니라 **"크롬이 없다"** 로 죽고, 둘은 다른 사실이다. 로컬에서는 켠 채로 둔다.
+   */
+  if (process.env.CI) args.push("--no-sandbox", "--disable-dev-shm-usage");
 
   const proc = spawn(findChrome(), args, { stdio: "ignore", detached: false });
   for (let i = 0; i < 300; i += 1) {
@@ -628,26 +634,36 @@ try {
   });
 
   // ── 3b. 견적 템플릿 — 저장하고 꺼내 쓴다 (F-V-07) ─────────────────────────
-  await step("문의를 하나 만든다 (※ 화면 없음 — 세션 fetch · FIX-66)", consumer, async () => {
-    await goto(consumer, "/inquiries");
-    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
-    const result = await evaluate(
-      consumer,
-      `fetch("/api/inquiries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create",
-          vendorIds: [${JSON.stringify(walk.vendorId)}],
-          eventDate: ${JSON.stringify(eventDate)},
-          categories: ["hall"],
-          note: "C-3 템플릿 주행"
-        })
-      }).then(async (r) => ({ status: r.status, body: (await r.text()).slice(0, 200) }))`,
-    );
-    if (result.status >= 300) throw new Error(`${result.status} ${result.body}`);
+  /**
+   * **우회를 걷었다**(FIX-66 해소). 이 주행은 업체 쪽을 보는 것이지만, 견적 템플릿을
+   * 시험하려면 **들어온 문의가 있어야** 한다. 예전에는 세션 fetch 로 만들었고
+   * 그 칸은 아무도 지키지 못했다 — 이제 폼으로 보낸다.
+   */
+  await step("소비자가 **표준 폼으로** 문의를 보낸다(FIX-66)", consumer, async () => {
+    const info = await goto(consumer, `/inquiries/new?vendor=${walk.vendorId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
 
-    return `${result.status}`;
+    const form = await evaluate(consumer, `!!document.querySelector('[data-testid="inquiry-form"]')`);
+    if (!form) throw new Error(`폼이 안 열렸다: ${info.text.slice(0, 150)}`);
+
+    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    await fill(consumer, "#inquiry-date", eventDate);
+    await click(consumer, "#category-hall");
+    await sleep(400);
+    await click(consumer, '[data-testid="send-inquiry"]');
+
+    const until = Date.now() + 25000;
+    for (;;) {
+      const count = sql(`select count(*) from public.inquiry_targets t
+                           join public.inquiries i on i.id = t.inquiry_id
+                          where t.vendor_id = '${walk.vendorId}';`);
+      if (count !== "0") return `이 업체 앞으로 문의 ${count}건`;
+      if (Date.now() > until) {
+        const state = await snapshot(consumer);
+        throw new Error(`문의가 생기지 않았다: ${state.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
   });
 
   await step("**견적 폼에 저장 버튼이 있다**(F-V-07 — 명세가 '템플릿 저장' 을 요구한다)", owner, async () => {
