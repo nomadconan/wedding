@@ -141,8 +141,22 @@ const svcHeaders = {
   "Content-Type": "application/json",
 };
 
+/**
+ * **모든 요청에 기한을 준다** (FIX-66 회차에 붙였다).
+ *
+ * `supabase db reset` 바로 뒤에는 게이트웨이가 아직 안 서 있는데, 그때 이 스크립트의
+ * 첫 `fetch` 가 **영영 안 풀렸다.** 던지지도 않고 걸리지도 않아 **노드가 이벤트 루프를
+ * 비우며 종료 코드 0 으로 조용히 끝났다** — 배너만 찍고 아무것도 안 한 채로.
+ *
+ * 그래서 이 스크립트를 부르는 쪽(사람 · CI · `db:reseed`)이 **"0 이니까 시드가 섰다"**
+ * 고 읽었고, 실제로는 빈 DB 위에서 다음 단계가 돌았다. **조용히 성공을 주장하는 것이
+ * 가장 나쁘다.** 기한을 주면 `fetch` 가 던지고 `main().catch` 가 1 로 닫는다.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function auth(path, init = {}) {
   const response = await fetch(`${URL_}/auth/v1${path}`, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
     headers: { ...svcHeaders, ...(init.headers ?? {}) },
   });
@@ -158,6 +172,7 @@ async function auth(path, init = {}) {
 
 async function rest(path, init = {}) {
   const response = await fetch(`${URL_}/rest/v1/${path}`, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
     headers: { ...svcHeaders, ...(init.headers ?? {}) },
   });

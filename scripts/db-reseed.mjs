@@ -21,11 +21,17 @@
 // **비동기를 아예 쓰지 않는다**.
 //
 // ── 왜 종료 코드를 안 믿는가 ────────────────────────────────────────────────
-// `spawnSync("npm", …, { shell: true })` 가 **0 을 돌려주고도 시드가 안 선** 적이 있다
-// (윈도우에서 `cmd /c npm.cmd` 를 거치며 안쪽 종료 코드가 묻혔다). 그때 이 스크립트는
+// `seed:accounts` 가 **0 을 돌려주고도 시드가 안 선** 적이 있다. 그때 이 스크립트는
 // "1회째에 섰다" 고 적고 끝났고, **다음 주행이 "업체가 없다" 로 죽어서야** 알았다.
-// 우리가 알고 싶은 것은 "명령이 0 을 냈는가" 가 아니라 **"시드가 섰는가"** 이므로
-// 표를 직접 센다(운영 규칙 7.0b — 빈 결과로 통과하는 검사를 만들지 않는다).
+//
+// **원인은 시드 쪽이었다**(FIX-70): 게이트웨이가 안 선 상태에서 첫 `fetch` 가 영영 안
+// 풀려 노드가 이벤트 루프를 비우며 0 으로 끝났다 — 배너만 찍고. 요청에 기한을 줘서
+// 고쳤으니 이제는 `exit 1` 로 닫힌다. (처음엔 윈도우의 `cmd /c npm.cmd` 탓으로 짐작했는데
+// **CI(ubuntu)에서도 같은 것이 나서** 짐작이 틀렸다는 것을 알았다.)
+//
+// **그래도 결과로 판정하는 것은 그대로 둔다.** 이번엔 원인을 찾았지만 "0 을 냈으니
+// 됐다" 는 전제 자체가 약하다 — 우리가 알고 싶은 것은 **"시드가 섰는가"** 다
+// (운영 규칙 7.0b — 빈 결과로 통과하는 검사를 만들지 않는다).
 //
 // 실행:  npm run db:reseed
 // `audit:*` · `check:escrow` · `check:settlement` · `chain:walk` · `vendor:walk`
@@ -75,9 +81,14 @@ function seededUserCount() {
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     ).trim().split(NL).pop().trim();
 
+    // **`Number("")` 는 0 이다.** 빈 출력을 0 행으로 읽으면 "못 셌다" 가 "없다" 가 되고
+    // 실패 메시지가 거짓을 말한다 — CI 가 "계정 0개" 라 적었는데 실제로는 **못 센**
+    // 것이었다(컨테이너가 아직 재시작 중). 빈 문자열은 **-1** 이다.
+    if (out === "") return -1;
+
     const value = Number(out);
 
-    return Number.isFinite(value) ? value : -1;
+    return Number.isInteger(value) && value >= 0 ? value : -1;
   } catch {
     return -1;
   }
@@ -123,12 +134,19 @@ for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
   }
 
   if (!last) {
-    const why = result.status === 0 ? `종료 코드는 0 인데 계정 ${users}개` : `exit ${result.status}`;
+    const counted = users < 0 ? "계정 수를 못 셌다" : `계정 ${users}개`;
+    const why = result.status === 0 ? `종료 코드는 0 인데 ${counted}` : `exit ${result.status}`;
     process.stdout.write(`[seed] ${attempt}회째 실패(${why}) — ${WAIT_MS / 1000}초 뒤 다시 시도한다\n`);
 
-    // 원인을 아예 감추지 않는다 — 첫 줄만 보여준다.
-    const err = String(result.stderr ?? "").split(NL).find((line) => line.trim() !== "");
-    if (err) process.stdout.write(`        ${err.slice(0, 120)}\n`);
+    /**
+     * **원인을 감추지 않는다.** 처음에는 stderr 첫 줄만 보여줬는데, 시드는 실패를
+     * **stdout 에도** 적어서(`FAIL  auth … -> 502`) 화면에 아무것도 안 남을 때가 있었다 —
+     * 그 탓에 CI 로그만 보고는 왜 실패했는지 알 수 없었다. 둘 다 본다.
+     */
+    for (const [label, raw] of [["out", result.stdout], ["err", result.stderr]]) {
+      const line = String(raw ?? "").split(NL).find((l) => /FAIL|Error|error|STOP/.test(l));
+      if (line) process.stdout.write(`        [${label}] ${line.trim().slice(0, 140)}\n`);
+    }
 
     sleepSync(WAIT_MS);
   }
