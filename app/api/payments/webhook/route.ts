@@ -27,8 +27,11 @@ export async function POST(request: NextRequest) {
     rawBody,
     // 헤더 이름은 결제사 규격을 따른다. 실연동 시 어댑터와 함께 확정된다(D-28).
     signature: request.headers.get("toss-signature") ?? request.headers.get("x-signature"),
-    // 웹훅은 사람이 부른 것이 아니다. 증적의 actor 는 시스템이다.
-    actorId: "00000000-0000-0000-0000-000000000000",
+    // 웹훅은 사람이 부른 것이 아니다 — **없는 것은 없다고 적는다**(D-173 · FIX-72).
+    // 전에는 0 으로 채운 uuid 를 넣었는데 `entity_events.actor_id` 가 `auth.users` 를
+    // 참조해 **FK 가 거절했다.** 넣는 쪽이 결과를 안 보니 웹훅은 정상 응답을 돌려줬고
+    // 증적만 사라졌다. 실행자는 `source: "system"` 이 말한다.
+    actorId: null,
   });
 
   if (result.status === "rejected") {

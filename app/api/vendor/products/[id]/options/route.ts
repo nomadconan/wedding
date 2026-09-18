@@ -1,3 +1,4 @@
+import { recordAudit } from "@/lib/audit/record";
 import type { NextRequest } from "next/server";
 
 import { fail, failValidation, ok } from "@/lib/api/response";
@@ -98,13 +99,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   }
 
   const admin = createAdminClient();
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_product_option_create",
-    target_type: "product",
-    target_id: id,
-    after_json: { name: created.name, price: created.price, is_mandatory: created.is_mandatory },
+    targetType: "product",
+    targetId: id,
+    after: { name: created.name, price: created.price, is_mandatory: created.is_mandatory },
   });
 
   return ok({ option: created }, { status: 201 });

@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   UNREGISTERED_INVITE_MESSAGE,
@@ -79,14 +79,14 @@ export async function POST(request: NextRequest) {
 
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_member_invite",
-    target_type: "vendor",
-    target_id: vendor.id,
+    targetType: "vendor",
+    targetId: vendor.id,
     // 이메일 원문을 남기지 않는다. 대상은 user_id 로 식별된다(CLAUDE.md §5.3).
-    after_json: { member_user_id: invited.id, vendor_role: role },
+    after: { member_user_id: invited.id, vendor_role: role },
   });
 
   await recordEvent({

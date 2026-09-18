@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   ProductInputFieldsSchema,
@@ -147,14 +147,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   // 가격 변경은 정산과 직결되므로 값까지 남긴다(§7.2).
   const priceChanged = before.base_price_total !== updated.base_price_total;
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: priceChanged ? "vendor_product_price_update" : "vendor_product_update",
-    target_type: "product",
-    target_id: id,
-    before_json: { base_price_total: before.base_price_total, status: before.status },
-    after_json: { base_price_total: updated.base_price_total, status: updated.status },
+    targetType: "product",
+    targetId: id,
+    before: { base_price_total: before.base_price_total, status: before.status },
+    after: { base_price_total: updated.base_price_total, status: updated.status },
   });
 
   const vendor = await findMemberVendor(user.id);
@@ -189,13 +189,13 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
   }
 
   const admin = createAdminClient();
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_product_delete",
-    target_type: "product",
-    target_id: id,
-    before_json: { name: deleted.name, status: deleted.status },
+    targetType: "product",
+    targetId: id,
+    before: { name: deleted.name, status: deleted.status },
   });
 
   return ok({ id });

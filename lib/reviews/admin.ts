@@ -1,5 +1,5 @@
 import { readIntSetting } from "@/lib/app-settings";
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import {
   type AbuseFlag,
   type AbuseSample,
@@ -444,15 +444,15 @@ async function writeAuditLog(
 
   const basis = ((basisRows ?? []) as { id: string }[]).map((row) => row.id);
 
-  await admin.from("audit_logs").insert({
-    actor_id: input.actorId,
-    actor_role: input.actorRole,
+  await recordAudit({
+    actorId: input.actorId,
+    actorRole: input.actorRole,
     action: input.action,
-    target_type: input.targetType,
-    target_id: input.targetId,
-    before_json: input.before,
-    after_json: input.after,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    before: input.before,
+    after: input.after,
     // 빈 배열은 CHECK 이 막는다.
-    resolution_basis: basis.length > 0 ? basis : null,
+    resolutionBasis: basis.length > 0 ? basis : null,
   });
 }

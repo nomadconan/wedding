@@ -71,7 +71,7 @@ export async function commitRedemption(input: {
   paymentId: string;
   discountAmount: number;
   borneBy: CouponIssuer;
-  actorId: string;
+  actorId: string | null;
 }): Promise<RedeemSuccess | RedeemFailure> {
   const admin = createAdminClient();
 

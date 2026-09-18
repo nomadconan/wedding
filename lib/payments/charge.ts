@@ -217,7 +217,7 @@ export type ChargeOutcome =
 
 export async function chargeInstallment(input: {
   scheduleId: string;
-  actorId: string;
+  actorId: string | null;
   /** 명시적 재결제 회차. 자동 재시도에서는 올리지 않는다(멱등이 사라진다). */
   attempt?: number;
   /**
@@ -520,7 +520,7 @@ function blockedMessage(reason: string): string {
  */
 async function linkSettlement(input: {
   paymentId: string;
-  actorId: string;
+  actorId: string | null;
   amount: number;
 }): Promise<void> {
   const basis = feeBasisOf(await readSetting("settlement.fee_basis"));
@@ -564,7 +564,7 @@ async function notifyCouple(
 export async function cancelPendingPayment(input: {
   paymentId: string;
   reason: string;
-  actorId: string;
+  actorId: string | null;
 }): Promise<{ status: "cancelled" | "skipped"; reason?: string } | ChargeFailure> {
   const admin = createAdminClient();
 
@@ -641,7 +641,7 @@ export async function applyRefund(input: {
   paymentId: string;
   amount: number;
   reason: string;
-  actorId: string;
+  actorId: string | null;
   /** 해지 절차에서 나온 환불이면 그 절차. §3.4 가 적은 "위약금 산정 결과 연결" 이다. */
   cancellationId?: string | null;
 }): Promise<{ status: "refunded"; nextStatus: string } | ChargeFailure> {

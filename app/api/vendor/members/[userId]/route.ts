@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   VendorMemberRoleChangeSchema,
@@ -94,14 +94,14 @@ export async function PATCH(
   const before = members.find((member) => member.userId === userId);
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_member_role_change",
-    target_type: "vendor",
-    target_id: vendor.id,
-    before_json: { member_user_id: userId, vendor_role: before?.role ?? null },
-    after_json: { member_user_id: userId, vendor_role: parsed.data.role },
+    targetType: "vendor",
+    targetId: vendor.id,
+    before: { member_user_id: userId, vendor_role: before?.role ?? null },
+    after: { member_user_id: userId, vendor_role: parsed.data.role },
   });
 
   await recordEvent({
@@ -159,13 +159,13 @@ export async function DELETE(
 
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_member_remove",
-    target_type: "vendor",
-    target_id: vendor.id,
-    before_json: { member_user_id: userId, vendor_role: deleted.vendor_role },
+    targetType: "vendor",
+    targetId: vendor.id,
+    before: { member_user_id: userId, vendor_role: deleted.vendor_role },
   });
 
   await recordEvent({

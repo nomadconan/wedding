@@ -54,6 +54,10 @@ export default defineConfig({
       // 안 적으면 **아무 경고 없이 1년짜리 캐시에 얹히고**(revalidate 31536000) 값이
       // 바뀌는 날에야 드러난다 — 사람의 기억이 아니라 검사가 들어야 하는 종류다.
       "lib/supabase/**/*.test.ts",
+      // FIX-72: 증적을 쓰는 자리가 **하나뿐인지** 대조한다. 손으로 적으면 결과를 안
+      // 보게 되고, 그러면 **DB 가 거절해도 부르는 쪽은 성공으로 읽는다** — FIX-71 이
+      // 그렇게 한 배치의 증적을 통째로 잃고도 초록불이었다.
+      "lib/audit/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {

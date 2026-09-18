@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
 
     let built = 0;
     let insufficient = 0;
+    // **증적이 안 남은 칸을 센다**(FIX-72). 배치는 계속 돌되 사실은 밖으로 나간다.
+    let auditLost = 0;
 
     for (const cell of cells) {
       const result = await recalculateIndex({
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (!result.ok) continue;
+      if (result.auditLost) auditLost += 1;
       if (result.blocked) insufficient += 1;
       else built += 1;
     }
@@ -91,8 +94,14 @@ export async function POST(request: NextRequest) {
           status: "succeeded",
           processed_count: cells.length,
           // **표본 부족을 실패로 세지 않는다.** 아직 안 모인 것이지 고장이 아니다.
+          // **증적 유실은 다르다** — 그것은 고장이고, 운영자가 봐야 한다(FIX-72).
           error_summary:
-            insufficient > 0 ? `insufficient_sample:${insufficient}` : null,
+            [
+              auditLost > 0 ? `audit_lost:${auditLost}` : null,
+              insufficient > 0 ? `insufficient_sample:${insufficient}` : null,
+            ]
+              .filter(Boolean)
+              .join(" ") || null,
         })
         .eq("id", jobRunId);
     }

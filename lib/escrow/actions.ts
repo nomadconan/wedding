@@ -73,7 +73,7 @@ export type HoldOutcome =
 export async function holdEscrow(input: {
   scheduleId: string;
   paymentId: string;
-  actorId: string;
+  actorId: string | null;
   now?: Date;
 }): Promise<HoldOutcome> {
   const admin = createAdminClient();
@@ -208,7 +208,7 @@ export async function confirmFulfillment(input: {
   holdId: string;
   side: "couple" | "vendor";
   confirmed: boolean;
-  actorId: string;
+  actorId: string | null;
   now?: Date;
 }): Promise<ConfirmOutcome | EscrowFailure> {
   const admin = createAdminClient();
