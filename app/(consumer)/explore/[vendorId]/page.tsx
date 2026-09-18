@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
@@ -7,6 +8,7 @@ import { ContactPathGuide } from "@/components/domain/ContactPathGuide";
 import { TransparentContractBadge } from "@/components/domain/TransparentContractBadge";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
@@ -119,6 +121,16 @@ export default async function VendorDetailPage(props: { params: Promise<{ vendor
 
         {/* 대화 시작(F-C-27). 방을 여는 것은 고객뿐이므로 여기가 유일한 진입점이다. */}
         <StartChatButton vendorId={vendor.id} />
+
+        {/* 견적 요청(F-C-13 · FIX-66). **채팅과 다른 길이다** — 여기서 1:1 문의를
+            받으면 채팅과 구분이 사라지므로(S4-01 · `CONTACT_PATHS`) **이 업체가 미리
+            골라진 1:N 표준 폼**으로 보낸다. 남는 것도 다르다: 채팅은 대화 기록,
+            문의는 업체별 표준 견적서다. */}
+        <Button variant="outline" size="touch" className="w-full" asChild>
+          <Link href={`/inquiries/new?vendor=${vendor.id}`} data-testid="vendor-inquiry-link">
+            이 업체에 견적 요청하기
+          </Link>
+        </Button>
 
         {/* 검증 후기(F-C-17 · S8-11). **커뮤니티 언급 바로 위**에 둔다 —
             거래로 확인된 평가가 먼저 오고, 모양도 실선 카드로 갈라놓는다(§6.2). */}

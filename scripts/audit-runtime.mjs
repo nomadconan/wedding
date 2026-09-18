@@ -216,6 +216,24 @@ function segmentValue(name, routeHint) {
 }
 
 /** `/bookings/[id]/cancel` -> `/bookings/<uuid>/cancel` */
+/**
+ * **쿼리로만 실물이 뜨는 화면**이 있다.
+ *
+ * `/inquiries/new` 는 동적 세그먼트가 없어서 `materialize` 가 손댈 곳이 없는데,
+ * 후보 업체가 없으면 **빈 상태**만 그린다 — 폼은 한 번도 안 열린다. 그러면 표는
+ * "열렸다" 고 적지만 **정작 본 것은 빈 화면**이다(`/contracts/[id]` 가 가짜 uuid 로
+ * 열리던 것과 같은 계열 · C-1b).
+ *
+ * 그래서 화면이 실물을 그리는 데 필요한 쿼리를 여기 적는다. 빈 상태도 볼 가치가
+ * 있지만 **그것만 보는 것**이 문제다 — 쿼리를 주면 온보딩을 마친 계정은 폼을 열고,
+ * 안 마친 계정은 여전히 전제 미충족을 그린다(둘 다 사실이다).
+ */
+function routeQuery(route) {
+  if (route === "/inquiries/new") return `?vendor=${FIX.vendorPublic ?? MISSING_UUID}`;
+
+  return "";
+}
+
 function materialize(route) {
   let usedFallback = false;
   const url = route.replace(/\[([^\]]+)\]/g, (_, name) => {
@@ -226,7 +244,11 @@ function materialize(route) {
     }
     return encodeURIComponent(v);
   });
-  return { url, usedFallback };
+
+  const query = routeQuery(route);
+  if (query.includes(MISSING_UUID)) usedFallback = true;
+
+  return { url: url + query, usedFallback };
 }
 
 // --- CDP ----------------------------------------------------------------------
@@ -261,6 +283,12 @@ async function launchChrome() {
     "--window-size=1280,900",
   ];
   if (!has("--headful")) args.push("--headless=new");
+  /**
+   * **CI 에서는 샌드박스를 끈다.** 러너는 컨테이너 안에서 돌고 user namespace 가
+   * 막혀 있는 경우가 있어 Chrome 이 아예 안 뜬다 — 그러면 검사가 "화면이 없다" 가
+   * 아니라 **"크롬이 없다"** 로 죽고, 둘은 다른 사실이다. 로컬에서는 켠 채로 둔다.
+   */
+  if (process.env.CI) args.push("--no-sandbox", "--disable-dev-shm-usage");
 
   const proc = spawn(findChrome(), args, { stdio: "ignore", detached: false });
 

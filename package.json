@@ -30,6 +30,7 @@
     "db:diff": "supabase db diff",
     "db:types": "supabase gen types typescript --local > types/database.ts",
     "db:rls": "node --env-file=.env.local scripts/rls-check.mjs",
+    "db:reseed": "node --env-file=.env.local scripts/db-reseed.mjs",
     "audit:routes": "node scripts/audit-routes.mjs",
     "audit:screens": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs --screens --out=tmp/audit-screens.json",
     "audit:api": "node --env-file=.env.local --experimental-websocket scripts/audit-runtime.mjs --api --out=tmp/audit-api.json",
