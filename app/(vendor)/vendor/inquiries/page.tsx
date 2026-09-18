@@ -11,6 +11,7 @@ import { loadQuotableProducts, loadSlaThreshold, loadVendorInbox } from "@/lib/i
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { findMemberVendor } from "@/lib/vendor/products";
+import { loadTemplates } from "@/lib/vendor/templates";
 
 import { VendorInquiriesView } from "./VendorInquiriesView";
 
@@ -65,6 +66,17 @@ export default async function VendorInquiriesPage() {
     // 이 목록이 곧 자유 양식 금지의 화면 쪽 표현이다(스키마 쪽은 0024).
     const products = await loadQuotableProducts(supabase, vendor.id);
 
+    /**
+     * 저장해 둔 견적 템플릿(F-V-07 — 명세가 "템플릿 저장" 을 요구한다).
+     *
+     * **표도 API 도 있었고 꺼내 쓰는 자리만 없었다**(C-3). `/vendor/settings` 는
+     * "견적 템플릿은 문의·견적 화면에서 견적을 만들 때 저장할 수 있어요" 라고 적어
+     * 두었는데 그 화면에 저장 버튼이 없었다 — 화면이 없는 길을 가리키고 있었다.
+     */
+    const quoteTemplates = (await loadTemplates(supabase, vendor.id)).filter(
+      (template) => template.kind === "quote",
+    );
+
     return (
       <AdminShell
         role="vendor"
@@ -78,6 +90,7 @@ export default async function VendorInquiriesPage() {
         <VendorInquiriesView
           initialTargets={targets}
           products={products}
+          quoteTemplates={quoteTemplates}
           slaConfigured={threshold !== null}
         />
       </AdminShell>

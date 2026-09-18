@@ -354,7 +354,12 @@ export function VendorSettingsView({
         <CardHeader>
           <CardTitle className="text-base">저장한 템플릿</CardTitle>
           <CardDescription>
-            빠른 답변과 견적 구성을 저장해 두고 꺼내 써요. 담당자도 만들 수 있어요.
+            {/* **어디서 꺼내는지 적는다**(C-3). 예전에는 "저장해 두고 꺼내 써요" 라고만
+                했는데 **꺼내는 자리가 실제로 없었다** — 저장은 되고 아무 데도 안 떴다.
+                이제 뜨므로 어느 화면인지까지 말한다. 자리를 말하지 않는 안내는
+                "어딘가에 있겠지" 를 시키고, 없을 때와 구분되지 않는다. */}
+            빠른 답변은 <strong>채팅 응대</strong>에서, 견적 구성은{" "}
+            <strong>문의·견적</strong>에서 꺼내 씁니다. 담당자도 만들 수 있어요.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -413,7 +418,8 @@ export function VendorSettingsView({
                 />
               ) : (
                 <p className="text-caption text-muted-foreground">
-                  견적 템플릿은 문의·견적 화면에서 견적을 만들 때 저장할 수 있어요.
+                  견적 템플릿은 <strong>문의·견적</strong> 화면에서 견적을 구성한 뒤
+                  &lsquo;템플릿으로 저장&rsquo;을 누르면 여기에 쌓입니다.
                 </p>
               )}
             </div>
@@ -613,7 +619,11 @@ function QuickReplyForm({
         onChange={(event) => setTitle(event.target.value)}
         className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
       />
+      {/* **id 와 이름을 붙인다**(C-3). 이름 칸에만 `<Label>` 이 걸려 있어 본문 칸은
+          스크린리더에 '편집' 으로만 읽혔고, 가리킬 이름이 없어 실주행에서도 못 잡았다. */}
       <textarea
+        id="qr-body"
+        aria-label="빠른 답변 문장"
         rows={2}
         value={body}
         maxLength={1000}

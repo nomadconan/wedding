@@ -24,6 +24,13 @@ import {
   type TargetStatus,
 } from "@/lib/core/inquiry/inquiry";
 import type { VendorInquiryView } from "@/lib/inquiry/loader";
+import {
+  applyQuoteTemplate,
+  defaultTemplateTitle,
+  isQuoteTemplatePayload,
+  quoteTemplatePayloadOf,
+} from "@/lib/core/vendor/quote-template";
+import type { VendorTemplateView } from "@/lib/core/schemas/vendor-settings";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { cn } from "@/lib/utils";
 
@@ -50,10 +57,12 @@ type QuotableProduct = {
 export function VendorInquiriesView({
   initialTargets,
   products,
+  quoteTemplates,
   slaConfigured,
 }: {
   initialTargets: VendorInquiryView[];
   products: QuotableProduct[];
+  quoteTemplates: VendorTemplateView[];
   slaConfigured: boolean;
 }) {
   const [targets, setTargets] = useState(initialTargets);
@@ -254,6 +263,7 @@ export function VendorInquiriesView({
                       key={active.id}
                       targetId={active.id}
                       products={products}
+                      templates={quoteTemplates}
                       pending={pending}
                       onSend={(body) => call(body)}
                     />
@@ -300,11 +310,13 @@ export function VendorInquiriesView({
 function QuoteForm({
   targetId,
   products,
+  templates,
   pending,
   onSend,
 }: {
   targetId: string;
   products: QuotableProduct[];
+  templates: VendorTemplateView[];
   pending: boolean;
   onSend: (body: unknown) => Promise<boolean>;
 }) {
@@ -314,6 +326,9 @@ function QuoteForm({
   const [optionAmounts, setOptionAmounts] = useState<Record<string, string>>({});
   const [validUntil, setValidUntil] = useState("");
   const [memo, setMemo] = useState("");
+  /** 템플릿을 꺼낼 때 **저장할 때와 달라진 점**. 비어 있으면 그대로 복원된 것이다. */
+  const [templateNote, setTemplateNote] = useState<string[]>([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   const product = products.find((item) => item.id === productId) ?? null;
 
@@ -324,6 +339,81 @@ function QuoteForm({
         게시해 주세요 — 등록된 항목만 견적에 넣을 수 있습니다.
       </p>
     );
+  }
+
+  /**
+   * 저장해 둔 구성을 **폼에 붓는다**(F-V-07 · C-3).
+   *
+   * **바로 보내지 않는다.** 빠른 답변과 같은 규칙이다 — 템플릿은 초안이고 금액은
+   * 고객마다 다시 본다. 그리고 `vendor_templates` 에는 **FK 가 없으므로**(0026)
+   * 저장 뒤 상품이 내려갔을 수 있다. `applyQuoteTemplate` 이 지금 고를 수 있는
+   * 것만 남기고 **무엇이 빠졌는지 함께** 돌려준다 — 조용히 버리면 업체는 저장할
+   * 때와 같은 견적을 보낸 줄 안다.
+   */
+  function applyTemplate(template: VendorTemplateView) {
+    if (!isQuoteTemplatePayload(template.payload)) {
+      setTemplateNote(["이 템플릿은 지금 형식과 달라 꺼낼 수 없어요. 새로 저장해 주세요."]);
+
+      return;
+    }
+
+    const result = applyQuoteTemplate(
+      template.payload,
+      products,
+      { productId, baseAmount, optionIds, optionAmounts, memo },
+    );
+
+    setProductId(result.form.productId);
+    setBaseAmount(result.form.baseAmount);
+    setOptionIds(result.form.optionIds);
+    setOptionAmounts(result.form.optionAmounts);
+    setMemo(result.form.memo);
+    setTemplateNote(result.dropped);
+  }
+
+  /**
+   * 지금 구성을 템플릿으로 저장한다.
+   *
+   * **설정 화면과 같은 API 를 쓴다**(`POST /api/vendor/settings`) — 저장 경로가
+   * 둘이면 검증도 둘이 되고, 한쪽만 고쳐지는 날이 온다.
+   */
+  async function saveAsTemplate() {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+
+    const title = window.prompt(
+      "템플릿 이름",
+      defaultTemplateTitle(product.name, optionIds.length),
+    );
+    // 취소했거나 이름을 비웠으면 저장하지 않는다.
+    if (title === null || title.trim() === "") return;
+
+    setSavingTemplate(true);
+    setTemplateNote([]);
+
+    try {
+      const response = await fetch("/api/vendor/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_template",
+          kind: "quote",
+          title: title.trim(),
+          payload: quoteTemplatePayloadOf({ productId, baseAmount, optionIds, optionAmounts, memo }),
+        }),
+      });
+      const payload = (await response.json()) as { ok: boolean; error?: { message?: string } };
+
+      setTemplateNote([
+        response.ok && payload.ok
+          ? "템플릿으로 저장했어요. 다음 문의에서 꺼내 쓸 수 있어요."
+          : (payload.error?.message ?? "템플릿을 저장하지 못했어요."),
+      ]);
+    } catch {
+      setTemplateNote(["네트워크 문제로 저장하지 못했어요."]);
+    } finally {
+      setSavingTemplate(false);
+    }
   }
 
   async function send() {
@@ -362,6 +452,55 @@ function QuoteForm({
       <div>
         <p className="text-sm font-medium text-foreground">표준 견적서</p>
         <p className="text-caption text-muted-foreground">{STANDARD_QUOTE_NOTE}</p>
+      </div>
+
+      {/* ── 저장해 둔 구성 (F-V-07 · C-3) ──────────────────────────────────
+          **표와 API 는 있었고 꺼내 쓰는 자리만 없었다.** 설정 화면이 "견적 템플릿은
+          문의·견적 화면에서 저장할 수 있어요" 라고 적어 두었는데 그 화면에 저장
+          버튼이 없었다 — 할 수 있다고 적고 수단을 안 주는 자리다(FIX-65 와 같은 계열). */}
+      <div className="space-y-1.5" data-testid="quote-templates">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {templates.length === 0 ? (
+            <p className="text-caption text-muted-foreground">
+              저장해 둔 구성이 없어요. 아래를 채우고 &lsquo;템플릿으로 저장&rsquo;을 누르면
+              다음 문의에서 꺼내 쓸 수 있어요.
+            </p>
+          ) : (
+            templates.map((template) => (
+              <Button
+                key={template.id}
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="apply-quote-template"
+                onClick={() => applyTemplate(template)}
+              >
+                {template.title}
+              </Button>
+            ))
+          )}
+        </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={savingTemplate || productId === ""}
+          data-testid="save-quote-template"
+          onClick={() => void saveAsTemplate()}
+        >
+          {savingTemplate ? "저장 중…" : "템플릿으로 저장"}
+        </Button>
+
+        {templateNote.length > 0 ? (
+          <ul className="space-y-0.5" data-testid="quote-template-note">
+            {templateNote.map((note) => (
+              <li key={note} className="text-caption text-muted-foreground">
+                · {note}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
       <div className="space-y-1.5">

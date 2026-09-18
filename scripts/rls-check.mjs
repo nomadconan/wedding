@@ -13525,5 +13525,230 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+// =============================================================================
+// C-3 — 업체 편의 (상품 복제 · 템플릿 꺼내 쓰기 · 대표/담당자 경계)
+// =============================================================================
+/**
+ * **뚫린 곳이 없어도 검사로 남긴다**(운영 규칙 §5.5).
+ *
+ * C-3 은 상품을 **복사**하는 길을 새로 열었다. 복사는 쓰기이고, `products` 는 가격
+ * 테이블이라 **대표 전용**이다(§3.9). 감사에서 열세 자리를 눌러 봤고 전부 막혀
+ * 있었다 — 그런데 "봤는데 괜찮았다" 는 다음 사람에게 남지 않는다. 눌러 본 것을
+ * 그대로 검사로 옮긴다.
+ */
+{
+  const staffUser = idOf("staff@local.test");
+  const ownerUser = idOf("vendor@local.test");
+  const demoVendor = staffUser
+    ? sql(`select vendor_id from public.vendor_members where user_id = '${staffUser}' limit 1;`)
+    : "";
+  const otherVendor = "00000000-0000-0000-0000-000000000901";
+
+  // **먼저 픽스처가 있는지 묻는다.** 없으면 아래 검사가 전부 빈 결과를 통과시킨다.
+  check(
+    "**대표·담당자 픽스처가 있다** — 없으면 아래 경계 검사가 통째로 헛돈다",
+    Boolean(staffUser) && Boolean(ownerUser) && Boolean(demoVendor),
+    `staff=${staffUser ? "있음" : "없음"} owner=${ownerUser ? "있음" : "없음"} vendor=${demoVendor ? "있음" : "없음"}`,
+  );
+
+  if (staffUser && ownerUser && demoVendor) {
+    // ── 층3 : 자격의 근거 표를 자격을 얻으려는 사람이 직접 쓸 수 있는가 ──────
+    check(
+      "**담당자가 자기를 대표로 올릴 수 없다**(층3) — 자격의 근거 표를 본인이 못 쓴다",
+      asUser(staffUser, `with u as (update public.vendor_members set vendor_role = 'owner'
+                                    where user_id = auth.uid() returning 1)
+                         select count(*) from u;`) === "0",
+    );
+    check(
+      "**담당자가 자기 앞으로 대표 멤버 행을 만들 수 없다**(층3) — UPDATE 를 막아도 INSERT 가 남는다",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${staffUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.vendor_members (vendor_id, user_id, vendor_role)
+             values ('${demoVendor}', '${staffUser}', 'owner');
+             rollback;`)),
+    );
+    check(
+      "**담당자가 남의 업체에 끼어들 수 없다**",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${staffUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.vendor_members (vendor_id, user_id, vendor_role)
+             values ('${otherVendor}', '${staffUser}', 'staff');
+             rollback;`)),
+    );
+
+    // ── 층1 : 판매가·추가금은 대표만 (§3.9) — 복제도 쓰기다 ──────────────────
+    check(
+      "**담당자가 판매가를 고칠 수 없다**(§3.9)",
+      asUser(staffUser, `with u as (update public.products set base_price_total = base_price_total + 1
+                                    where vendor_id = '${demoVendor}' returning 1)
+                         select count(*) from u;`) === "0",
+    );
+    check(
+      "**담당자가 상품을 만들 수 없다** — 복제가 부르는 것도 같은 INSERT 다(C-3)",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${staffUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.products (vendor_id, name, category, base_price_total, status)
+             values ('${demoVendor}', 'staff-product', 'hall', 1000000, 'draft');
+             rollback;`)),
+    );
+    check(
+      "**담당자가 추가금을 등록할 수 없다** — 복제가 추가금도 옮긴다(C-3)",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${staffUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.product_options (product_id, name, price, is_mandatory)
+             select id, 'staff-option', 50000, true from public.products
+              where vendor_id = '${demoVendor}' limit 1;
+             rollback;`)),
+    );
+    check(
+      "**대표는 상품을 만들 수 있다** — 없을 때 막는지만 보지 말고 있을 때 조용한지도 본다",
+      asUser(ownerUser, `with i as (insert into public.products (vendor_id, name, category, base_price_total, status)
+                                    values ('${demoVendor}', 'C3 owner probe', 'hall', 1000000, 'draft') returning 1)
+                         select count(*) from i;`) === "1",
+    );
+
+    // ── 층2 : 자식 정책이 부모 정책에만 기대는 자리 ──────────────────────────
+    /**
+     * `product_options_select_public` 은 **자기 조건이 없다** — `exists (select 1 from
+     * products p where p.id = product_id)` 뿐이고 상품의 공개 여부는 `products` 의
+     * 정책이 판정한다. 지금은 옳게 동작한다(정책 안의 서브쿼리에도 RLS 가 걸린다).
+     * 그러나 이것은 **다른 표의 정책에 기대는 모양**이라, `products` 에 넓은 SELECT
+     * 정책이 하나 붙는 날 **초안 상품의 추가금이 함께 샌다.** 그날 이 검사가 운다.
+     */
+    const draftFixture = `
+      insert into public.products (id, vendor_id, name, category, base_price_total, status)
+      values ('00000000-0000-0000-0000-0000000c3001', '${demoVendor}', 'C3 초안', 'hall', 9000000, 'draft');
+      insert into public.product_options (product_id, name, price, is_mandatory)
+      values ('00000000-0000-0000-0000-0000000c3001', 'C3 비공개 추가금', 300000, true);`;
+    const stranger = idOf("couple-a@local.test");
+
+    check(
+      "**남은 초안 상품을 못 본다**",
+      asUser(stranger, `select count(*) from public.products
+                         where id = '00000000-0000-0000-0000-0000000c3001';`, draftFixture) === "0",
+    );
+    check(
+      "**남은 초안 상품의 추가금도 못 본다**(층2 — 자식이 부모 정책에 기대는 자리)",
+      asUser(stranger, `select count(*) from public.product_options
+                         where product_id = '00000000-0000-0000-0000-0000000c3001';`, draftFixture) === "0",
+    );
+    check(
+      "**담당자는 자기 업체 초안을 본다** — 있을 때 조용한가",
+      asUser(staffUser, `select count(*) from public.products
+                          where id = '00000000-0000-0000-0000-0000000c3001';`, draftFixture) === "1",
+    );
+
+    // ── vendor_templates — 담당자도 만든다(의도)지만 남의 것은 못 만진다 ─────
+    check(
+      "**담당자도 템플릿을 만든다**(의도 · 화면이 그렇게 적는다)",
+      asUser(staffUser, `with i as (insert into public.vendor_templates (vendor_id, kind, title, payload_json)
+                                    values ('${demoVendor}', 'quick_reply', 'C3 시험', '{"body":"x"}'::jsonb) returning 1)
+                         select count(*) from i;`) === "1",
+    );
+    check(
+      "**남의 업체 템플릿은 못 만든다**",
+      rejectedWith(/row-level security/, () =>
+        sql(`begin;
+             set local role authenticated;
+             select set_config('request.jwt.claims', '{"sub":"${staffUser}","role":"authenticated","aud":"authenticated"}', true);
+             insert into public.vendor_templates (vendor_id, kind, title, payload_json)
+             values ('${otherVendor}', 'quick_reply', 'C3 침입', '{"body":"x"}'::jsonb);
+             rollback;`)),
+    );
+    check(
+      "**커플은 업체 템플릿을 못 읽는다**",
+      asUser(stranger, `select count(*) from public.vendor_templates;`) === "0",
+    );
+  }
+
+  // ── 화면이 없는 길을 가리키지 않는가 ──────────────────────────────────────
+  /**
+   * **FIX-65 를 CI 가 지키게 한다.**
+   *
+   * C-1b 가 계약 발행 버튼을 달았고 `chain:walk` 이 그것을 지킨다 — 그런데
+   * **`chain:walk` 은 CI 에 없다**(CI 는 lint·types·tests·build·bundle·db:rls 를 돈다).
+   * 즉 버튼이 사라져도 **PR 은 초록불**이다. 같은 결함이 다시 들어올 자리라 여기서 막는다.
+   */
+  check(
+    "**계약 발행 버튼이 실재한다**(FIX-65) — API 는 있는데 부를 자리가 없던 자리다",
+    existsSync("app/(vendor)/vendor/bookings/IssuePanel.tsx") &&
+      srcOf("app/(vendor)/vendor/bookings/IssuePanel.tsx").includes('"/api/contracts"') &&
+      srcOf("app/(vendor)/vendor/bookings/page.tsx").includes("<IssuePanel"),
+  );
+
+  /**
+   * **저장한 것을 꺼내 쓰는 자리가 있는가**(C-3 · F-V-07 · F-V-15).
+   *
+   * `vendor_templates` 는 0026 부터 있었고 `/vendor/settings` 에서 만들고 지울 수
+   * 있었는데 **꺼내 쓰는 자리가 없었다.** 설정 화면은 "저장해 두고 꺼내 써요" 라고
+   * 적고 있었다 — FIX-65 와 같은 결함이다.
+   */
+  check(
+    "**견적 폼이 템플릿을 꺼내고 저장한다**(F-V-07 — 명세가 '템플릿 저장' 을 요구한다)",
+    srcOf("app/(vendor)/vendor/inquiries/VendorInquiriesView.tsx").includes("applyQuoteTemplate") &&
+      srcOf("app/(vendor)/vendor/inquiries/VendorInquiriesView.tsx").includes("save-quote-template"),
+  );
+  check(
+    "**견적 폼이 템플릿을 실제로 받는다** — 화면만 그리고 목록이 안 오면 늘 비어 있다",
+    srcOf("app/(vendor)/vendor/inquiries/page.tsx").includes("loadTemplates") &&
+      srcOf("app/(vendor)/vendor/inquiries/page.tsx").includes("quoteTemplates"),
+  );
+  check(
+    "**채팅이 저장해 둔 빠른 답변을 보여준다**(F-V-15) — 붙박이 상수만 뜨던 자리다",
+    srcOf("app/(vendor)/vendor/chat/VendorChatView.tsx").includes("savedReplies") &&
+      srcOf("app/(vendor)/vendor/chat/page.tsx").includes("loadTemplates"),
+  );
+  check(
+    "**상품 목록이 복제로 잇는다**(F-V-03) — 만든 화면에 들어가는 자리를 잇는다",
+    existsSync("app/(vendor)/vendor/products/DuplicateButton.tsx") &&
+      srcOf("app/(vendor)/vendor/products/page.tsx").includes("<DuplicateButton"),
+  );
+  check(
+    "**복제 버튼은 대표에게만 보인다**(§3.9) — 화면 체크는 UX 보조이고 경계는 RLS 다",
+    srcOf("app/(vendor)/vendor/products/page.tsx").includes("canEdit ? (") &&
+      srcOf("app/(vendor)/vendor/products/page.tsx").includes('vendor_role === "owner"'),
+  );
+  /**
+   * **여기서 순수 함수의 값을 문자열로 확인하지 않는다.**
+   *
+   * 처음엔 `product-duplicate.ts` 에 `addOnsDeclaredAt: null` 이 있는지 봤는데,
+   * 그 문자열은 **타입 선언**(`addOnsDeclaredAt: null;`)에도 있어서 값을 망가뜨려도
+   * 통과했다 — 음성 대조에서 잡혔다. 값은 **vitest 가 본다**(`product-duplicate.test.ts`
+   * 의 "추가금 확정은 따라오지 않는다") 그리고 `npm run test` 는 CI 가 돈다.
+   *
+   * 여기서는 **테스트가 못 보는 것**만 본다 — 서버가 그 값을 실제로 INSERT 에 싣는가,
+   * 그리고 DB 가 마지막으로 막는가.
+   */
+  check(
+    "**복제가 확정을 INSERT 에 싣지 않는다**(D-06) — 순수 함수가 비워도 서버가 안 쓰면 소용없다",
+    srcOf("lib/vendor/duplicate.ts").includes("add_ons_declared_at: draft.addOnsDeclaredAt") &&
+      srcOf("lib/vendor/duplicate.ts").includes("published_at: draft.publishedAt"),
+  );
+  check(
+    "**복제는 서비스롤을 쓰지 않는다** — 쓰면 담당자가 부른 요청도 성공한다",
+    !srcOf("lib/vendor/duplicate.ts").includes("createAdminClient"),
+  );
+  check(
+    "**DB 가 미확정 상품의 게시를 막는다**(D-06) — 화면이 봐주더라도",
+    sql(`select count(*) from pg_constraint
+           where conrelid = 'public.products'::regclass
+             and conname = 'products_publish_requirements_chk'
+             and pg_get_constraintdef(oid) ilike '%add_ons_declared_at is not null%';`) === "1",
+  );
+  check(
+    "**설정 화면이 꺼내는 자리를 이름으로 말한다**(C-3) — '어딘가에 있겠지' 를 시키지 않는다",
+    srcOf("app/(vendor)/vendor/settings/VendorSettingsView.tsx").includes("채팅 응대") &&
+      srcOf("app/(vendor)/vendor/settings/VendorSettingsView.tsx").includes("템플릿으로 저장"),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

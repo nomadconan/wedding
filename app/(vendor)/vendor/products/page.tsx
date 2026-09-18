@@ -20,6 +20,8 @@ import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PRODUCT_COLUMNS, findMemberVendor, publishBlockersOf } from "@/lib/vendor/products";
 
+import { DuplicateButton } from "./DuplicateButton";
+
 export const metadata: Metadata = {
   title: "상품·가격 — 웨딩클리어",
 };
@@ -79,6 +81,17 @@ export default async function VendorProductsPage() {
       </AdminShell>
     );
   }
+
+  const { data: membership } = await supabase
+    .from("vendor_members")
+    .select("vendor_role")
+    .eq("vendor_id", vendor.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  // 가격 테이블이라 쓰기는 owner 전용이다(§3.9). 복제도 **쓰기**다 — 화면 체크는
+  // UX 보조이고 경계는 RLS 다(`lib/vendor/duplicate.ts` 가 42501 을 403 으로 바꾼다).
+  const canEdit = membership?.vendor_role === "owner";
 
   const rate = await resolveVendorCommission(supabase, {
     vendorId: vendor.id,
@@ -179,6 +192,13 @@ export default async function VendorProductsPage() {
                         <p className="text-caption text-warning">
                           게시 조건 {blockers.length}건 미충족
                         </p>
+                      ) : null}
+
+                      {/* **복제**(C-3 · F-V-03). 거의 같은 패키지를 여러 개 올리는 것이
+                          이 화면의 실제 사용 방식이라(B-1) 처음부터 다시 치지 않게 한다.
+                          추가금 **항목은 따라오고 확정은 따라오지 않는다**(D-06). */}
+                      {canEdit ? (
+                        <DuplicateButton productId={product.id} productName={product.name} />
                       ) : null}
                     </CardContent>
                   </Card>
