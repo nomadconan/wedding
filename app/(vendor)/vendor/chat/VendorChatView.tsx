@@ -43,11 +43,14 @@ export function VendorChatView({
   initialRooms,
   members,
   viewerId,
+  savedReplies,
   slaConfigured,
 }: {
   initialRooms: RoomListItem[];
   members: Member[];
   viewerId: string;
+  /** 업체가 `/vendor/settings` 에 저장해 둔 빠른 답변(C-3). */
+  savedReplies: { id: string; title: string; body: string }[];
   slaConfigured: boolean;
 }) {
   const [rooms, setRooms] = useState(initialRooms);
@@ -333,7 +336,7 @@ export function VendorChatView({
                   slot={
                     // 빠른 답변(F-V-15). 문안을 **입력창에 채워 넣기만** 한다 —
                     // 바로 보내면 고객마다 다른 맥락에 같은 말이 나간다.
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5" data-testid="quick-replies">
                       {QUICK_REPLIES.map((reply) => (
                         <Button
                           key={reply.key}
@@ -343,6 +346,26 @@ export function VendorChatView({
                           onClick={() => setDraft(reply.body)}
                         >
                           {reply.label}
+                        </Button>
+                      ))}
+
+                      {/* **업체가 저장해 둔 빠른 답변**(C-3).
+                          `vendor_templates` 는 0026 부터 있었고 `/vendor/settings` 에서
+                          만들고 지울 수 있었는데 **꺼내 쓰는 자리가 없었다** — 설정 화면은
+                          "저장해 두고 꺼내 써요" 라고 적고 있었다. 저장한 것이 아무 데도
+                          안 뜨면 업체는 자기가 잘못 저장한 줄 안다.
+                          붙박이와 **구분되게** 그린다(secondary) — 지우거나 고칠 수 있는
+                          것과 없는 것은 다른 물건이다. */}
+                      {savedReplies.map((reply) => (
+                        <Button
+                          key={reply.id}
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          data-testid="saved-quick-reply"
+                          onClick={() => setDraft(reply.body)}
+                        >
+                          {reply.title}
                         </Button>
                       ))}
 

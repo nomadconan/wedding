@@ -12,6 +12,7 @@ import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
 import { loadVendorMembers } from "@/lib/vendor/members";
 import { findMemberVendor } from "@/lib/vendor/products";
+import { loadTemplates } from "@/lib/vendor/templates";
 
 import { VendorChatView } from "./VendorChatView";
 
@@ -89,6 +90,16 @@ export default async function VendorChatPage() {
           initialRooms={rooms}
           members={members}
           viewerId={user.id}
+          savedReplies={(await loadTemplates(supabase, vendor.id))
+            .filter((template) => template.kind === "quick_reply")
+            .map((template) => ({
+              id: template.id,
+              title: template.title,
+              body: String((template.payload as { body?: unknown }).body ?? ""),
+            }))
+            // **본문이 빈 것은 버린다.** 누르면 입력창이 비어 버리고, 업체는 자기가
+            // 지운 줄 안다. `payload_json` 은 DB 에서 객체인지까지만 검사된다(0026).
+            .filter((reply) => reply.body.trim() !== "")}
           slaConfigured={threshold !== null}
         />
       </AdminShell>

@@ -1,0 +1,748 @@
+// =============================================================================
+// 업체 편의 실주행 — 상품 등록·복제·템플릿을 실제 Chrome 으로 민다 (C-3)
+// -----------------------------------------------------------------------------
+// **왜 또 하나인가.** `chain:walk`(C-1b · D-194)은 **한 거래**를 끝까지 민다 —
+// 문의부터 결제까지. 그런데 C-3 이 손댄 것은 거래가 아니라 **업체가 반복해서 하는
+// 일**이다: 비슷한 상품을 여러 개 올리고, 같은 견적 구성을 다시 쓰고, 같은 문장을
+// 다시 보낸다. 사슬 주행은 그것을 한 번도 지나지 않는다.
+//
+// **B-1 이 센 것을 여기서도 센다.** 상품 하나를 게시까지 올리는 데 화면 몇 개와
+// 입력 몇 개가 드는지 — 그 수가 줄었다는 주장을 **주장으로 두지 않는다.**
+//
+// **새 의존성을 넣지 않았다.** `audit-runtime.mjs`·`chain-walk.mjs` 와 같은 방식으로
+// CDP 를 직접 문다.
+//
+// 실행 (개발 서버가 떠 있어야 한다):
+//   npm run dev              (다른 창)
+//   npm run vendor:walk
+//
+// 옵션:  --headful      창을 띄운다
+//        --out=경로     결과 JSON
+//
+// **DB 에 쓴다.** 돌린 뒤에는 `npm run db:reset && npm run seed:accounts` 로 되돌린다.
+// =============================================================================
+import { spawn, execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+const ARGS = process.argv.slice(2);
+const has = (f) => ARGS.includes(f);
+const opt = (name, fallback) => {
+  const hits = ARGS.filter((a) => a.startsWith(`--${name}=`));
+  return hits.length ? hits[hits.length - 1].slice(name.length + 3) : fallback;
+};
+
+const BASE = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
+const OUT = opt("out", "tmp/vendor-walk.json");
+const PASSWORD = process.env.SEED_PASSWORD || "local-dev-1234";
+
+if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE)) {
+  console.error(`로컬 전용이다. NEXT_PUBLIC_APP_URL=${BASE}`);
+  process.exit(1);
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const CONTAINER = execFileSync("docker", [
+  "ps", "--filter", "name=supabase_db_", "--format", "{{.Names}}",
+]).toString().trim().split(/\r?\n/)[0];
+if (!CONTAINER) {
+  console.error("supabase_db_* 컨테이너가 없다. npm run db:start 먼저.");
+  process.exit(1);
+}
+
+function sql(query) {
+  return execFileSync(
+    "docker",
+    ["exec", "-i", CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-t", "-A", "-c", query],
+    // **stderr 를 삼킨다.** 일부러 막히는지 보는 질의가 있어서(CHECK 위반) 그대로 두면
+    // 통과한 주행 로그에 빨간 ERROR 가 섞여 나온다 — 읽는 사람이 실패로 읽는다.
+    // 실패는 던져서 알린다(`execFileSync` 가 0 아닌 종료 코드에 throw 한다).
+    { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+  ).trim();
+}
+
+// --- CDP ----------------------------------------------------------------------
+const CHROME_CANDIDATES = [
+  process.env.CHROME_PATH,
+  "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+  process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}/Google/Chrome/Application/chrome.exe` : null,
+  "/usr/bin/google-chrome",
+].filter(Boolean);
+
+function findChrome() {
+  for (const p of CHROME_CANDIDATES) if (existsSync(p)) return p;
+  throw new Error("Chrome 을 찾지 못했다. CHROME_PATH 환경변수로 지정한다.");
+}
+
+async function launchChrome() {
+  const port = 9833 + Math.floor(Math.random() * 400);
+  const profile = mkdtempSync(join(tmpdir(), "wc-vendor-"));
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profile}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-extensions",
+    "--disable-gpu",
+    "--hide-scrollbars",
+    "--window-size=1440,960",
+  ];
+  if (!has("--headful")) args.push("--headless=new");
+
+  const proc = spawn(findChrome(), args, { stdio: "ignore", detached: false });
+  for (let i = 0; i < 300; i += 1) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (res.ok) return { proc, ws: (await res.json()).webSocketDebuggerUrl };
+    } catch {
+      /* 아직 */
+    }
+    await sleep(200);
+  }
+  proc.kill();
+  throw new Error("Chrome DevTools 엔드포인트가 열리지 않았다.");
+}
+
+function connect(wsUrl) {
+  const socket = new WebSocket(wsUrl);
+  let nextId = 1;
+  const pending = new Map();
+  const listeners = new Set();
+
+  socket.addEventListener("message", (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(msg.error.message));
+      else resolve(msg.result);
+      return;
+    }
+    for (const fn of listeners) fn(msg);
+  });
+
+  const ready = new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve, { once: true });
+    socket.addEventListener("error", reject, { once: true });
+  });
+
+  return {
+    ready,
+    close: () => socket.close(),
+    on: (fn) => listeners.add(fn),
+    send(method, params = {}, sessionId) {
+      const id = nextId;
+      nextId += 1;
+      const payload = { id, method, params };
+      if (sessionId) payload.sessionId = sessionId;
+      socket.send(JSON.stringify(payload));
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        setTimeout(() => {
+          if (pending.has(id)) {
+            pending.delete(id);
+            reject(new Error(`CDP 응답 없음: ${method}`));
+          }
+        }, 90000);
+      });
+    },
+  };
+}
+
+async function openFace(cdp, key, email) {
+  const { browserContextId } = await cdp.send("Target.createBrowserContext", {
+    disposeOnDetach: false,
+  });
+  const { targetId } = await cdp.send("Target.createTarget", {
+    url: "about:blank",
+    browserContextId,
+  });
+  const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+
+  const state = { loaded: false, consoleErrors: [] };
+  cdp.on((msg) => {
+    if (msg.sessionId !== sessionId) return;
+    if (msg.method === "Page.loadEventFired") state.loaded = true;
+    if (msg.method === "Runtime.exceptionThrown") {
+      state.consoleErrors.push(
+        String(msg.params.exceptionDetails?.exception?.description ?? "exception").slice(0, 300),
+      );
+    }
+    if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") {
+      state.consoleErrors.push(
+        msg.params.args.map((a) => String(a.value ?? a.description ?? "")).join(" ").slice(0, 300),
+      );
+    }
+  });
+
+  await cdp.send("Page.enable", {}, sessionId);
+  await cdp.send("Network.enable", {}, sessionId);
+  await cdp.send("Runtime.enable", {}, sessionId);
+
+  const face = { key, email, sessionId, state, cdp };
+  face.loginNote = await login(face);
+  return face;
+}
+
+async function evaluate(face, expression) {
+  const r = await face.cdp.send(
+    "Runtime.evaluate",
+    { expression, returnByValue: true, awaitPromise: true },
+    face.sessionId,
+  );
+  if (r.exceptionDetails) throw new Error(String(r.exceptionDetails.text ?? "evaluate 실패"));
+
+  return r.result?.value;
+}
+
+async function snapshot(face) {
+  return evaluate(
+    face,
+    `(() => {
+      const q = (s) => !!document.querySelector(s);
+      const flat = (document.body ? document.body.innerText : "").replace(/\\s+/g, " ").trim();
+      return {
+        path: location.pathname + location.search,
+        loadingState: q('[data-testid="loading-state"]'),
+        errorState: q('[data-testid="error-state"]'),
+        notFound: /This page could not be found/.test(flat),
+        textLength: flat.length,
+        text: flat,
+      };
+    })()`,
+  );
+}
+
+async function goto(face, path) {
+  face.state.loaded = false;
+  face.state.consoleErrors.length = 0;
+  await face.cdp.send("Page.navigate", { url: BASE + path }, face.sessionId);
+
+  const deadline = Date.now() + 45000;
+  while (!face.state.loaded && Date.now() < deadline) await sleep(50);
+  await sleep(400);
+
+  const settle = Date.now() + 10000;
+  for (;;) {
+    const info = await snapshot(face);
+    if (!(info.textLength < 40 || info.loadingState) || Date.now() > settle) return info;
+    await sleep(300);
+  }
+}
+
+async function login(face) {
+  await goto(face, "/login");
+
+  const fill = `(() => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const put = (id, v) => {
+      const el = document.getElementById(id);
+      if (!el) return false;
+      set.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    };
+    if (!put("login-email", ${JSON.stringify(face.email)}) || !put("login-password", ${JSON.stringify(PASSWORD)})) {
+      return "입력칸 없음";
+    }
+    const form = document.querySelector('[data-testid="login-form"]');
+    if (!form) return "폼 없음";
+    form.requestSubmit();
+    return "제출";
+  })()`;
+
+  const until = Date.now() + 25000;
+  for (;;) {
+    const value = await evaluate(face, fill);
+    if (value === "제출") break;
+    if (Date.now() > until) throw new Error(`로그인 폼을 못 찾았다(${face.key}): ${value}`);
+    await sleep(400);
+  }
+
+  const deadline = Date.now() + 40000;
+  while (Date.now() < deadline) {
+    await sleep(250);
+    const path = await evaluate(face, "location.pathname");
+    if (!String(path).startsWith("/login")) return `성공 → ${path}`;
+  }
+  throw new Error(`로그인이 이동하지 않았다(${face.key})`);
+}
+
+/** 값을 넣는다. React 가 보게 네이티브 setter 로 넣고 input 이벤트를 쏜다. */
+async function fill(face, selector, value) {
+  const done = await evaluate(
+    face,
+    `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return false;
+      const proto = el.tagName === "TEXTAREA"
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, ${JSON.stringify(String(value))});
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`,
+  );
+  if (!done) throw new Error(`입력칸이 없다: ${selector}`);
+  await sleep(150);
+}
+
+async function click(face, selector, { text = null } = {}) {
+  const expr = `(() => {
+    const nodes = [...document.querySelectorAll(${JSON.stringify(selector)})];
+    const want = ${JSON.stringify(text)};
+    const hit = want === null
+      ? nodes[0]
+      : nodes.find((n) => (n.innerText || n.value || "").includes(want));
+    if (!hit) return { ok: false, found: nodes.length };
+    hit.scrollIntoView();
+    hit.click();
+    return { ok: true, found: nodes.length };
+  })()`;
+
+  const until = Date.now() + 12000;
+  for (;;) {
+    const r = await evaluate(face, expr);
+    if (r.ok) {
+      await sleep(800);
+      return r;
+    }
+    if (Date.now() > until) {
+      throw new Error(`누를 자리가 없다: ${selector}${text ? ` ("${text}")` : ""}`);
+    }
+    await sleep(400);
+  }
+}
+
+// --- 결과 ---------------------------------------------------------------------
+const steps = [];
+let failed = 0;
+
+async function step(name, face, fn) {
+  try {
+    const note = (await fn()) ?? "";
+    const errors = face ? face.state.consoleErrors.slice(0, 3) : [];
+    steps.push({ name, ok: true, note, consoleErrors: errors });
+    console.log(`PASS  ${name}${note ? ` :: ${note}` : ""}${errors.length ? `  [console ${errors.length}]` : ""}`);
+  } catch (error) {
+    failed += 1;
+    const message = String(error.message ?? error);
+    steps.push({ name, ok: false, note: message, consoleErrors: face ? face.state.consoleErrors.slice(0, 3) : [] });
+    console.log(`FAIL  ${name} :: ${message}`);
+  }
+}
+
+// =============================================================================
+// 주행
+// =============================================================================
+const { proc, ws } = await launchChrome();
+const cdp = connect(ws);
+await cdp.ready;
+
+const walk = {};
+
+try {
+  const target = sql(`
+    select v.id::text || '|' || v.status || '|' || u.email
+      from public.vendors v
+      join public.vendor_members m on m.vendor_id = v.id
+      join auth.users u on u.id = m.user_id
+     where m.vendor_role = 'owner'
+     order by v.created_at, u.created_at limit 1;`);
+  if (!target) throw new Error("대표가 있는 업체가 없다. seed:accounts 먼저.");
+  const [vendorId, vendorStatus, ownerEmail] = target.split("|");
+  walk.vendorId = vendorId;
+  walk.ownerEmail = ownerEmail;
+
+  const owner = await openFace(cdp, "대표", ownerEmail);
+  const staff = await openFace(cdp, "담당자", "staff@local.test");
+  const admin = await openFace(cdp, "운영자", "admin@local.test");
+  /**
+   * **소비자 면도 연다.** 견적 템플릿(F-V-07)은 **들어온 문의가 있어야** 열리는
+   * 화면에 있다 — 인박스가 비면 견적 폼 자체가 안 뜨고, 그러면 이 점검은
+   * "템플릿이 안 보인다" 가 아니라 **아무것도 안 보고 통과**한다.
+   */
+  const consumer = await openFace(cdp, "소비자", "couple-linked-a@local.test");
+  console.log(
+    `\n면 넷 로그인 — 대표(${ownerEmail}): ${owner.loginNote} / 담당자: ${staff.loginNote} / 운영자: ${admin.loginNote} / 소비자: ${consumer.loginNote}\n`,
+  );
+
+  // ── 0. 입점 승인 (게시 상품이 고객에게 보이려면 업체가 active 여야 한다) ───
+  await step("운영자가 업체 신청을 승인한다", admin, async () => {
+    if (vendorStatus === "active") return "이미 active — 건너뛴다";
+
+    const info = await goto(admin, "/admin/vendors");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+    await click(admin, '[data-testid="review-panel"] button', { text: "승인" });
+
+    const until = Date.now() + 20000;
+    for (;;) {
+      const status = sql(`select status from public.vendors where id = '${vendorId}';`);
+      if (status === "active") return "vendors.status=active";
+      if (Date.now() > until) throw new Error(`승인이 반영되지 않았다: status=${status}`);
+      await sleep(700);
+    }
+  });
+
+  // ── 1. 상품을 처음부터 등록한다 (B-1 이 센 단계를 실제로 밟는다) ───────────
+  await step("상품 등록 화면이 뜬다", owner, async () => {
+    const info = await goto(owner, "/vendor/products/new");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    return info.path;
+  });
+
+  await step("**필수 입력 넷을 채우고 저장한다** — 화면 1", owner, async () => {
+    await fill(owner, "#name", "C-3 주말 점심 패키지");
+    await fill(owner, "#basePriceTotal", "12000000");
+    await fill(owner, "#capacityMin", "100");
+    await fill(owner, "#capacityMax", "250");
+    await click(owner, "button", { text: "항목 추가" });
+    await fill(owner, '[aria-label="포함 항목 1"]', "홀 대관 4시간");
+    await click(owner, 'button[type="submit"]', { text: "상품 등록" });
+
+    const until = Date.now() + 25000;
+    for (;;) {
+      const id = sql(`select id::text from public.products
+                       where vendor_id = '${vendorId}' and name = 'C-3 주말 점심 패키지' limit 1;`);
+      if (id) {
+        walk.productId = id;
+
+        return `product=${id.slice(0, 8)}`;
+      }
+      if (Date.now() > until) {
+        const info = await snapshot(owner);
+        throw new Error(`상품이 생기지 않았다: ${info.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**등록 직후에는 게시할 수 없다**(D-06) — 추가금 확정이 남아 있다", null, async () => {
+    const row = sql(`select status || '|' || coalesce(add_ons_declared_at::text, '-')
+                       from public.products where id = '${walk.productId}';`);
+    const [status, declared] = row.split("|");
+    if (status !== "draft") throw new Error(`작성 중이 아니다: ${status}`);
+    if (declared !== "-") throw new Error("등록만 했는데 추가금이 확정돼 있다");
+
+    return "status=draft · 추가금 미확정";
+  });
+
+  await step("**추가금을 등록하고 확정한다** — 화면 2", owner, async () => {
+    const info = await goto(owner, `/vendor/products/${walk.productId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    await fill(owner, "#option-name", "주말 할증");
+    await fill(owner, "#option-price", "500000");
+    await fill(owner, "#option-condition", "토요일·공휴일 예식 시");
+    await click(owner, "button", { text: "추가금 등록" });
+    await sleep(1200);
+    await click(owner, "button", { text: "확정" });
+
+    const until = Date.now() + 25000;
+    for (;;) {
+      const declared = sql(`select coalesce(add_ons_declared_at::text, '')
+                              from public.products where id = '${walk.productId}';`);
+      if (declared) {
+        const count = sql(`select count(*) from public.product_options where product_id = '${walk.productId}';`);
+
+        return `추가금 ${count}개 · 확정됨`;
+      }
+      if (Date.now() > until) {
+        const info = await snapshot(owner);
+        throw new Error(`확정되지 않았다: ${info.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("게시한다", owner, async () => {
+    await goto(owner, `/vendor/products/${walk.productId}`);
+    await click(owner, "button", { text: "게시" });
+
+    const until = Date.now() + 20000;
+    for (;;) {
+      const status = sql(`select status from public.products where id = '${walk.productId}';`);
+      if (status === "published") return "status=published";
+      if (Date.now() > until) throw new Error(`게시되지 않았다: status=${status}`);
+      await sleep(700);
+    }
+  });
+
+  // ── 2. 복제 (C-3 이 만든 것) ──────────────────────────────────────────────
+  await step("**상품 목록에 복제 버튼이 있다**(C-3 · F-V-03)", owner, async () => {
+    const info = await goto(owner, "/vendor/products");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const count = await evaluate(owner, `document.querySelectorAll('[data-testid="duplicate-product"]').length`);
+    if (count === 0) throw new Error("복제 버튼이 없다");
+
+    return `${count}개 상품에 복제 버튼`;
+  });
+
+  await step("**복제하면 사본이 생긴다** — 값은 따라오고 확정은 안 따라온다", owner, async () => {
+    const before = sql(`select count(*) from public.products where vendor_id = '${vendorId}';`);
+
+    await click(owner, '[data-testid="duplicate-product"] button', { text: "복제" });
+
+    const until = Date.now() + 25000;
+    for (;;) {
+      const row = sql(`select id::text || '|' || name || '|' || status || '|' ||
+                              coalesce(add_ons_declared_at::text,'-') || '|' || base_price_total::text
+                         from public.products
+                        where vendor_id = '${vendorId}' and name like '%(사본)'
+                        order by created_at desc limit 1;`);
+      if (row) {
+        const [id, name, status, declared, price] = row.split("|");
+        walk.copyId = id;
+        if (status !== "draft") throw new Error(`사본이 작성 중이 아니다: ${status}`);
+        if (declared !== "-") throw new Error("**사본에 추가금 확정이 따라왔다**(D-06 위반)");
+
+        const copied = sql(`select count(*) from public.product_options where product_id = '${id}';`);
+        const after = sql(`select count(*) from public.products where vendor_id = '${vendorId}';`);
+        if (Number(after) !== Number(before) + 1) throw new Error(`상품 수가 ${before}→${after}`);
+
+        return `${name} · draft · 추가금 ${copied}개 옮김 · 금액 ${Number(price).toLocaleString("ko-KR")}원 그대로`;
+      }
+      if (Date.now() > until) {
+        const info = await snapshot(owner);
+        throw new Error(`사본이 생기지 않았다: ${info.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**화면이 남은 일을 말한다** — 조용하면 이미 노출되는 줄 안다", owner, async () => {
+    const note = await evaluate(
+      owner,
+      `(document.querySelector('[data-testid="duplicate-done"]')||{}).innerText || ""`,
+    );
+    if (!String(note).trim()) throw new Error("복제 뒤 아무 말도 없다");
+
+    return String(note).replace(/\s+/g, " ").trim().slice(0, 90);
+  });
+
+  await step("**사본은 DB 가 게시를 막는다**(D-06) — 화면이 봐주더라도", null, async () => {
+    const blocked = (() => {
+      try {
+        sql(`update public.products set status = 'published' where id = '${walk.copyId}';`);
+
+        return false;
+      } catch {
+        return true;
+      }
+    })();
+    if (!blocked) throw new Error("**확정 없이 게시됐다** — CHECK 이 막지 않았다");
+
+    return "products_publish_requirements_chk 가 막았다";
+  });
+
+  await step("**담당자에게는 복제 버튼이 없다**(§3.9)", staff, async () => {
+    const info = await goto(staff, "/vendor/products");
+    if (info.notFound) throw new Error("담당자가 상품 목록을 못 본다 — 볼 수는 있어야 한다");
+
+    const count = await evaluate(staff, `document.querySelectorAll('[data-testid="duplicate-product"]').length`);
+    if (count !== 0) throw new Error(`담당자에게 복제 버튼이 ${count}개 뜬다 — 화면이 API 가 거부할 일을 시킨다`);
+
+    return "0개";
+  });
+
+  await step("**담당자가 직접 불러도 403 이다** — 최종 경계는 RLS 다", staff, async () => {
+    const result = await evaluate(
+      staff,
+      `fetch("/api/vendor/products/${walk.productId}/duplicate", { method: "POST" })
+         .then(async (r) => ({ status: r.status, body: (await r.text()).slice(0, 160) }))`,
+    );
+    if (result.status !== 403) throw new Error(`403 이 아니라 ${result.status}: ${result.body}`);
+
+    return `403 · ${JSON.parse(result.body).error?.code ?? "?"}`;
+  });
+
+  // ── 3. 템플릿 — 저장하고 꺼내 쓴다 (C-3) ──────────────────────────────────
+  await step("**빠른 답변을 저장한다** — 설정 화면", owner, async () => {
+    const info = await goto(owner, "/vendor/settings");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    await fill(owner, "#qr-title", "C-3 주차 안내");
+    await fill(owner, "#qr-body", "주차는 건물 지하 2층에 100대까지 가능합니다.");
+    await click(owner, '[data-testid="add-quick-reply"]');
+
+    const until = Date.now() + 20000;
+    for (;;) {
+      const count = sql(`select count(*) from public.vendor_templates
+                          where vendor_id = '${vendorId}' and kind = 'quick_reply' and title = 'C-3 주차 안내';`);
+      if (count !== "0") return "vendor_templates 에 1건";
+      if (Date.now() > until) {
+        const state = await snapshot(owner);
+        throw new Error(`저장되지 않았다: ${state.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**저장한 빠른 답변이 채팅에 뜬다**(F-V-15) — 붙박이만 뜨던 자리다", owner, async () => {
+    const info = await goto(owner, "/vendor/chat");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = await evaluate(
+      owner,
+      `(() => {
+        const saved = [...document.querySelectorAll('[data-testid="saved-quick-reply"]')];
+        return { count: saved.length, titles: saved.map((b) => b.innerText.trim()) };
+      })()`,
+    );
+    if (seen.count === 0) {
+      throw new Error("저장한 빠른 답변이 채팅에 안 뜬다 — 저장만 되고 꺼낼 자리가 없다");
+    }
+
+    return `${seen.count}개 · ${seen.titles.join(", ").slice(0, 60)}`;
+  });
+
+  await step("**누르면 입력창에 들어간다** — 바로 보내지 않는다", owner, async () => {
+    await click(owner, '[data-testid="saved-quick-reply"]');
+    const draft = await evaluate(
+      owner,
+      `(() => {
+        const el = document.querySelector("textarea");
+        return el ? el.value : "";
+      })()`,
+    );
+    if (!String(draft).includes("주차")) throw new Error(`입력창에 안 들어갔다: ${String(draft).slice(0, 60)}`);
+
+    const sent = sql(`select count(*) from public.chat_messages where body like '%지하 2층%';`);
+    if (sent !== "0") throw new Error("**바로 보내졌다** — 템플릿은 초안이어야 한다");
+
+    return "입력창에 채워짐 · 보내지지 않음";
+  });
+
+  await step("**설정 화면이 꺼내는 자리를 이름으로 말한다**", owner, async () => {
+    const info = await goto(owner, "/vendor/settings");
+    if (!info.text.includes("채팅 응대")) throw new Error("어디서 꺼내는지 안 적는다");
+    if (!info.text.includes("문의·견적")) throw new Error("견적 쪽 자리를 안 적는다");
+
+    return "채팅 응대 · 문의·견적";
+  });
+
+  // ── 3b. 견적 템플릿 — 저장하고 꺼내 쓴다 (F-V-07) ─────────────────────────
+  await step("문의를 하나 만든다 (※ 화면 없음 — 세션 fetch · FIX-66)", consumer, async () => {
+    await goto(consumer, "/inquiries");
+    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    const result = await evaluate(
+      consumer,
+      `fetch("/api/inquiries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          vendorIds: [${JSON.stringify(walk.vendorId)}],
+          eventDate: ${JSON.stringify(eventDate)},
+          categories: ["hall"],
+          note: "C-3 템플릿 주행"
+        })
+      }).then(async (r) => ({ status: r.status, body: (await r.text()).slice(0, 200) }))`,
+    );
+    if (result.status >= 300) throw new Error(`${result.status} ${result.body}`);
+
+    return `${result.status}`;
+  });
+
+  await step("**견적 폼에 저장 버튼이 있다**(F-V-07 — 명세가 '템플릿 저장' 을 요구한다)", owner, async () => {
+    const info = await goto(owner, "/vendor/inquiries");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    await click(owner, '[data-testid="vendor-inquiry-inbox"] li button');
+
+    const seen = await evaluate(
+      owner,
+      `(() => ({
+        form: !!document.querySelector('[data-testid="quote-form"]'),
+        save: !!document.querySelector('[data-testid="save-quote-template"]'),
+        applies: document.querySelectorAll('[data-testid="apply-quote-template"]').length,
+      }))()`,
+    );
+    if (!seen.form) throw new Error("견적 폼이 안 열렸다 — 아래 검사가 아무것도 못 본다");
+    if (!seen.save) throw new Error("**저장 버튼이 없다** — 설정 화면은 여기서 저장할 수 있다고 적는다");
+
+    return `폼 열림 · 저장 버튼 있음 · 저장된 템플릿 ${seen.applies}개`;
+  });
+
+  await step("**구성을 템플릿으로 저장한다**", owner, async () => {
+    // `window.prompt` 는 헤드리스에서 null 을 준다. 실제 사용자가 이름을 치는 것과
+    // 같게 **미리 갈아 끼운다** — 이름을 못 받으면 저장하지 않는 것이 정상 동작이라
+    // 그대로 두면 이 검사는 "저장 안 됨" 을 정상으로 읽는다.
+    await evaluate(owner, `window.prompt = () => "C-3 주말 구성";`);
+    await fill(owner, "#quote-base", "11000000");
+    await click(owner, '[data-testid="save-quote-template"]');
+
+    const until = Date.now() + 20000;
+    for (;;) {
+      const count = sql(`select count(*) from public.vendor_templates
+                          where vendor_id = '${walk.vendorId}' and kind = 'quote' and title = 'C-3 주말 구성';`);
+      if (count !== "0") return "vendor_templates(kind=quote) 에 1건";
+      if (Date.now() > until) {
+        const note = await evaluate(
+          owner,
+          `(document.querySelector('[data-testid="quote-template-note"]')||{}).innerText || ""`,
+        );
+        throw new Error(`저장되지 않았다: ${String(note).replace(/\s+/g, " ").slice(0, 200)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**저장한 구성을 꺼내 쓴다** — 금액이 폼에 돌아온다", owner, async () => {
+    await goto(owner, "/vendor/inquiries");
+    await click(owner, '[data-testid="vendor-inquiry-inbox"] li button');
+
+    const before = await evaluate(owner, `(document.querySelector("#quote-base")||{}).value ?? null`);
+    if (before === null) throw new Error("견적 폼이 안 열렸다");
+    if (before !== "") throw new Error(`꺼내기 전에 이미 값이 있다: ${before}`);
+
+    await click(owner, '[data-testid="apply-quote-template"]');
+    await sleep(600);
+
+    const after = await evaluate(owner, `(document.querySelector("#quote-base")||{}).value ?? ""`);
+    if (after !== "11000000") throw new Error(`금액이 안 돌아왔다: ${JSON.stringify(after)}`);
+
+    // **보내지지 않았는지도 본다** — 템플릿은 초안이다.
+    const quotes = sql(`select count(*) from public.quotes;`);
+    if (quotes !== "0") throw new Error("**꺼내자마자 견적이 나갔다** — 템플릿은 초안이어야 한다");
+
+    return "11,000,000원 복원 · 견적은 아직 안 나감";
+  });
+
+  // ── 4. 세 면 대조 · 콘솔 ──────────────────────────────────────────────────
+  await step("**사본은 고객에게 안 보인다** — 초안이다", null, async () => {
+    const visible = sql(`select count(*) from public.products
+                          where id = '${walk.copyId}' and status = 'published';`);
+    if (visible !== "0") throw new Error("사본이 게시 상태다");
+
+    return "published 0건";
+  });
+
+  await step("업체 화면 어디에도 콘솔 오류가 없다", null, async () => {
+    const noisy = steps.filter((s) => s.consoleErrors.length > 0);
+    if (noisy.length > 0) {
+      throw new Error(noisy.map((s) => `${s.name}: ${s.consoleErrors[0].slice(0, 120)}`).join(" / "));
+    }
+
+    return "0건";
+  });
+} catch (error) {
+  failed += 1;
+  console.log(`\n주행이 중단됐다: ${String(error.message ?? error)}`);
+  steps.push({ name: "주행", ok: false, note: String(error.message ?? error), consoleErrors: [] });
+} finally {
+  cdp.close();
+  proc.kill();
+}
+
+mkdirSync(dirname(OUT), { recursive: true });
+writeFileSync(OUT, JSON.stringify({ walk, steps }, null, 2), "utf8");
+
+console.log(`\n${steps.filter((s) => s.ok).length}/${steps.length} passed — ${OUT}`);
+process.exit(failed === 0 ? 0 : 1);
