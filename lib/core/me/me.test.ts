@@ -146,12 +146,20 @@ describe("아직 없는 자리", () => {
     expect(ME_PENDING_SECTIONS.every((section) => /^S\d/.test(section.filledBy))).toBe(true);
   });
 
-  it("**채운 자리는 목록에 없다** — 멤버십은 S7-11 이, 파기 이력은 S7-03 이 채웠다", () => {
+  it("**채운 자리는 목록에 없다** — 멤버십은 S7-11, 파기 이력은 S7-03, 알림 설정은 S4-13", () => {
     const keys = ME_PENDING_SECTIONS.map((section) => section.key);
 
     // 만들어 둔 기능을 화면이 "아직 없다" 고 말하면 없는 것과 같아진다(FIX-29).
     expect(keys).not.toContain("membership");
     expect(keys).not.toContain("purge_history");
+    // `/notifications` 에 수신 설정 절이 있고 `/me` 가 그리로 링크한다(C-1b).
+    expect(keys).not.toContain("notifications");
+  });
+
+  it("지금은 남은 자리가 없다 — 홈과 같다", () => {
+    // **길이를 못 박는다.** 아래 검사는 목록을 돌며 확인하므로 **비어 있으면 조용히
+    // 통과한다**(운영 규칙 7.0b). 자리가 늘면 이 줄이 먼저 빨개져 알려 준다.
+    expect(ME_PENDING_SECTIONS).toHaveLength(0);
   });
 
   it("0이 아니라 '아직 측정하지 않음'으로 만든다", () => {

@@ -524,8 +524,9 @@ export async function applyVerdict(
     .eq("id", consultationId);
 
   if (verdict.deposit === "dispute") {
-    // 돈은 그대로 잡아 둔 채 상태만 바꾼다. 운영자 조율 화면은 S4-10 이지만
-    // **큐에 쌓이는 것은 지금부터**다(0025 부분 인덱스).
+    // 돈은 그대로 잡아 둔 채 상태만 바꾼다. 큐에 쌓이는 것은 0025 부분 인덱스이고,
+    // **운영자가 보는 자리는 `/admin/disputes?source=consultation` 이다** — S8-03 이
+    // 네 출처를 한 화면으로 모았다(S4-10 은 끝났다 · C-1b 가 문구를 따라 고쳤다).
     await disputeDeposit({ consultationId, reason: verdict.reason });
   } else {
     await releaseDeposit({

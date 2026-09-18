@@ -47,3 +47,6 @@ filelist.txt
 # 개발 중 찍은 스크린샷. 소스가 아니며 Public 리포에 둘 이유가 없다(S3-11).
 이미지캡춰/
 claude-go.bat
+
+# Claude Code 의 **기계별** 권한 설정 — 사람마다 다르고 공유할 것이 아니다
+.claude/settings.local.json

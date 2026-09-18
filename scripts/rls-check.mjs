@@ -124,13 +124,72 @@ function rejectedWith(pattern, run) {
  * **이 리포는 주석이 길다.** 무엇을 왜 안 했는지를 주석이 적는 관행이라, 안 한 것의
  * 이름이 주석에 반드시 등장한다 — 그러면 "그 이름이 없어야 통과" 인 검사는 **항상**
  * 실패한다. 코드만 보게 한다.
+ *
+ * ── 줄바꿈을 먼저 통일한다 (FIX-64 · C-1b 가 여기서 한 번 더 틀렸다) ─────
+ * 이 한 줄이 없으면 **같은 검사가 리눅스와 윈도우에서 다른 답을 낸다.**
+ * JS 정규식의 `.` 은 `\r` 을 줄문자로 보아 **매치하지 않는다.** 그래서
+ * `core.autocrlf=true` 인 윈도우 작업트리(`w/crlf`)에서는 `//` 줄 끝에 `\r` 이 남아
+ * `.*$` 가 못 붙고 **줄 주석이 통째로 살아남았다** — 블록 주석만 걷혔다.
+ * 그 탓에 "계약서 화면이 pdf_path 를 읽지 않는다" 가 로컬에서만 FAIL 이었고,
+ * CI(ubuntu · `i/lf`)는 CRLF 를 아예 보지 못해 **영원히 초록불**이었다 — 게이트가
+ * 플랫폼마다 다른 사실을 말하고 있었다는 뜻이다.
  */
 function codeOf(text) {
   return text
+    .replace(/\r\n/g, "\n")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .split("\n")
     .map((line) => line.replace(/(^|\s)\/\/.*$/, "$1"))
     .join("\n");
+}
+
+/**
+ * **소스 검사는 전부 이것을 지난다** (FIX-64).
+ *
+ * `codeOf` 는 C-1 이 만들었지만 **여섯 자리에만** 붙어 있었고, 나머지 250여 곳은
+ * 원문을 그대로 훑었다. 이 리포는 *무엇을 왜 안 했는지*를 주석이 적는 관행이라
+ * 안 한 것의 이름이 주석에 반드시 등장한다 — 그래서
+ *
+ * · `!src.includes("X")` 는 **항상 실패**한다(거짓 실패 · 소음).
+ * · `src.includes("X")` 는 **주석만 보고 통과**한다(거짓 통과 · 구멍).
+ *
+ * 앞은 빨간불을 무시하게 만들고 뒤는 없는 것을 있다고 말한다. 뒤가 더 나쁘다.
+ * 그래서 붙이는 자리를 고르지 않고 **읽는 길을 하나로 만들었다** — 새 검사가
+ * `readFileSync` 를 직접 부르면 다시 갈라지므로, 소스는 `srcOf` 로만 읽는다.
+ *
+ * JSON(`vercel.json`)은 여기를 지나지 않는다 — 주석이 없고, 걷을 것도 없다.
+ */
+const SRC_CACHE = new Map();
+function srcOf(path) {
+  const hit = SRC_CACHE.get(path);
+  if (hit !== undefined) return hit;
+  const code = codeOf(readFileSync(path, "utf8"));
+  SRC_CACHE.set(path, code);
+  return code;
+}
+
+/**
+ * 화면 소스 전부(app · components 의 .tsx)를 **주석 걷은 채로** 돌려준다.
+ *
+ * 주석을 걷는 이유가 여기서도 같다 — 이 리포는 주석에 태그를 그대로 적는다.
+ * 걷지 않으면 검사가 **자기 주석을 위반으로 읽는다**(이 검사를 쓰다 실제로 겪었다).
+ */
+function listScreenSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".next") continue;
+        walk(full);
+      } else if (entry.name.endsWith(".tsx")) {
+        out.push([full, srcOf(full)]);
+      }
+    }
+  };
+  for (const root of ["app", "components"]) if (existsSync(root)) walk(root);
+
+  return out;
 }
 
 const results = [];
@@ -501,7 +560,7 @@ const dbNameCheck = sql(
   `select pg_get_constraintdef(oid) from pg_constraint
     where conrelid = 'public.carts'::regclass and conname = 'carts_name_chk';`,
 );
-const codeNameMax = readFileSync("lib/core/cart/multi-cart.ts", "utf8").match(
+const codeNameMax = srcOf("lib/core/cart/multi-cart.ts").match(
   /export const CART_NAME_MAX_LENGTH = (\d+);/,
 )?.[1];
 
@@ -2410,7 +2469,7 @@ const dbTopics = sql(
   `select pg_get_constraintdef(oid) from pg_constraint
     where conrelid = 'public.notifications'::regclass and conname = 'notifications_topic_chk';`,
 );
-const codeTopics = readFileSync("lib/core/schemas/notification.ts", "utf8")
+const codeTopics = srcOf("lib/core/schemas/notification.ts")
   .match(/export const NOTIFICATION_TOPICS = \[([\s\S]*?)\] as const;/)?.[1]
   .match(/"([a-z_]+)"/g)
   ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3318,7 +3377,7 @@ if (!vendorStaff || !adminUser) {
     `select pg_get_constraintdef(oid) from pg_constraint
       where conrelid = 'public.payments'::regclass and conname = 'payments_status_values';`,
   );
-  const codePaymentStatus = readFileSync("lib/core/payment/payment.ts", "utf8")
+  const codePaymentStatus = srcOf("lib/core/payment/payment.ts")
     .match(/export const PAYMENT_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
     .match(/"([a-z_]+)"/g)
     ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3334,7 +3393,7 @@ if (!vendorStaff || !adminUser) {
       where conrelid = 'public.payment_schedules'::regclass
         and conname = 'payment_schedules_anchor_values';`,
   );
-  const codeAnchors = readFileSync("lib/core/payment/payment.ts", "utf8")
+  const codeAnchors = srcOf("lib/core/payment/payment.ts")
     .match(/export const DUE_ANCHORS = \[([\s\S]*?)\] as const;/)?.[1]
     .match(/"([a-z_]+)"/g)
     ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3370,7 +3429,7 @@ if (!vendorStaff || !adminUser) {
       where conrelid = 'public.payment_consents'::regclass
         and conname = 'payment_consents_kind_values';`,
   );
-  const codeConsentKinds = readFileSync("lib/core/payment/checkout.ts", "utf8")
+  const codeConsentKinds = srcOf("lib/core/payment/checkout.ts")
     .match(/export const CONSENT_KINDS = \[([\s\S]*?)\] as const;/)?.[1]
     .match(/"([a-z_]+)"/g)
     ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3439,7 +3498,7 @@ if (!vendorStaff || !adminUser) {
         where conrelid = 'public.${table}'::regclass and conname = '${constraint}';`,
     );
     const codeValues =
-      readFileSync(file, "utf8")
+      srcOf(file)
         .match(new RegExp(`export const ${constant} = \\[([\\s\\S]*?)\\] as const;`))?.[1]
         .match(/"([a-z_]+)"/g)
         ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3456,7 +3515,7 @@ if (!vendorStaff || !adminUser) {
       where conrelid = 'public.escrow_holds'::regclass and conname = 'escrow_holds_status_values';`,
   );
   const codeEscrow =
-    readFileSync("lib/core/escrow/escrow.ts", "utf8")
+    srcOf("lib/core/escrow/escrow.ts")
       .match(/export const ESCROW_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
       .match(/"([a-z_]+)"/g)
       ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -3497,7 +3556,7 @@ if (!vendorStaff || !adminUser) {
   // ── S5-08 이 더한 정합 ────────────────────────────────────────────────────
   // 해지의 값 집합도 코드와 DB 두 곳에 있다. 한쪽만 늘리면 **화면이 보낸 사유를 DB 가
   // 거절**하고, 그 실패는 사용자에게 알 수 없는 오류로 보인다.
-  const cancelSource = readFileSync("lib/core/cancellation/cancellation.ts", "utf8");
+  const cancelSource = srcOf("lib/core/cancellation/cancellation.ts");
 
   for (const [label, constant, constraint] of [
     ["취소 사유 코드", "CANCEL_REASON_CODES", "contract_cancellations_reason_values"],
@@ -3845,13 +3904,13 @@ if (!vendorStaff || !adminUser) {
   // 업체를 하나씩 골라 눌러야 했다. 월 마감을 사람이 기억해야 하고, 한 업체를
   // 빠뜨리면 그 업체는 정산을 못 받는데 **빠뜨렸다는 사실이 어느 화면에도 안 뜬다.**
   {
-    const settleSource = readFileSync("lib/settlements/actions.ts", "utf8");
+    const settleSource = srcOf("lib/settlements/actions.ts");
     const aggregate = settleSource.slice(
       settleSource.indexOf("export async function runSettlementAggregate"),
       settleSource.indexOf("type SettlementPatch"),
     );
     const jobRoute = existsSync("app/api/jobs/settlement-aggregate/route.ts")
-      ? readFileSync("app/api/jobs/settlement-aggregate/route.ts", "utf8")
+      ? srcOf("app/api/jobs/settlement-aggregate/route.ts")
       : "";
 
     check(
@@ -4412,15 +4471,24 @@ if (!vendorStaff || !adminUser) {
   // 홀드가 있는 예약은 정산에서 빠지므로(`settlementEligible`) 그 돈은 업체에게 가지도
   // 않고 정산에도 들어오지 않았다 — 손해가 두 겹이다.
   {
-    const batchSource = readFileSync("lib/escrow/actions.ts", "utf8");
-    const runner = batchSource.slice(
-      batchSource.indexOf("export async function runEscrowRelease"),
-      batchSource.indexOf("// 내부 — 보관 해제"),
-    );
+    const batchSource = srcOf("lib/escrow/actions.ts");
+    /**
+     * **구역 경계를 주석으로 잡지 않는다**(FIX-64). 끝 앵커가 `// 내부 — 보관 해제`
+     * 였는데, 소스에서 주석을 걷어내자 그 앵커가 사라져 `indexOf` 가 -1 을 돌려줬다 —
+     * `slice(start, -1)` 은 **파일 끝까지**를 잉고, 그 안의 내부 함수가 가진 `.update(` 가
+     * 배치의 것으로 읽혔다. 경계는 **코드에 있는 것**으로 잡는다.
+     */
+    const runnerStart = batchSource.indexOf("export async function runEscrowRelease");
+    const runnerEnd = batchSource.indexOf("async function loadHold(");
+    const runner =
+      runnerStart >= 0 && runnerEnd > runnerStart ? batchSource.slice(runnerStart, runnerEnd) : "";
 
     check(
       "**배치 본문을 실제로 읽었다** — 못 읽으면 아래 검사가 전부 빈 문자열을 통과시킨다",
-      runner.length > 500,
+      // **아래만 막으면 안 된다.** 경계가 깨지면 구역이 짧아지는 게 아니라 **파일 끝까지**
+      // 늘어난다 — 그러면 아래 검사들이 남의 함수를 보고 답한다. 위아래를 다 막는다.
+      runner.length > 500 && runner.length < batchSource.length * 0.6,
+      `runner=${runner.length} file=${batchSource.length}`,
     );
     check(
       "**배치 라우트가 실재한다** — 판정 함수만 있고 부르는 자리가 없으면 영영 보관이다",
@@ -4758,7 +4826,7 @@ if (!vendorStaff || !adminUser) {
         where conrelid = 'public.planners'::regclass and conname = 'planners_status_values';`,
     );
     const codePlannerStatus =
-      readFileSync("lib/core/planner/profile.ts", "utf8")
+      srcOf("lib/core/planner/profile.ts")
         .match(/export const PLANNER_STATUSES = \[([\s\S]*?)\] as const;/)?.[1]
         .match(/"([a-z_]+)"/g)
         ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -4776,7 +4844,7 @@ if (!vendorStaff || !adminUser) {
           and conname = 'planner_scopes_category_values';`,
     );
     const codeScopeCats =
-      readFileSync("lib/core/planner/scope.ts", "utf8")
+      srcOf("lib/core/planner/scope.ts")
         .match(/export const PLANNER_CATEGORIES = \[([\s\S]*?)\] as const;/)?.[1]
         .match(/"([a-z_]+)"/g)
         ?.map((value) => value.replaceAll('"', "")) ?? [];
@@ -4808,7 +4876,7 @@ if (!vendorStaff || !adminUser) {
 // 운영자가 보고 끄는 사본이라(F-A-03), 둘이 벌어져도 화면에는 아무 일도 안 생긴다.
 // 그래서 여기서 대조한다 — 이 검사가 시드의 유일한 파수꾼이다.
 {
-  const rulesSrc = readFileSync("lib/core/rules/detect-rules.ts", "utf8");
+  const rulesSrc = srcOf("lib/core/rules/detect-rules.ts");
   const codeRuleCodes = [...rulesSrc.matchAll(/code: "(R-\d\d)"/g)].map((m) => m[1]);
   const codeVersion = rulesSrc.match(/DETECT_RULES_VERSION = "([^"]+)"/)?.[1] ?? "";
   const codeSeverities = [
@@ -5763,7 +5831,7 @@ if (!vendorStaff || !adminUser) {
   // **사본은 어긋나고 어긋나면 조용하다.** 진실은 `lib/core/schedule/templates.ts` 이고
   // 시드는 그 사본이라 검출 룰(S7-01)과 같은 방식으로 대조한다.
   {
-    const templateSrc = readFileSync("lib/core/schedule/templates.ts", "utf8");
+    const templateSrc = srcOf("lib/core/schedule/templates.ts");
     const codes = [...templateSrc.matchAll(/code: "(T-[a-z-]+)"/g)].map((m) => m[1]);
     const edgeCount = [...templateSrc.matchAll(/dependsOn: \[([^\]]*)\]/g)]
       .map((m) => m[1].split(",").filter((v) => v.trim() !== "").length)
@@ -5918,7 +5986,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔DB 대조. **사본은 어긋나고 어긋나면 조용하다**(검출 룰 S7-01 과 같은 구조).
   {
-    const viewSrc = readFileSync("lib/core/schedule/view.ts", "utf8");
+    const viewSrc = srcOf("lib/core/schedule/view.ts");
     const codes = (viewSrc.match(/export const SCHEDULE_VIEWS = \[([^\]]*)\]/) ?? ["", ""])[1]
       .split(",")
       .map((v) => v.trim().replace(/"/g, ""))
@@ -6108,7 +6176,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔DB 어휘 대조. **사본은 어긋나고 어긋나면 조용하다**(검출 룰 S7-01 과 같은 구조).
   {
-    const budgetSrc = readFileSync("lib/core/schemas/estimate.ts", "utf8");
+    const budgetSrc = srcOf("lib/core/schemas/estimate.ts");
     // **배열 블록만 읽는다.** 파일 전체를 훑으면 라벨표의 따옴표까지 걸려 수가 부푼다.
     const block = (budgetSrc.match(/ESTIMATE_CATEGORIES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
     const estimateCodes = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
@@ -6152,7 +6220,7 @@ if (!vendorStaff || !adminUser) {
   );
   {
     // 코드↔DB 매핑 대조. **사본은 어긋나고 어긋나면 조용하다.**
-    const budgetCoreSrc = readFileSync("lib/core/budget/budget.ts", "utf8");
+    const budgetCoreSrc = srcOf("lib/core/budget/budget.ts");
     const block = (budgetCoreSrc.match(
       /VENDOR_TO_BUDGET_CATEGORY: Record<string, BudgetCategory> = \{([\s\S]*?)\}/,
     ) ?? ["", ""])[1];
@@ -6304,7 +6372,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔화면 대조. **가정치라는 사실이 화면까지 가야 한다**(§7.7).
   {
-    const viewSrc = readFileSync("lib/core/pricing/penalty-view.ts", "utf8");
+    const viewSrc = srcOf("lib/core/pricing/penalty-view.ts");
     // **주석을 걷어내고 본다.** 주석에는 "‘과도한 조항’ 같은 말은 쓰지 않는다" 처럼
     // 금지어를 설명하는 문장이 있고, 그것까지 걸면 규칙을 적어 둔 것이 위반이 된다.
     const viewCode = viewSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -6445,7 +6513,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔DB 어휘 대조. **사본은 어긋나고 어긋나면 조용하다.**
   {
-    const shareSrc = readFileSync("lib/core/share/share.ts", "utf8");
+    const shareSrc = srcOf("lib/core/share/share.ts");
     const types = [...shareSrc.matchAll(/type: "([a-z_]+)"/g)].map((m) => m[1]);
 
     check(
@@ -6590,7 +6658,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔코드 대조. **견적과 예산이 같은 카테고리 표를 쓴다.**
   {
-    const estimateSrc = readFileSync("lib/core/estimate/normalize.ts", "utf8");
+    const estimateSrc = srcOf("lib/core/estimate/normalize.ts");
 
     check(
       "**견적 매핑이 예산 표를 그대로 참조한다** — 사본을 만들면 사본이 어긋난다",
@@ -6599,13 +6667,13 @@ if (!vendorStaff || !adminUser) {
     check(
       "**업로드·파싱 표를 쓰지 않는다**(D-56 — PDF 파서·OCR 은 새 의존성이다)",
       !estimateSrc.includes("estimate_uploads") &&
-        !readFileSync("lib/estimates/loader.ts", "utf8").includes("estimate_uploads"),
+        !srcOf("lib/estimates/loader.ts").includes("estimate_uploads"),
     );
   }
 
   check(
     "공유 레지스트리가 비교표를 연다 (S7-12 의 대기가 풀렸다)",
-    readFileSync("lib/core/share/share.ts", "utf8")
+    srcOf("lib/core/share/share.ts")
       .replace(/\s+/g, " ")
       .includes('type: "estimate_comparison", label: "견적 비교표",'),
   );
@@ -6736,7 +6804,7 @@ if (!vendorStaff || !adminUser) {
 
   // 코드↔DB 어휘 대조.
   {
-    const membershipSrc = readFileSync("lib/core/membership/membership.ts", "utf8");
+    const membershipSrc = srcOf("lib/core/membership/membership.ts");
     const statuses = [...membershipSrc.matchAll(/MEMBERSHIP_STATUSES = \[([^\]]+)\]/g)]
       .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
 
@@ -6754,11 +6822,11 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "**AI 턴 상한이 같은 어휘를 쓴다**(S7-20 의 member 를 premium 으로 맞췄다)",
-      readFileSync("lib/core/ai/limits.ts", "utf8").includes('MEMBERSHIP_TIERS = ["free", "premium"]'),
+      srcOf("lib/core/ai/limits.ts").includes('MEMBERSHIP_TIERS = ["free", "premium"]'),
     );
     check(
       "**플래너가 등급을 지어내지 않는다** — 저장값이 아니라 계산값을 본다",
-      readFileSync("app/api/ai/planner/route.ts", "utf8").includes("loadMembership"),
+      srcOf("app/api/ai/planner/route.ts").includes("loadMembership"),
     );
   }
 }
@@ -6905,7 +6973,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── 코드↔DB 대조 ──────────────────────────────────────────────────────────
   {
-    const contentSrc = readFileSync("lib/core/content/content.ts", "utf8");
+    const contentSrc = srcOf("lib/core/content/content.ts");
 
     const types = [...contentSrc.matchAll(/CONTENT_TYPES = \[([^\]]+)\]/g)]
       .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
@@ -6970,7 +7038,7 @@ if (!vendorStaff || !adminUser) {
     const windows = [
       "app/(marketing)/guides/page.tsx",
       "app/(marketing)/guides/[slug]/page.tsx",
-    ].map((path) => /export const revalidate = (\d+)/.exec(readFileSync(path, "utf8"))?.[1]);
+    ].map((path) => /export const revalidate = (\d+)/.exec(srcOf(path))?.[1]);
 
     check(
       "**두 콘텐츠 화면의 재생성 창이 같다**",
@@ -6981,8 +7049,8 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "사이트맵이 발행 목록을 **같은 함수**에서 가져온다 (판정이 둘로 갈리면 404 가 생긴다)",
-    readFileSync("app/sitemap.ts", "utf8").includes("publishedSlugs") &&
-      readFileSync("lib/content/loader.ts", "utf8").includes('rpc("published_content"'),
+    srcOf("app/sitemap.ts").includes("publishedSlugs") &&
+      srcOf("lib/content/loader.ts").includes('rpc("published_content"'),
   );
 }
 
@@ -7188,8 +7256,8 @@ if (!vendorStaff || !adminUser) {
 
   // ── 코드↔코드 대조 ────────────────────────────────────────────────────────
   {
-    const guidesSrc = readFileSync("lib/core/compliance/guides.ts", "utf8");
-    const rulesSrc = readFileSync("lib/core/rules/detect-rules.ts", "utf8");
+    const guidesSrc = srcOf("lib/core/compliance/guides.ts");
+    const rulesSrc = srcOf("lib/core/rules/detect-rules.ts");
 
     const guideCodes = [...guidesSrc.matchAll(/ruleCode: "(R-\d+)"/g)].map((m) => m[1]).sort();
     const ruleCodes = [...rulesSrc.matchAll(/code: "(R-\d+)"/g)].map((m) => m[1]).sort();
@@ -7214,20 +7282,20 @@ if (!vendorStaff || !adminUser) {
       !/제\s*\d+\s*조/.test(guidesSrc) && !/[^\w]\d+\s*항/.test(guidesSrc),
     );
 
-    const complianceSrc = readFileSync("lib/core/compliance/compliance.ts", "utf8");
+    const complianceSrc = srcOf("lib/core/compliance/compliance.ts");
 
     check(
       "**AI 를 부르지 않는다** — 같은 문서에 같은 답이 나와야 배지가 우연이 아니다",
       !complianceSrc.includes("@/lib/ai") &&
-        !readFileSync("lib/compliance/scan.ts", "utf8").includes("lib/ai/"),
+        !srcOf("lib/compliance/scan.ts").includes("lib/ai/"),
     );
     check(
       "**소비자 리포트와 같은 룰 엔진을 쓴다** — 룰을 새로 만들지 않았다",
-      readFileSync("lib/compliance/scan.ts", "utf8").includes('from "@/lib/core/rules/scan"'),
+      srcOf("lib/compliance/scan.ts").includes('from "@/lib/core/rules/scan"'),
     );
     check(
       "**저장 전에 마스킹한다** — 실수로 붙여넣은 고객 이름이 인용에 남지 않는다",
-      readFileSync("lib/compliance/scan.ts", "utf8").includes("maskText"),
+      srcOf("lib/compliance/scan.ts").includes("maskText"),
     );
     check(
       "**코드가 배지 기준 숫자를 갖지 않는다**(§7.4)",
@@ -7241,7 +7309,7 @@ if (!vendorStaff || !adminUser) {
 
   check(
     "업체 내비가 진단 화면을 가리킨다 (만든 화면에 들어가는 자리를 잇는다)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/compliance"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/vendor/compliance"'),
   );
 }
 
@@ -7498,7 +7566,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── 코드↔DB 어휘 대조 ─────────────────────────────────────────────────────
   {
-    const guestSrc = readFileSync("lib/core/guest/guest.ts", "utf8");
+    const guestSrc = srcOf("lib/core/guest/guest.ts");
 
     const statuses = [...guestSrc.matchAll(/RSVP_STATUSES = \[([^\]]+)\]/g)]
       .flatMap((m) => [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]));
@@ -7520,7 +7588,7 @@ if (!vendorStaff || !adminUser) {
     );
 
     // 이름이 이벤트로 나가지 않는지 소스로 본다. 흐름 점검이 값으로 다시 확인한다.
-    const loaderSrc = readFileSync("lib/guest/loader.ts", "utf8");
+    const loaderSrc = srcOf("lib/guest/loader.ts");
 
     check(
       "**이벤트 memo 에 이름을 넣지 않는다**(§7.3)",
@@ -7540,11 +7608,11 @@ if (!vendorStaff || !adminUser) {
 
     check(
       "**초대 링크가 색인되지 않는다** — 토큰을 가진 것이 곧 권한이다",
-      readFileSync("app/robots.ts", "utf8").includes('"/rsvp/"'),
+      srcOf("app/robots.ts").includes('"/rsvp/"'),
     );
     check(
       "홈이 하객 화면을 가리킨다 (만든 화면에 들어가는 자리를 잇는다)",
-      readFileSync("app/(consumer)/home/page.tsx", "utf8").includes('href="/guests"'),
+      srcOf("app/(consumer)/home/page.tsx").includes('href="/guests"'),
     );
   }
 }
@@ -7688,13 +7756,13 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "대시보드가 캐시되지 않는다 — 굳으면 권한 회수 뒤에도 지표가 나간다(FIX-22 계열)",
-    readFileSync("app/(admin)/admin/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "지표 API 도 캐시되지 않는다",
-    readFileSync("app/api/admin/metrics/route.ts", "utf8").includes(
+    srcOf("app/api/admin/metrics/route.ts").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
@@ -7829,24 +7897,24 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**운영자 콘솔 내비가 `/admin/audit` 을 가리킨다** — URL 을 직접 쳐야 열리는 화면을 만들지 않는다",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/audit"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/audit"'),
   );
   check(
     "감사 로그 화면이 캐시되지 않는다 (권한 회수 뒤에도 나가면 안 된다)",
-    readFileSync("app/(admin)/admin/audit/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/audit/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "감사 로그 API 도 캐시되지 않는다",
-    readFileSync("app/api/admin/audit-logs/route.ts", "utf8").includes(
+    srcOf("app/api/admin/audit-logs/route.ts").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**증적 타임라인 API 는 읽기 전용이다** — POST·PATCH·DELETE 를 두지 않았다(§4.3)",
     !/export async function (POST|PATCH|PUT|DELETE)/.test(
-      readFileSync("app/api/admin/entity-events/route.ts", "utf8"),
+      srcOf("app/api/admin/entity-events/route.ts"),
     ),
   );
 
@@ -8094,17 +8162,17 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/privacy` 화면이 실재한다", existsSync("app/(admin)/admin/privacy/page.tsx"));
   check(
     "**운영자 콘솔 내비가 `/admin/privacy` 를 가리킨다**",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/privacy"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/privacy"'),
   );
   check(
     "개인정보 감사 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/privacy/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/privacy/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "감사 API 도 캐시되지 않는다",
-    readFileSync("app/api/admin/privacy-audit/route.ts", "utf8").includes(
+    srcOf("app/api/admin/privacy-audit/route.ts").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
@@ -8114,18 +8182,18 @@ if (!vendorStaff || !adminUser) {
     // 열리지 않는다" 였다. 그 뜻대로 다시 쓴다: 라우트가 공통 인증을 쓰고, 그 인증이
     // 서버 전용 키 둘만 받는지.
     "**파기 배치가 세션이 아니라 서버 비밀키로 열린다** — 아무나 파기를 돌릴 수 없다",
-    readFileSync("app/api/jobs/purge-documents/route.ts", "utf8").includes(
+    srcOf("app/api/jobs/purge-documents/route.ts").includes(
       "authorizeJob(request)",
     ) &&
-      readFileSync("lib/ops/job-auth.ts", "utf8").includes("SUPABASE_SERVICE_ROLE_KEY") &&
-      readFileSync("lib/ops/job-auth.ts", "utf8").includes("CRON_SECRET") &&
+      srcOf("lib/ops/job-auth.ts").includes("SUPABASE_SERVICE_ROLE_KEY") &&
+      srcOf("lib/ops/job-auth.ts").includes("CRON_SECRET") &&
       // 세션에서 뽑은 사용자로 여는 경로가 없어야 한다.
-      !readFileSync("lib/ops/job-auth.ts", "utf8").includes("getSessionUser"),
+      !srcOf("lib/ops/job-auth.ts").includes("getSessionUser"),
   );
   check(
     "**배치가 Storage 를 지운 뒤에 purged_at 을 찍는다**(D-58) — 뒤집으면 감사가 눈을 감는다",
     (() => {
-      const src = readFileSync("lib/privacy/purge.ts", "utf8");
+      const src = srcOf("lib/privacy/purge.ts");
       // **`purged_at` 을 그냥 찾으면 안 된다** — select 목록에도 그 이름이 있어
       // 조회 문자열이 먼저 걸린다(처음 그렇게 썼다가 오탐이 났다). 실제 **쓰기**를 찾는다.
       const remove = src.indexOf(".remove([parts.key])");
@@ -8329,36 +8397,36 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**내비의 `/admin/disputes` 가 이제 살아 있다** (FIX-23 죽은 링크 하나가 줄었다)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/disputes"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/disputes"'),
   );
   check(
     "**내비가 `/admin/penalties` 를 가리킨다** — URL 을 직접 쳐야 열리던 화면이었다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/penalties"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/penalties"'),
   );
   check(
     "분쟁 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/disputes/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/disputes/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "조율 API 도 캐시되지 않는다",
-    readFileSync("app/api/admin/disputes/[id]/route.ts", "utf8").includes(
+    srcOf("app/api/admin/disputes/[id]/route.ts").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**큐가 증적 타임라인을 새로 만들지 않고 S8-02 의 것을 가리킨다**",
-    readFileSync("app/(admin)/admin/disputes/page.tsx", "utf8").includes("/admin/audit?targetType="),
+    srcOf("app/(admin)/admin/disputes/page.tsx").includes("/admin/audit?targetType="),
   );
   check(
     "**조율 콘솔이 위약금을 다시 산정하지 않는다** — 계약 시점 규칙으로 이미 박힌 값을 읽는다",
     // 주석에는 그 파일 이름이 나온다(왜 안 부르는지 적어 두었다). **import 를 본다.**
-    !/^\s*import[^;]*lib\/core\/pricing/m.test(readFileSync("lib/dispute/loader.ts", "utf8")),
+    !/^\s*import[^;]*lib\/core\/pricing/m.test(srcOf("lib/dispute/loader.ts")),
   );
   check(
     "**노쇼 판정을 다시 구현하지 않고 applyVerdict 를 부른다** — 무응답 기본값이 두 벌이 되면 안 된다",
-    readFileSync("app/api/admin/consultation-disputes/route.ts", "utf8").includes("applyVerdict"),
+    srcOf("app/api/admin/consultation-disputes/route.ts").includes("applyVerdict"),
   );
 
   // ── 픽스처 ────────────────────────────────────────────────────────────────
@@ -8519,7 +8587,7 @@ if (!vendorStaff || !adminUser) {
   check(
     "**§5.7 의 40%·25% 를 코드가 기본값으로 쓰지 않는다**",
     (() => {
-      const src = readFileSync("lib/core/pricing/anomaly.ts", "utf8");
+      const src = srcOf("lib/core/pricing/anomaly.ts");
 
       // 4000·2500 을 상수로 박아 두지 않았는지 본다(테스트 픽스처는 별도 파일이다).
       return !/=\s*4_?000\b/.test(src) && !/=\s*2_?500\b/.test(src);
@@ -8555,33 +8623,33 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/prices` 화면이 실재한다", existsSync("app/(admin)/admin/prices/page.tsx"));
   check(
     "**내비의 `/admin/prices` 가 이제 살아 있다** (FIX-23 죽은 링크 하나가 줄었다)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/prices"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/prices"'),
   );
   check(
     "가격 큐레이션 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/prices/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/prices/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "이상 탐지 API 도 캐시되지 않는다",
-    readFileSync("app/api/admin/price-anomalies/route.ts", "utf8").includes(
+    srcOf("app/api/admin/price-anomalies/route.ts").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     // S8-13 이 인증을 공통 헬퍼로 모았다(D-149). 위와 같은 이유로 뜻대로 다시 쓴다.
     "**두 배치가 서버 비밀키로만 열린다** — 아무나 지수를 다시 셀 수 없다",
-    readFileSync("app/api/jobs/price-index-refresh/route.ts", "utf8").includes(
+    srcOf("app/api/jobs/price-index-refresh/route.ts").includes(
       "authorizeJob(request)",
     ) &&
-      readFileSync("app/api/jobs/price-anomaly-scan/route.ts", "utf8").includes(
+      srcOf("app/api/jobs/price-anomaly-scan/route.ts").includes(
         "authorizeJob(request)",
       ),
   );
   check(
     "**사분위를 다시 구현하지 않고 S3-08 의 buildPriceIndex 를 부른다**",
-    readFileSync("lib/pricing/curation.ts", "utf8").includes("buildPriceIndex"),
+    srcOf("lib/pricing/curation.ts").includes("buildPriceIndex"),
   );
   check(
     "**탐지 큐를 표로 저장하지 않는다** — 계산 가능한 값을 저장하지 않는다",
@@ -8804,7 +8872,7 @@ if (!vendorStaff || !adminUser) {
   // ── 코드↔DB 어휘 대조 (사본이 벌어져도 화면에는 아무 일도 안 생긴다) ──────
   {
     const codeReasons = [
-      ...readFileSync("lib/core/review/report.ts", "utf8").matchAll(/^  "([a-z_]+)",$/gm),
+      ...srcOf("lib/core/review/report.ts").matchAll(/^  "([a-z_]+)",$/gm),
     ].map((match) => match[1]);
     const dbReasons = sql(
       `select pg_get_constraintdef(oid) from pg_constraint
@@ -8818,7 +8886,7 @@ if (!vendorStaff || !adminUser) {
     );
   }
   {
-    const codeStatuses = readFileSync("lib/core/review/write.ts", "utf8").match(
+    const codeStatuses = srcOf("lib/core/review/write.ts").match(
       /REVIEWABLE_BOOKING_STATUSES = \[([^\]]+)\]/,
     )?.[1];
     const policy = sql(
@@ -8931,7 +8999,7 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**기준이 없을 때 빈 목록이 아니라 blocked 를 낸다** (함정 2)",
-    readFileSync("lib/core/review/abuse.ts", "utf8").includes('status: "blocked"'),
+    srcOf("lib/core/review/abuse.ts").includes('status: "blocked"'),
   );
 
   // ── 저장하지 않는 것 ──────────────────────────────────────────────────────
@@ -8972,32 +9040,32 @@ if (!vendorStaff || !adminUser) {
     existsSync("app/(consumer)/reviews/new/[bookingId]/page.tsx"),
   );
   {
-    const shell = readFileSync("components/layout/AdminShell.tsx", "utf8");
+    const shell = srcOf("components/layout/AdminShell.tsx");
 
     check("내비가 `/admin/reviews` 를 가리킨다", shell.includes('href: "/admin/reviews"'));
     check("내비가 `/vendor/reviews` 를 가리킨다", shell.includes('href: "/vendor/reviews"'));
   }
   check(
     "**후기 작성 화면에 들어갈 길이 있다** — 만들고 가리키지 않으면 도달 불가다(FIX-25)",
-    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes("/reviews/new/"),
+    srcOf("app/(consumer)/me/page.tsx").includes("/reviews/new/"),
   );
   check(
     "업체 상세가 검증 후기를 싣는다 (커뮤니티 언급과 실선/점선으로 갈린다 · §6.2)",
-    readFileSync("app/(consumer)/explore/[vendorId]/page.tsx", "utf8").includes("VendorReviews"),
+    srcOf("app/(consumer)/explore/[vendorId]/page.tsx").includes("VendorReviews"),
   );
   check(
     "후기 관리 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/reviews/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/reviews/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**S2-08 의 '평균 평점' 이 실측으로 바뀌었다** — 만든 기능을 화면이 '없다' 고 말하지 않는다(FIX-29)",
-    !readFileSync("lib/vendor/stats.ts", "utf8").includes("검증 후기 기능이 아직 없습니다"),
+    !srcOf("lib/vendor/stats.ts").includes("검증 후기 기능이 아직 없습니다"),
   );
   check(
     "**후기 0건을 0점으로 적지 않는다** (0점은 '평가가 최악' 으로 읽힌다 · D-96)",
-    readFileSync("lib/vendor/stats.ts", "utf8").includes("noBasis("),
+    srcOf("lib/vendor/stats.ts").includes("noBasis("),
   );
 
   check(
@@ -9087,7 +9155,7 @@ if (!vendorStaff || !adminUser) {
   {
     // 코드↔DB 대조. 사본이 벌어져도 화면에는 아무 일도 안 생긴다(S7-01 이 세운 방식).
     const codeStatuses = [
-      ...readFileSync("lib/core/report/pipeline.ts", "utf8")
+      ...srcOf("lib/core/report/pipeline.ts")
         .match(/ANALYSIS_STATUSES = \[([^\]]+)\]/)?.[1]
         .matchAll(/"([a-z_]+)"/g) ?? [],
     ].map((match) => match[1]);
@@ -9104,7 +9172,7 @@ if (!vendorStaff || !adminUser) {
   }
   {
     const codeResults = [
-      ...(readFileSync("lib/core/quality/metrics.ts", "utf8")
+      ...(srcOf("lib/core/quality/metrics.ts")
         .match(/VALIDATION_RESULTS = \[([^\]]+)\]/)?.[1]
         .matchAll(/"([a-z_]+)"/g) ?? []),
     ].map((match) => match[1]);
@@ -9310,26 +9378,26 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**단가가 없으면 빈 값이 아니라 blocked 를 낸다** (함정 2·3)",
-    readFileSync("lib/core/quality/metrics.ts", "utf8").includes('status: "blocked"') &&
-      readFileSync("app/api/admin/ai-quality/route.ts", "utf8").includes("costBlocked"),
+    srcOf("lib/core/quality/metrics.ts").includes('status: "blocked"') &&
+      srcOf("app/api/admin/ai-quality/route.ts").includes("costBlocked"),
   );
   check(
     "**목표치가 '가정' 이라는 사실을 코드가 들고 다닌다** — 판정을 만들지 않는다",
-    readFileSync("lib/core/quality/metrics.ts", "utf8").includes("assumed: true"),
+    srcOf("lib/core/quality/metrics.ts").includes("assumed: true"),
   );
 
   // ── 계측: 셀 수 없던 것을 세는가 ──────────────────────────────────────────
   check(
     "**플래너가 품질 로그를 남긴다** — 그전까지 리포트만 남겨 '플래너 0%' 가 떴다",
-    readFileSync("app/api/ai/planner/route.ts", "utf8").includes("logAiCall"),
+    srcOf("app/api/ai/planner/route.ts").includes("logAiCall"),
   );
   check(
     "**상한에 막힌 턴도 남는다** — 실패가 아니라 limit_reached 다",
-    readFileSync("app/api/ai/planner/route.ts", "utf8").includes('"limit_reached"'),
+    srcOf("app/api/ai/planner/route.ts").includes('"limit_reached"'),
   );
   check(
     "**리포트가 폐기 수를 칸에 남긴다** — memo 문자열 파싱으로 지표를 만들지 않는다",
-    readFileSync("lib/reports/analyze.ts", "utf8").includes("findingsDiscarded"),
+    srcOf("lib/reports/analyze.ts").includes("findingsDiscarded"),
   );
   check(
     "품질 로그 픽스처가 붙어 있다 (0건이면 격리 검사가 엉뚱한 이유로 통과한다)",
@@ -9360,24 +9428,24 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**내비가 명세 경로를 가리킨다** — `/admin/quality` 는 §6.4 에 없는 경로였다(FIX-23)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/ai-quality"') &&
-      !readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/quality"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/ai-quality"') &&
+      !srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/quality"'),
   );
   check(
     "**오탐 신고에 들어가는 자리가 있다** — 접수 경로 없는 큐는 영원히 비어 있다(FIX-25)",
-    readFileSync("app/(consumer)/reports/[id]/ReportDetailView.tsx", "utf8").includes(
+    srcOf("app/(consumer)/reports/[id]/ReportDetailView.tsx").includes(
       "FindingReportButton",
     ),
   );
   check(
     "품질 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/ai-quality/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/ai-quality/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**S8-01 의 AI 비용 카드가 담당·사유를 바로잡았다** — 잘못 적힌 담당은 아무도 걷지 않는다",
-    !readFileSync("lib/core/metrics/admin.ts", "utf8").includes('"S8-04",'),
+    !srcOf("lib/core/metrics/admin.ts").includes('"S8-04",'),
   );
 
   check(
@@ -9501,7 +9569,7 @@ if (!vendorStaff || !adminUser) {
   );
   {
     // 코드↔DB 대조. 화면이 쓰는 상태 계산과 정책이 같은 방향을 봐야 한다.
-    const code = readFileSync("lib/core/content/cms.ts", "utf8");
+    const code = srcOf("lib/core/content/cms.ts");
     const policy = sql(
       `select qual from pg_policies
          where schemaname = 'public' and tablename = 'content_posts'
@@ -9593,23 +9661,23 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/cms` 화면이 실재한다", existsSync("app/(admin)/admin/cms/page.tsx"));
   check(
     "**내비가 명세 경로를 가리킨다** — `/admin/content` 는 §6.4 에 없는 경로였다(FIX-23)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/cms"') &&
-      !readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/content"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/cms"') &&
+      !srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/content"'),
   );
   check(
     "콘텐츠 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/cms/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/cms/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**DELETE 라우트가 행을 지우지 않는다** — 공개만 거둔다",
-    readFileSync("app/api/admin/content/route.ts", "utf8").includes("unpublished: true") &&
-      readFileSync("lib/content/admin.ts", "utf8").includes("published_at: null"),
+    srcOf("app/api/admin/content/route.ts").includes("unpublished: true") &&
+      srcOf("lib/content/admin.ts").includes("published_at: null"),
   );
   check(
     "**CTA 키를 쓰기에서 막는다**(D-98) — 걸러진 값은 화면에 안 보여 잘못 적은 줄 모른다",
-    readFileSync("lib/core/content/cms.ts", "utf8").includes("KNOWN_TOOL_KEYS"),
+    srcOf("lib/core/content/cms.ts").includes("KNOWN_TOOL_KEYS"),
   );
   check(
     // **함정 4.** `/guides` 는 `revalidate = 300` 으로 굳는다(S7-10 · 그것이 목적이다).
@@ -9617,8 +9685,8 @@ if (!vendorStaff || !adminUser) {
     // 계속 열린다.** 화면은 '내렸다' 고 말하는데 URL 은 살아 있는 상태다.
     // S8-08 흐름 점검이 실제로 여기 걸렸다.
     "**쓰기 뒤에 공개 화면 캐시를 무효화한다** — 안 그러면 내린 글이 5분 동안 열려 있다",
-    readFileSync("lib/content/admin.ts", "utf8").includes("revalidatePath") &&
-      readFileSync("lib/content/admin.ts", "utf8").includes('revalidatePath("/sitemap.xml")'),
+    srcOf("lib/content/admin.ts").includes("revalidatePath") &&
+      srcOf("lib/content/admin.ts").includes('revalidatePath("/sitemap.xml")'),
   );
 
   check(
@@ -9776,7 +9844,7 @@ if (!vendorStaff || !adminUser) {
   // ── 코드↔DB 대조 (S7-01 이 세운 방식 그대로) ──────────────────────────────
   {
     const codeCodes = [
-      ...readFileSync("lib/core/rules/detect-rules.ts", "utf8").matchAll(/code: "(R-\d{2})"/g),
+      ...srcOf("lib/core/rules/detect-rules.ts").matchAll(/code: "(R-\d{2})"/g),
     ].map((match) => match[1]);
     const dbCodes = sql(`select string_agg(code, ',' order by code) from public.detect_rules;`)
       .split(",")
@@ -9790,20 +9858,25 @@ if (!vendorStaff || !adminUser) {
   }
   check(
     "**콘솔이 스캔과 같은 병합 함수를 쓴다** — 따로 계산하면 화면과 스캔이 갈린다",
-    readFileSync("lib/rules/admin.ts", "utf8").includes("mergeDetectRules"),
+    srcOf("lib/rules/admin.ts").includes("mergeDetectRules"),
   );
 
   // ── 고칠 수 있는 칸이 셋뿐인가 ────────────────────────────────────────────
   check(
     "**수정 경로가 만지는 칸이 셋뿐이다** — 서비스롤이라 DB 컬럼 권한이 안 걸린다",
     (() => {
-      // **줄바꿈에 기대지 않는다.** 처음엔 `.from(...)` 다음 줄의 주석을 앵커로 썼는데,
-      // 커밋 뒤 체크아웃이 CRLF 로 정규화하자 앵커가 사라져 검사가 **엉뚱한 문자열을**
-      // 봤다 — 통과도 실패도 아닌 상태였고, 검사가 검사 노릇을 못 한 자리다.
-      // 앵커를 **한 줄 안에서** 찾는다 — 개행을 건너지 않으므로 CRLF·LF 어느 쪽이든 같다.
-      const src = readFileSync("lib/rules/admin.ts", "utf8");
-      const block = src.slice(src.indexOf("// **이 세 칸만."));
-      const update = block.slice(block.indexOf(".update({"), block.indexOf("})"));
+      const src = srcOf("lib/rules/admin.ts");
+      // **앵커를 아예 없앤다**(FIX-64). 이 검사는 앵커를 세 번 잃었다 — 줄바꿈
+      // 정규화로 한 번, 소스에서 주석을 걷어내면서 한 번, 그 대안으로 고른
+      // `.from("detect_rules")` 가 **세 군데 있어** 또 한 번.
+      //
+      // 생각해 보면 **수정 경로가 하나라는 것 자체가 이 검사가 묻는 것**이다 —
+      // 둘이 되면 한쪽이 목록을 늘려도 모른다. 그래서 `.update({...})` 를
+      // **전부** 모아 하나임을 함께 묻는다. 앵커도 없고 검사도 세진다.
+      const updates = [...src.matchAll(/\.update\(\{([\s\S]*?)\}\)/g)].map((m) => m[1]);
+      // **목록을 실제로 읽었는가를 먼저 묻는다**(운영 규칙 7.0b).
+      if (updates.length !== 1) return false;
+      const update = updates[0];
 
       return (
         update.includes("is_active") &&
@@ -9817,10 +9890,10 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**정규식이 편집 목록에 없다**",
-    !readFileSync("lib/core/rules/console.ts", "utf8").includes(
+    !srcOf("lib/core/rules/console.ts").includes(
       'EDITABLE_RULE_FIELDS = ["is_active", "prompt_fragment", "basis_ref", "pattern_json"',
     ) &&
-      readFileSync("lib/core/rules/console.ts", "utf8").includes(
+      srcOf("lib/core/rules/console.ts").includes(
         'EDITABLE_RULE_FIELDS = ["is_active", "prompt_fragment", "basis_ref"]',
       ),
   );
@@ -9828,17 +9901,17 @@ if (!vendorStaff || !adminUser) {
   // ── 없는 것을 있는 것처럼 적지 않는다 ─────────────────────────────────────
   check(
     "**배포 게이트가 blocked 로 API 본문에 실린다** (골든셋이 없다 · FIX-42 · 함정 3)",
-    readFileSync("app/api/admin/rules/route.ts", "utf8").includes("gateBlocked") &&
-      readFileSync("lib/core/rules/console.ts", "utf8").includes('reason: "golden_set_missing"'),
+    srcOf("app/api/admin/rules/route.ts").includes("gateBlocked") &&
+      srcOf("lib/core/rules/console.ts").includes('reason: "golden_set_missing"'),
   );
   check(
     "**배포 이력 표가 비어 있다는 사실도 상태로 나간다** (O-22)",
-    readFileSync("app/api/admin/rules/route.ts", "utf8").includes("ledgerEmpty") &&
-      readFileSync("lib/core/rules/console.ts", "utf8").includes('openIssue: "O-22"'),
+    srcOf("app/api/admin/rules/route.ts").includes("ledgerEmpty") &&
+      srcOf("lib/core/rules/console.ts").includes('openIssue: "O-22"'),
   );
   check(
     "**한 번도 안 불린 판본을 0회로 적지 않는다** (S8-07 이 겪은 것)",
-    readFileSync("lib/rules/admin.ts", "utf8").includes("usage.get(source.version) ?? null"),
+    srcOf("lib/rules/admin.ts").includes("usage.get(source.version) ?? null"),
   );
   check(
     "**판본 사용 이력을 저장하지 않는다** — ai_call_logs 에서 센다(D-124)",
@@ -9849,17 +9922,17 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/rules` 화면이 실재한다", existsSync("app/(admin)/admin/rules/page.tsx"));
   check(
     "**내비가 `/admin/rules` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/rules"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/rules"'),
   );
   check(
     "룰 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/rules/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/rules/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**마지막 룰을 끌 때 결과를 미리 말한다** — 막지는 않는다",
-    readFileSync("lib/core/rules/console.ts", "utf8").includes("deactivationWarning"),
+    srcOf("lib/core/rules/console.ts").includes("deactivationWarning"),
   );
 
   check(
@@ -10021,7 +10094,7 @@ if (!vendorStaff || !adminUser) {
     ),
   );
   {
-    const code = readFileSync("lib/core/support/ticket.ts", "utf8");
+    const code = srcOf("lib/core/support/ticket.ts");
     const dbStatuses = sql(
       `select pg_get_constraintdef(oid) from pg_constraint where conname = 'tickets_status_vocab';`,
     );
@@ -10081,7 +10154,7 @@ if (!vendorStaff || !adminUser) {
     sql(`select count(*) from information_schema.columns
            where table_schema = 'public' and table_name = 'profiles'
              and column_name in ('suspended_at', 'suspended', 'banned_at', 'status');`) === "0" &&
-      readFileSync("lib/core/support/ticket.ts", "utf8").includes("USER_SANCTION_UNAVAILABLE"),
+      srcOf("lib/core/support/ticket.ts").includes("USER_SANCTION_UNAVAILABLE"),
   );
 
   // ── 큐를 합치지 않는다 ────────────────────────────────────────────────────
@@ -10092,10 +10165,10 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**옆 큐 셋을 가리키기만 한다** — 합치지 않되 놓치지 않게",
-    readFileSync("lib/core/support/ticket.ts", "utf8").includes("SIBLING_QUEUES") &&
-      readFileSync("lib/support/admin.ts", "utf8").includes("community_reports") &&
-      readFileSync("lib/support/admin.ts", "utf8").includes("review_reports") &&
-      readFileSync("lib/support/admin.ts", "utf8").includes("finding_reports"),
+    srcOf("lib/core/support/ticket.ts").includes("SIBLING_QUEUES") &&
+      srcOf("lib/support/admin.ts").includes("community_reports") &&
+      srcOf("lib/support/admin.ts").includes("review_reports") &&
+      srcOf("lib/support/admin.ts").includes("finding_reports"),
   );
 
   // ── 픽스처 ────────────────────────────────────────────────────────────────
@@ -10122,26 +10195,26 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**`/support` 에 들어가는 자리가 있다**",
-    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/support"'),
+    srcOf("app/(consumer)/me/page.tsx").includes('href="/support"'),
   );
   check(
     "**내비의 `/admin/tickets` 가 이제 살아 있다** (FIX-23 죽은 링크 하나 감소)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/tickets"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/tickets"'),
   );
   check(
     "CS 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/tickets/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**'지연' 이라고 적지 않는다** — 처리 기한이 정해져 있지 않다",
-    !readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes("지연") ||
-      readFileSync("app/(admin)/admin/tickets/page.tsx", "utf8").includes("지연&apos;이라고 적지"),
+    !srcOf("app/(admin)/admin/tickets/page.tsx").includes("지연") ||
+      srcOf("app/(admin)/admin/tickets/page.tsx").includes("지연&apos;이라고 적지"),
   );
   check(
     "**사용자 제재를 할 수 없다는 사실이 API 본문에 실린다** (함정 3)",
-    readFileSync("app/api/admin/tickets/route.ts", "utf8").includes("userSanction"),
+    srcOf("app/api/admin/tickets/route.ts").includes("userSanction"),
   );
 
   check(
@@ -10284,7 +10357,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── 코드↔DB 대조 ─────────────────────────────────────────────────────────
   {
-    const registry = readFileSync("lib/core/flags/registry.ts", "utf8");
+    const registry = srcOf("lib/core/flags/registry.ts");
     const codeKeys = [...registry.matchAll(/key: "([a-z][a-z0-9_.]*)"/g)]
       .map((match) => match[1])
       .filter((key) => key.includes("."));
@@ -10301,8 +10374,8 @@ if (!vendorStaff || !adminUser) {
   {
     // 부분 스위치 이름이 실제로 읽는 쪽과 같은가. 갈리면 콘솔이 켠 스위치를
     // 화면이 안 읽는다 — 스위치가 스위치 노릇을 못 한다.
-    const registry = readFileSync("lib/core/flags/registry.ts", "utf8");
-    const view = readFileSync("lib/core/schedule/view.ts", "utf8");
+    const registry = srcOf("lib/core/flags/registry.ts");
+    const view = srcOf("lib/core/schedule/view.ts");
 
     check(
       "**부분 스위치 이름이 enabledViews 가 읽는 것과 같다**",
@@ -10315,12 +10388,12 @@ if (!vendorStaff || !adminUser) {
   // ── 코드가 읽는 규칙과 콘솔이 보이는 규칙이 같은가 ────────────────────────
   check(
     "**행이 없으면 꺼진 것이다** — isFeatureEnabled 와 콘솔이 같은 말을 한다",
-    readFileSync("lib/flags.ts", "utf8").includes("enabled === true") &&
-      readFileSync("lib/core/flags/registry.ts", "utf8").includes("row?.enabled === true"),
+    srcOf("lib/flags.ts").includes("enabled === true") &&
+      srcOf("lib/core/flags/registry.ts").includes("row?.enabled === true"),
   );
   check(
     "**아무도 안 읽는 행을 '열린 기능' 으로 세지 않는다**",
-    readFileSync("lib/core/flags/registry.ts", "utf8").includes(
+    srcOf("lib/core/flags/registry.ts").includes(
       "known.filter((flag) => flag.enabled).length",
     ),
   );
@@ -10328,27 +10401,27 @@ if (!vendorStaff || !adminUser) {
   // ── 조건 미충족 상태로 켜기 (D-145) ───────────────────────────────────────
   check(
     "**막지 않고 드러낸다** — 조건 안내가 있고 차단이 없다",
-    readFileSync("lib/core/flags/registry.ts", "utf8").includes("conditionNotice") &&
-      !readFileSync("lib/flags/admin.ts", "utf8").includes("CONDITION_NOT_MET"),
+    srcOf("lib/core/flags/registry.ts").includes("conditionNotice") &&
+      !srcOf("lib/flags/admin.ts").includes("CONDITION_NOT_MET"),
   );
   check(
     "**사유가 필수다** — 조건을 안 막는 대신 왜 켰는지를 남긴다",
-    readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("왜 바꾸는지 적어 주세요"),
+    srcOf("app/api/admin/flags/[key]/route.ts").includes("왜 바꾸는지 적어 주세요"),
   );
   check(
     "**선언된 부분 스위치만 덮어쓴다** — 개방 조건 서술이 사라지면 안 된다(D-67)",
-    readFileSync("lib/flags/admin.ts", "utf8").includes("declared.has(key)"),
+    srcOf("lib/flags/admin.ts").includes("declared.has(key)"),
   );
   check(
     "**updated_by 를 입력으로 받지 않는다** — 남의 이름으로 '이 사람이 켰다' 가 만들어진다",
-    !readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("updatedBy"),
+    !srcOf("app/api/admin/flags/[key]/route.ts").includes("updatedBy"),
   );
 
   // ── 집행되지 않는 조치를 만들지 않는다 ────────────────────────────────────
   check(
     "**지역·세그먼트 부분 공개를 만들지 않았고 그 사실이 API 본문에 실린다** (함정 3)",
-    readFileSync("app/api/admin/flags/[key]/route.ts", "utf8").includes("segmentRolloutAvailable") &&
-      readFileSync("lib/flags/admin.ts", "utf8").includes("available: false"),
+    srcOf("app/api/admin/flags/[key]/route.ts").includes("segmentRolloutAvailable") &&
+      srcOf("lib/flags/admin.ts").includes("available: false"),
   );
 
   // ── 픽스처 ────────────────────────────────────────────────────────────────
@@ -10371,22 +10444,22 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/flags` 화면이 실재한다", existsSync("app/(admin)/admin/flags/page.tsx"));
   check(
     "**내비가 `/admin/flags` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/flags"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/flags"'),
   );
   check(
     "플래그 화면이 캐시되지 않는다 (스위치가 캐시되면 스위치가 아니다 · FIX-22)",
-    readFileSync("app/(admin)/admin/flags/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/flags/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**되돌릴 수 없는 것을 먼저 말한다** — 플래그는 되돌려도 그 사이 벌어진 일은 남는다",
-    readFileSync("lib/core/flags/registry.ts", "utf8").includes("irreversible"),
+    srcOf("lib/core/flags/registry.ts").includes("irreversible"),
   );
   check(
     "**전환을 증적에 남긴다** (entity_events + audit_logs)",
-    readFileSync("lib/flags/admin.ts", "utf8").includes('entityType: "feature_flag"') &&
-      readFileSync("lib/flags/admin.ts", "utf8").includes("writeAuditLog"),
+    srcOf("lib/flags/admin.ts").includes('entityType: "feature_flag"') &&
+      srcOf("lib/flags/admin.ts").includes("writeAuditLog"),
   );
 
   check(
@@ -10493,7 +10566,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── `job_runs` 어휘가 세 곳에서 같은가 ────────────────────────────────────
   {
-    const monitor = readFileSync("lib/core/ops/monitor.ts", "utf8");
+    const monitor = srcOf("lib/core/ops/monitor.ts");
     const names = [...monitor.matchAll(/name: "([a-z]+(?:-[a-z]+)+)",/g)].map((match) => match[1]);
     const inCheck = sql(`select pg_get_constraintdef(oid) from pg_constraint
                            where conname = 'job_runs_name_vocab';`);
@@ -10533,13 +10606,13 @@ if (!vendorStaff || !adminUser) {
     check(
       "**Vercel Cron 은 GET 으로 부른다** — 모든 배치가 GET 을 낸다(없으면 매번 405)",
       routes.every((path) =>
-        readFileSync(`app${path}/route.ts`, "utf8").includes("export const GET = POST"),
+        srcOf(`app${path}/route.ts`).includes("export const GET = POST"),
       ),
     );
     check(
       "**모든 배치가 공통 인증을 쓴다** — `CRON_SECRET` 또는 서비스롤 키",
       routes.every((path) =>
-        readFileSync(`app${path}/route.ts`, "utf8").includes("authorizeJob(request)"),
+        srcOf(`app${path}/route.ts`).includes("authorizeJob(request)"),
       ),
     );
     check(
@@ -10548,13 +10621,13 @@ if (!vendorStaff || !adminUser) {
         // **라우트 파일만 보면 안 된다.** `purge-documents` 는 기록을 `lib/privacy/purge.ts`
         // 안에서 남긴다 — 라우트 본문만 훑는 검사는 그것을 '안 채운다' 로 읽는다.
         // 라우트가 부르는 `@/lib/...` 모듈을 한 겹 따라간다.
-        const src = readFileSync(`app${path}/route.ts`, "utf8");
+        const src = srcOf(`app${path}/route.ts`);
         const writes = (text) => text.includes("openJobRun") || text.includes('.from("job_runs")');
         if (writes(src)) return true;
 
         return [...src.matchAll(/from "@\/(lib\/[^"]+)"/g)].some((match) => {
           const file = `${match[1]}.ts`;
-          return existsSync(file) && writes(readFileSync(file, "utf8"));
+          return existsSync(file) && writes(srcOf(file));
         });
       }),
     );
@@ -10579,11 +10652,11 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/ops` 화면이 실재한다", existsSync("app/(admin)/admin/ops/page.tsx"));
   check(
     "**내비가 `/admin/ops` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/ops"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/ops"'),
   );
   check(
     "운영 상태 화면이 캐시되지 않는다 (5분 전 상태를 보이면 장애 화면이 아니다)",
-    readFileSync("app/(admin)/admin/ops/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/ops/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
@@ -10591,16 +10664,16 @@ if (!vendorStaff || !adminUser) {
   // ── 함정 3: 화면이 안 그리는 것만으로는 부족하다 ─────────────────────────
   check(
     "**경보를 보내지 않는다는 사실이 API 응답 본문에 실린다**(D-147 · D-28)",
-    readFileSync("lib/ops/admin.ts", "utf8").includes("alertDelivery") &&
-      readFileSync("lib/core/ops/monitor.ts", "utf8").includes("available: false"),
+    srcOf("lib/ops/admin.ts").includes("alertDelivery") &&
+      srcOf("lib/core/ops/monitor.ts").includes("available: false"),
   );
   check(
     "**로그인 실패 집계가 전수가 아니라는 사실도 본문에 실린다**(FIX-32)",
-    readFileSync("lib/ops/admin.ts", "utf8").includes("loginObservability"),
+    srcOf("lib/ops/admin.ts").includes("loginObservability"),
   );
   check(
     "**측정하지 않은 것을 0 으로 적지 않는다** — 집계 키가 빠지면 오류로 끝난다",
-    readFileSync("lib/ops/admin.ts", "utf8").includes("OPS_LOAD_FAILED"),
+    srcOf("lib/ops/admin.ts").includes("OPS_LOAD_FAILED"),
   );
 
   // ── FIX-32 의 신고 경로가 실제로 이어져 있는가 ───────────────────────────
@@ -10610,23 +10683,23 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**로그인 화면이 그 라우트를 부른다** — 만든 경로에 들어가는 자리를 잇는다",
-    readFileSync("app/(auth)/login/LoginForm.tsx", "utf8").includes(
+    srcOf("app/(auth)/login/LoginForm.tsx").includes(
       "/api/observability/client-event",
     ),
   );
   check(
     "**신고가 로그인을 막지 않는다** — 기다리지 않고 실패를 삼킨다",
-    readFileSync("app/(auth)/login/LoginForm.tsx", "utf8").includes("keepalive: true"),
+    srcOf("app/(auth)/login/LoginForm.tsx").includes("keepalive: true"),
   );
   check(
     "**신고 라우트가 서비스롤을 쓰지 않는다** — 비인증 입력에 RLS 우회 권한을 붙이지 않는다",
-    !readFileSync("app/api/observability/client-event/route.ts", "utf8").includes(
+    !srcOf("app/api/observability/client-event/route.ts").includes(
       "createAdminClient",
     ),
   );
   check(
     "**신고 라우트가 성공·실패를 구분해 알려주지 않는다** — 표의 어휘를 캐는 도구가 된다",
-    readFileSync("app/api/observability/client-event/route.ts", "utf8").includes("status: 204"),
+    srcOf("app/api/observability/client-event/route.ts").includes("status: 204"),
   );
 
   check(
@@ -10801,7 +10874,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── 어휘가 코드와 표에서 같은가 ───────────────────────────────────────────
   {
-    const consoleSrc = readFileSync("lib/core/booking/console.ts", "utf8");
+    const consoleSrc = srcOf("lib/core/booking/console.ts");
     const enumLabels = sql(`select string_agg(e.enumlabel, ',' order by e.enumsortorder)
                               from pg_enum e join pg_type t on t.oid = e.enumtypid
                              where t.typname = 'booking_status';`);
@@ -10814,30 +10887,30 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "**후기 자격 목록이 예약 상태 안에 있다** — 정책과 코드가 같은 값을 본다",
-      readFileSync("lib/core/review/write.ts", "utf8").includes('["confirmed", "fulfilled"]'),
+      srcOf("lib/core/review/write.ts").includes('["confirmed", "fulfilled"]'),
     );
   }
 
   // ── 승인이 계약 발행의 선행인가 (승인 버튼이 장식이 아닌가) ───────────────
   check(
     "**승인 없이는 계약을 발행할 수 없다** — 이 문이 없으면 승인 버튼이 장식이다",
-    readFileSync("lib/contract/actions.ts", "utf8").includes("CONTRACT_BOOKING_NOT_ACCEPTED"),
+    srcOf("lib/contract/actions.ts").includes("CONTRACT_BOOKING_NOT_ACCEPTED"),
   );
   check(
     "**결정 자격을 순수 함수 하나가 판정한다** — 화면과 API 가 다른 답을 내면 버튼이 눌리지 않는다",
-    readFileSync("lib/bookings/vendor.ts", "utf8").includes("canDecide(") &&
-      readFileSync("app/(vendor)/vendor/bookings/page.tsx", "utf8").includes("row.canDecide"),
+    srcOf("lib/bookings/vendor.ts").includes("canDecide(") &&
+      srcOf("app/(vendor)/vendor/bookings/page.tsx").includes("row.canDecide"),
   );
 
   // ── 증적 ──────────────────────────────────────────────────────────────────
   check(
     "**승인·거절을 entity_events 에 남긴다** — 예약에는 지금까지 전이 기록이 아예 없었다",
-    readFileSync("lib/bookings/vendor.ts", "utf8").includes('entityType: "booking"') &&
-      readFileSync("lib/audit/record.ts", "utf8").includes('| "booking"'),
+    srcOf("lib/bookings/vendor.ts").includes('entityType: "booking"') &&
+      srcOf("lib/audit/record.ts").includes('| "booking"'),
   );
   check(
     "**거절 사유 본문을 이벤트에 담지 않는다**(§5.3) — 사유는 표가 갖고 이벤트는 사실만 남긴다",
-    !readFileSync("lib/bookings/vendor.ts", "utf8").includes("memo: reason"),
+    !srcOf("lib/bookings/vendor.ts").includes("memo: reason"),
   );
 
   // ── 화면·라우트가 이어져 있다 ────────────────────────────────────────────
@@ -10846,28 +10919,28 @@ if (!vendorStaff || !adminUser) {
   check("`/vendor/bookings` 화면이 실재한다", existsSync("app/(vendor)/vendor/bookings/page.tsx"));
   check(
     "**`/me` 가 예약 목록을 가리킨다** — 하단 탭은 다섯 칸이 차서 여기가 진입점이다(D-55)",
-    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/bookings"'),
+    srcOf("app/(consumer)/me/page.tsx").includes('href="/bookings"'),
   );
   check(
     "**예약 상세가 다섯 진입점을 전부 그린다** — 이 화면이 없어서 다섯이 도달 불가였다(FIX-25)",
     ["contract", "checkout", "cancel", "escrow", "review"].every((key) =>
-      readFileSync("lib/core/booking/console.ts", "utf8").includes(`"${key}"`),
+      srcOf("lib/core/booking/console.ts").includes(`"${key}"`),
     ),
   );
   check(
     "**막힌 진입점에도 이유가 붙는다** — 감추면 '그런 기능이 없다' 로 읽힌다",
-    readFileSync("app/(consumer)/bookings/[id]/page.tsx", "utf8").includes("entry.blocked"),
+    srcOf("app/(consumer)/bookings/[id]/page.tsx").includes("entry.blocked"),
   );
   check(
     "예약 화면 셋이 캐시되지 않는다 (승인·결제 상태가 바뀌는 화면이다)",
     ["app/(consumer)/bookings/page.tsx", "app/(consumer)/bookings/[id]/page.tsx",
      "app/(vendor)/vendor/bookings/page.tsx"].every((path) =>
-      readFileSync(path, "utf8").includes('export const dynamic = "force-dynamic"'),
+      srcOf(path).includes('export const dynamic = "force-dynamic"'),
     ),
   );
   check(
     "**FIX-23 의 죽은 링크 하나가 사라졌다** — `VENDOR_NAV` 의 `/vendor/bookings` 가 이제 실재한다",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/bookings"') &&
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/vendor/bookings"') &&
       existsSync("app/(vendor)/vendor/bookings/page.tsx"),
   );
 
@@ -11061,34 +11134,34 @@ if (!vendorStaff || !adminUser) {
   // ── FIX-45: 업체 쿠폰이 남의 결제에 쓰이지 않는가 ────────────────────────
   check(
     "**업체 발행 쿠폰은 그 업체와의 거래에만 쓴다**(FIX-45) — 판정이 순수 함수에 있다",
-    readFileSync("lib/core/coupon/coupon.ts", "utf8").includes("other_vendor") &&
-      readFileSync("lib/core/coupon/coupon.ts", "utf8").includes("bookingVendorId"),
+    srcOf("lib/core/coupon/coupon.ts").includes("other_vendor") &&
+      srcOf("lib/core/coupon/coupon.ts").includes("bookingVendorId"),
   );
   check(
     "**결제 경로가 예약의 업체를 넘긴다** — 안 넘기면 판정이 있어도 안 돈다",
-    readFileSync("lib/payments/charge.ts", "utf8").includes("bookingVendorId: context.vendorId"),
+    srcOf("lib/payments/charge.ts").includes("bookingVendorId: context.vendorId"),
   );
   check(
     "**정산이 할인액을 예약의 업체에서 뺀다** — 그래서 발행 업체와 어긋나면 안 된다",
-    readFileSync("lib/settlements/actions.ts", "utf8").includes('from("coupon_redemptions")'),
+    srcOf("lib/settlements/actions.ts").includes('from("coupon_redemptions")'),
   );
 
   // ── FIX-13: 회차 금액에 쿠폰이 반영되는가 ────────────────────────────────
   check(
     "**청구 금액이 할인 뒤 금액이다** — 안 그러면 회차마다 정가가 빠져 합계가 총액을 넘는다",
-    readFileSync("lib/payments/charge.ts", "utf8").includes("const chargeAmount ="),
+    srcOf("lib/payments/charge.ts").includes("const chargeAmount ="),
   );
   check(
     "**이미 쓴 할인을 잔액 계산에 넘긴다** — 안 넘기면 다 내고도 잔액이 남는다",
-    readFileSync("lib/payments/loader.ts", "utf8").includes("priorDiscountAmount") &&
-      readFileSync("lib/core/payment/checkout.ts", "utf8").includes("priorDiscountAmount"),
+    srcOf("lib/payments/loader.ts").includes("priorDiscountAmount") &&
+      srcOf("lib/core/payment/checkout.ts").includes("priorDiscountAmount"),
   );
   check(
     "**화면이 금액을 보내지 않는다** — 발급분 id 만 보낸다(할인액을 클라이언트가 정하면 안 된다)",
-    readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+    srcOf("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx").includes(
       "couponIssueId,",
     ) &&
-      !readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+      !srcOf("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx").includes(
         "discountAmount:",
       ),
   );
@@ -11097,21 +11170,21 @@ if (!vendorStaff || !adminUser) {
   check("`/coupons` 화면이 실재한다", existsSync("app/(consumer)/coupons/page.tsx"));
   check(
     "**`/me` 가 쿠폰함을 가리킨다** — 하단 탭은 다섯 칸이 차서 여기가 진입점이다(D-55)",
-    readFileSync("app/(consumer)/me/page.tsx", "utf8").includes('href="/coupons"'),
+    srcOf("app/(consumer)/me/page.tsx").includes('href="/coupons"'),
   );
   check(
     "**결제 화면이 더는 '준비 중' 이라 말하지 않는다** — 다 만든 기능을 준비 중이라 적지 않는다",
-    readFileSync("lib/payments/loader.ts", "utf8").includes("featureReady: true"),
+    srcOf("lib/payments/loader.ts").includes("featureReady: true"),
   );
   check(
     "**못 쓰는 쿠폰도 결제 화면에 사유와 함께 남는다**(F-C-36)",
-    readFileSync("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx", "utf8").includes(
+    srcOf("app/(consumer)/checkout/[bookingId]/CheckoutView.tsx").includes(
       "coupon-blocked",
     ),
   );
   check(
     "쿠폰함이 캐시되지 않는다 (만료가 시계로 판정되는 화면이다)",
-    readFileSync("app/(consumer)/coupons/page.tsx", "utf8").includes(
+    srcOf("app/(consumer)/coupons/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
@@ -11348,14 +11421,39 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**순수 함수가 리뷰 조건을 막는다** (화면·API 가 쓰는 층)",
-    readFileSync("lib/core/coupon/issue.ts", "utf8").includes("review_reward") &&
-      readFileSync("lib/core/coupon/issue.ts", "utf8").includes("isReviewRewardCondition"),
+    srcOf("lib/core/coupon/issue.ts").includes("review_reward") &&
+      srcOf("lib/core/coupon/issue.ts").includes("isReviewRewardCondition"),
   );
   check(
     "**업체 선택지에 리뷰도 manual_grant 도 없다** (화면 층)",
-    !readFileSync("lib/core/coupon/coupon.ts", "utf8").match(
-      /VENDOR_ISSUE_CONDITIONS[\s\S]{0,200}review/i,
-    ),
+    /**
+     * **근접탐색을 그만둔다**(FIX-64). 예전엔 `VENDOR_ISSUE_CONDITIONS` 뒤 200자 안에
+     * `review` 가 없는지를 봤는데, 사이에 끼어 있던 **주석 블록이 200자를 메우는
+     * 바람에** 통과하고 있었다. 주석을 걷자 바로 뒤의 `REVIEW_WORDS` 가 창에 들어와
+     * FAIL 이 됐는데, 그 상수는 **금지를 집행하는 쪽**이니 거꾸로 읽힌 것이다.
+     * 거리로 묻는 한 통과도 실패도 우연이다 — **목록 자체를 읽어** 묻는다.
+     */
+    (() => {
+      const src = srcOf("lib/core/coupon/coupon.ts");
+      const block = src.match(/ISSUE_CONDITIONS = \[([\s\S]*?)\] as const;/);
+      // **목록을 실제로 읽었는가를 먼저 묻는다**(운영 규칙 7.0b) —
+      // 못 읽으면 빈 목록이 조용히 통과한다.
+      if (!block) return false;
+      const items = [...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+      if (items.length === 0) return false;
+
+      // 업체 선택지 = 전체 − manual_grant. 거기에 리뷰성 낱말이 없어야 한다.
+      const vendorItems = items.filter((item) => item !== "manual_grant");
+
+      return (
+        items.includes("manual_grant") &&
+        vendorItems.length > 0 &&
+        !vendorItems.some((item) => /review|rating/i.test(item)) &&
+        src.includes(
+          "VENDOR_ISSUE_CONDITIONS: readonly IssueCondition[] = ISSUE_CONDITIONS.filter",
+        )
+      );
+    })(),
   );
   check(
     "**정률에 상한이 없으면 DB 가 막는다** — 상한 없는 정률은 정산을 통째로 지운다",
@@ -11372,26 +11470,26 @@ if (!vendorStaff || !adminUser) {
   check("`/vendor/coupons` 화면이 실재한다", existsSync("app/(vendor)/vendor/coupons/page.tsx"));
   check(
     "**내비가 `/vendor/coupons` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/vendor/coupons"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/vendor/coupons"'),
   );
   check(
     "쿠폰 화면이 캐시되지 않는다 (소진·만료가 시계로 판정되는 화면이다)",
-    readFileSync("app/(vendor)/vendor/coupons/page.tsx", "utf8").includes(
+    srcOf("app/(vendor)/vendor/coupons/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**발급 실행 경로가 없다는 사실이 API 응답 본문에 실린다**(함정 3 · FIX-46)",
-    readFileSync("lib/coupons/vendor.ts", "utf8").includes("issuanceWired: false"),
+    srcOf("lib/coupons/vendor.ts").includes("issuanceWired: false"),
   );
   check(
     "**못 보는 차감액을 0 으로 내려보내지 않는다**(함정 2) — 대표가 아니면 null 이다",
-    readFileSync("lib/coupons/vendor.ts", "utf8").includes("input.isOwner ?") &&
-      readFileSync("lib/coupons/vendor.ts", "utf8").includes("deductedAmount: input.isOwner"),
+    srcOf("lib/coupons/vendor.ts").includes("input.isOwner ?") &&
+      srcOf("lib/coupons/vendor.ts").includes("deductedAmount: input.isOwner"),
   );
   check(
     "**issuer_id 를 입력으로 받지 않는다** — 세션이 정한다(비용을 지는 쪽과 만드는 쪽이 같다)",
-    !readFileSync("app/api/vendor/coupons/route.ts", "utf8").includes("issuerId"),
+    !srcOf("app/api/vendor/coupons/route.ts").includes("issuerId"),
   );
 
   // ── 픽스처 — **양쪽 갈래가 다 닿아야 검사가 뭔가를 본다**(함정 8) ────────
@@ -11584,31 +11682,31 @@ if (!vendorStaff || !adminUser) {
   check("`/admin/coupons` 화면이 실재한다", existsSync("app/(admin)/admin/coupons/page.tsx"));
   check(
     "**내비가 `/admin/coupons` 를 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/admin/coupons"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/admin/coupons"'),
   );
   check(
     "플랫폼 쿠폰 화면이 캐시되지 않는다",
-    readFileSync("app/(admin)/admin/coupons/page.tsx", "utf8").includes(
+    srcOf("app/(admin)/admin/coupons/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**issuer_type 을 입력으로 받지 않는다** — 여기서 만드는 것은 언제나 플랫폼 쿠폰이다",
-    !readFileSync("app/api/admin/coupons/route.ts", "utf8").includes("issuerType"),
+    !srcOf("app/api/admin/coupons/route.ts").includes("issuerType"),
   );
   check(
     "**비용이 전액 플랫폼 손익이라는 사실이 API 본문에 실린다**(함정 3)",
-    readFileSync("lib/coupons/admin.ts", "utf8").includes('costBearer: "platform"'),
+    srcOf("lib/coupons/admin.ts").includes('costBearer: "platform"'),
   );
   check(
     "**세그먼트를 만들지 않았다는 사실도 본문에 실린다**(D-143 계열)",
-    readFileSync("lib/coupons/admin.ts", "utf8").includes("segmentTargeting") &&
-      readFileSync("lib/coupons/admin.ts", "utf8").includes("available: false"),
+    srcOf("lib/coupons/admin.ts").includes("segmentTargeting") &&
+      srcOf("lib/coupons/admin.ts").includes("available: false"),
   );
   check(
     "**두 면이 같은 순수 함수로 판정한다** — 한쪽만 느슨하면 그쪽이 우회로가 된다",
-    readFileSync("lib/coupons/admin.ts", "utf8").includes("validateCouponForm") &&
-      readFileSync("lib/coupons/vendor.ts", "utf8").includes("validateCouponForm"),
+    srcOf("lib/coupons/admin.ts").includes("validateCouponForm") &&
+      srcOf("lib/coupons/vendor.ts").includes("validateCouponForm"),
   );
 
   // ── 픽스처 ───────────────────────────────────────────────────────────────
@@ -12023,7 +12121,7 @@ if (!vendorStaff || !adminUser) {
   );
 
   {
-    const delegationSource = readFileSync("lib/core/planner/delegation.ts", "utf8");
+    const delegationSource = srcOf("lib/core/planner/delegation.ts");
 
     check(
       "**화면이 그리는 목록과 정책의 목록이 같다** — 하나라도 어긋나면 동의가 아니다",
@@ -12138,15 +12236,15 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**플래너 내비가 받은 위임을 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/pro/engagements"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/pro/engagements"'),
   );
   check(
     "**플래너 상세가 위임 화면으로 잇는다** — 문장만 있고 갈 곳이 없던 자리다",
-    readFileSync("app/(consumer)/planners/[id]/page.tsx", "utf8").includes("/delegate"),
+    srcOf("app/(consumer)/planners/[id]/page.tsx").includes("/delegate"),
   );
   check(
     "**마켓에서 위임 관리로 돌아갈 수 있다**",
-    readFileSync("app/(consumer)/planners/PlannerMarketView.tsx", "utf8").includes(
+    srcOf("app/(consumer)/planners/PlannerMarketView.tsx").includes(
       "/planners/delegations",
     ),
   );
@@ -12157,24 +12255,24 @@ if (!vendorStaff || !adminUser) {
   ]) {
     check(
       `${page} 가 캐시되지 않는다 (함정 4)`,
-      readFileSync(page, "utf8").includes('export const dynamic = "force-dynamic"'),
+      srcOf(page).includes('export const dynamic = "force-dynamic"'),
     );
   }
   check(
     "**coupleId 를 입력으로 받지 않는다** — 세션이 정한다(FIX-45 와 같은 자리)",
-    !readFileSync("app/api/planner-engagements/route.ts", "utf8").includes("coupleId: z."),
+    !srcOf("app/api/planner-engagements/route.ts").includes("coupleId: z."),
   );
   check(
     "**status 를 입력으로 받지 않는다** — 제안은 언제나 pending 이다",
-    !readFileSync("lib/core/schemas/planner.ts", "utf8").includes("DelegationOfferSchema = z.object({\n  status"),
+    !srcOf("lib/core/schemas/planner.ts").includes("DelegationOfferSchema = z.object({\n  status"),
   );
   check(
     "**두 축이 연동되지 않는다는 사실이 API 본문에 실린다**(함정 3)",
-    readFileSync("lib/planners/delegation.ts", "utf8").includes("categoryAxisLinked: false"),
+    srcOf("lib/planners/delegation.ts").includes("categoryAxisLinked: false"),
   );
   check(
     "**수락 전에는 고객 신원이 열리지 않는다는 사실도 본문에 실린다**",
-    readFileSync("lib/planners/delegation.ts", "utf8").includes("customerIdentityVisible: false"),
+    srcOf("lib/planners/delegation.ts").includes("customerIdentityVisible: false"),
   );
 
   // ── 기록: 이번에 고치지 않은 자리도 지금 상태를 못 박는다 ────────────────
@@ -12522,21 +12620,21 @@ if (!vendorStaff || !adminUser) {
   // ── 집행 — 이 선택을 실제로 읽는 코드가 있는가 (FIX-46 이 드러낸 것) ─────
   check(
     "**계약 발행이 planner_scopes 를 읽는다** — 안 읽으면 화면이 아무것도 바꾸지 않는다",
-    readFileSync("lib/contract/actions.ts", "utf8").includes("selectedPlannerByCategory"),
+    srcOf("lib/contract/actions.ts").includes("selectedPlannerByCategory"),
   );
   check(
     "**계약 발행이 plannerId 를 입력으로 받지 않는다**(FIX-53) — 업체가 고객의 플래너를 정할 수 없다",
-    !readFileSync("lib/core/schemas/payment.ts", "utf8").includes("plannerId: z.string()") &&
-      !readFileSync("app/api/contracts/route.ts", "utf8").includes("plannerId:"),
+    !srcOf("lib/core/schemas/payment.ts").includes("plannerId: z.string()") &&
+      !srcOf("app/api/contracts/route.ts").includes("plannerId:"),
   );
   check(
     "**요율 해석이 한 곳이다**(FIX-52) — 장바구니와 계약이 다른 답을 내지 않는다",
-    readFileSync("lib/cart/loader.ts", "utf8").includes("resolvePlannerRateBp") &&
-      readFileSync("lib/contract/actions.ts", "utf8").includes("resolvePlannerRateBp"),
+    srcOf("lib/cart/loader.ts").includes("resolvePlannerRateBp") &&
+      srcOf("lib/contract/actions.ts").includes("resolvePlannerRateBp"),
   );
   check(
     "**장바구니 요율 해석에 플래너가 들어간다** — 누구의 것인가가 판정에 있다",
-    readFileSync("lib/cart/loader.ts", "utf8").includes("selectedPlannerByCategory"),
+    srcOf("lib/cart/loader.ts").includes("selectedPlannerByCategory"),
   );
 
   // ── 화면·API 가 이어져 있다 ──────────────────────────────────────────────
@@ -12546,35 +12644,35 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**장바구니가 이용 범위 설정으로 잇는다** — 총액을 보는 자리에서 들어간다",
-    readFileSync("app/(consumer)/cart/page.tsx", "utf8").includes("/planners/scopes"),
+    srcOf("app/(consumer)/cart/page.tsx").includes("/planners/scopes"),
   );
   check(
     "**위임 관리가 카테고리 설정으로 잇는다**(D-43 — 두 축을 화면이 잇는다)",
-    readFileSync("app/(consumer)/planners/delegations/page.tsx", "utf8").includes(
+    srcOf("app/(consumer)/planners/delegations/page.tsx").includes(
       "/planners/scopes",
     ),
   );
   check(
     "이용 범위 화면이 캐시되지 않는다 (함정 4)",
-    readFileSync("app/(consumer)/planners/scopes/page.tsx", "utf8").includes(
+    srcOf("app/(consumer)/planners/scopes/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**coupleId 를 입력으로 받지 않는다** — 세션이 정한다(FIX-45 와 같은 자리)",
-    !readFileSync("app/api/planner-scopes/route.ts", "utf8").includes("coupleId: z."),
+    !srcOf("app/api/planner-scopes/route.ts").includes("coupleId: z."),
   );
   check(
     "**집행 지점이 API 본문에 실린다**(함정 3) — 표시일 뿐이라고 읽지 않게 한다",
-    readFileSync("lib/planners/scopes.ts", "utf8").includes('enforcedAt: "contract_issue"'),
+    srcOf("lib/planners/scopes.ts").includes('enforcedAt: "contract_issue"'),
   );
   check(
     "**두 축이 연동되지 않는다는 사실도 본문에 실린다**",
-    readFileSync("lib/planners/scopes.ts", "utf8").includes("delegationAxisLinked: false"),
+    srcOf("lib/planners/scopes.ts").includes("delegationAxisLinked: false"),
   );
   check(
     "**장바구니가 어긋남을 알린다** — 어느 쪽이 이기는지 화면이 말한다",
-    readFileSync("app/(consumer)/cart/page.tsx", "utf8").includes("scopeMismatch"),
+    srcOf("app/(consumer)/cart/page.tsx").includes("scopeMismatch"),
   );
 
   // ── 증적 ─────────────────────────────────────────────────────────────────
@@ -12608,11 +12706,11 @@ if (!vendorStaff || !adminUser) {
     sql(`select count(*) from pg_constraint
            where conrelid = 'public.planner_scopes'::regclass
              and conname = 'planner_scopes_category_values';`) === "1" &&
-      readFileSync("lib/core/planner/scope.ts", "utf8").includes('"invitation",'),
+      srcOf("lib/core/planner/scope.ts").includes('"invitation",'),
   );
   check(
     "**위임 범위 목록을 scope.ts 가 들지 않는다** — 같은 사실을 두 곳이 적고 있었다",
-    !readFileSync("lib/core/planner/scope.ts", "utf8").includes("export const PLANNER_VISIBILITY"),
+    !srcOf("lib/core/planner/scope.ts").includes("export const PLANNER_VISIBILITY"),
   );
 
   check(
@@ -12920,7 +13018,7 @@ if (!vendorStaff || !adminUser) {
 
   // ── 같은 값을 두 곳이 다르게 해석하지 않는가 (FIX-52) ────────────────────
   {
-    const payoutSource = readFileSync("lib/planners/payouts.ts", "utf8");
+    const payoutSource = srcOf("lib/planners/payouts.ts");
 
     check(
       "**유예 판정을 다시 만들지 않는다** — lib/core 의 함수를 부른다",
@@ -12930,7 +13028,7 @@ if (!vendorStaff || !adminUser) {
       "**유예 값도 계약 확정 경로와 같은 키를 같은 함수로 읽는다**",
       payoutSource.includes('readSetting("planner.payout_grace_days")') &&
         payoutSource.includes("resolveGraceDays") &&
-        readFileSync("lib/contract/actions.ts", "utf8").includes(
+        srcOf("lib/contract/actions.ts").includes(
           'readSetting("planner.payout_grace_days")',
         ),
     );
@@ -12940,7 +13038,7 @@ if (!vendorStaff || !adminUser) {
     );
     check(
       "**어댑터가 받는 쪽을 종류와 함께 받는다** — 업체 정산을 플래너에게 보낼 수 없다",
-      readFileSync("lib/settlements/payout-adapter.ts", "utf8").includes("PayoutPayee") &&
+      srcOf("lib/settlements/payout-adapter.ts").includes("PayoutPayee") &&
         payoutSource.includes('payee: { type: "planner"'),
     );
   }
@@ -12974,30 +13072,30 @@ if (!vendorStaff || !adminUser) {
   check("`/pro/settlements` 화면이 실재한다", existsSync("app/(planner)/pro/settlements/page.tsx"));
   check(
     "**플래너 내비가 내 정산을 가리킨다** — 안 그러면 URL 을 직접 쳐야 한다(FIX-25)",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes('href: "/pro/settlements"'),
+    srcOf("components/layout/AdminShell.tsx").includes('href: "/pro/settlements"'),
   );
   check(
     "**운영자 정산 화면이 플래너 지급을 함께 든다** — 두 화면이면 한쪽만 보고 마감한다",
-    readFileSync("app/(admin)/admin/settlements/page.tsx", "utf8").includes("PlannerPayoutPanel"),
+    srcOf("app/(admin)/admin/settlements/page.tsx").includes("PlannerPayoutPanel"),
   );
   check(
     "내 정산 화면이 캐시되지 않는다 (함정 4)",
-    readFileSync("app/(planner)/pro/settlements/page.tsx", "utf8").includes(
+    srcOf("app/(planner)/pro/settlements/page.tsx").includes(
       'export const dynamic = "force-dynamic"',
     ),
   );
   check(
     "**'받을 수 있음' 과 '받았음' 을 합치지 않는다는 사실이 본문에 실린다**(함정 3)",
-    readFileSync("lib/core/settlement/planner-payout.ts", "utf8").includes(
+    srcOf("lib/core/settlement/planner-payout.ts").includes(
       "PAYOUT_NOT_RECEIVED_NOTICE",
-    ) && readFileSync("lib/planners/payouts.ts", "utf8").includes("payoutWired: false"),
+    ) && srcOf("lib/planners/payouts.ts").includes("payoutWired: false"),
   );
   check(
     "**plannerId 도 금액도 입력으로 받지 않는다** — 원장이 정한다(FIX-45·FIX-53 과 같은 자리)",
     // 스키마 본문만 본다. 주석에는 그 낱말이 **왜 없는지**가 적혀 있어서, 파일 전체를
     // 훑으면 설명 문장이 검사를 깨뜨린다.
     (() => {
-      const source = readFileSync("app/api/admin/planner-payouts/route.ts", "utf8");
+      const source = srcOf("app/api/admin/planner-payouts/route.ts");
       const block = source.slice(source.indexOf("const PaySchema"));
       const fields = block.slice(0, block.indexOf("});"));
 
@@ -13026,10 +13124,10 @@ if (!vendorStaff || !adminUser) {
 // (다) 그 순서를 떠받치는 표가 여전히 당사자에게 닫혀 있는가(층 3 재확인).
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const rankingSource = readFileSync("lib/core/planner/ranking.ts", "utf8");
-  const rankingPage = readFileSync("app/(consumer)/planners/ranking/page.tsx", "utf8");
-  const marketApi = readFileSync("app/api/planners/route.ts", "utf8");
-  const marketView = readFileSync("app/(consumer)/planners/PlannerMarketView.tsx", "utf8");
+  const rankingSource = srcOf("lib/core/planner/ranking.ts");
+  const rankingPage = srcOf("app/(consumer)/planners/ranking/page.tsx");
+  const marketApi = srcOf("app/api/planners/route.ts");
+  const marketView = srcOf("app/(consumer)/planners/PlannerMarketView.tsx");
 
   // ── 층 3 재확인: 순서를 떠받치는 표를 당사자가 쓸 수 있는가 ──────────────
   // 마켓의 유일한 실적 지표는 `planner_contract_count` 이고 그 함수는
@@ -13084,7 +13182,7 @@ if (!vendorStaff || !adminUser) {
   check(
     "**추천·프리미엄 정렬이 어휘에 없다**(D-03 · §2.2)",
     ["recommended", "sponsored", "premium", "featured"].every(
-      (word) => !readFileSync("lib/core/planner/profile.ts", "utf8").includes(`"${word}"`),
+      (word) => !srcOf("lib/core/planner/profile.ts").includes(`"${word}"`),
     ),
   );
   check(
@@ -13093,8 +13191,8 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**못 세는 이유를 두 종류로 가른다** — '곧 생긴다' 와 '생길 수 없다' 는 다른 말이다",
-    readFileSync("lib/core/planner/scope.ts", "utf8").includes('kind: "not_distinct"') &&
-      readFileSync("lib/core/planner/scope.ts", "utf8").includes('kind: "pending"'),
+    srcOf("lib/core/planner/scope.ts").includes('kind: "not_distinct"') &&
+      srcOf("lib/core/planner/scope.ts").includes('kind: "pending"'),
   );
 
   // ── 화면·API 가 이어져 있다 ──────────────────────────────────────────────
@@ -13108,11 +13206,11 @@ if (!vendorStaff || !adminUser) {
   );
   check(
     "**플래너 상세도 잇는다** — '아직 세지 않아요' 를 읽은 사람이 다음에 묻는 자리다",
-    readFileSync("app/(consumer)/planners/[id]/page.tsx", "utf8").includes("/planners/ranking"),
+    srcOf("app/(consumer)/planners/[id]/page.tsx").includes("/planners/ranking"),
   );
   check(
     "**플래너 콘솔도 잇는다** — 본인이 무엇으로 평가되는지 알아야 한다",
-    readFileSync("app/(planner)/pro/page.tsx", "utf8").includes("/planners/ranking"),
+    srcOf("app/(planner)/pro/page.tsx").includes("/planners/ranking"),
   );
   check(
     "**근거가 목록 응답과 함께 나간다**(§2.2 · D-25) — 결과와 기준은 같이 다닌다",
@@ -13143,11 +13241,11 @@ if (!vendorStaff || !adminUser) {
 // 열면 그 구멍이 그대로 돌아온다. **열지 않았다는 사실을 여기서 못 박는다.**
 // ═══════════════════════════════════════════════════════════════════════════
 {
-  const bridgeSource = codeOf(readFileSync("lib/bookings/create.ts", "utf8"));
-  const bridgeCore = codeOf(readFileSync("lib/core/booking/bridge.ts", "utf8"));
-  const chainSource = codeOf(readFileSync("lib/bookings/chain.ts", "utf8"));
-  const contractRead = codeOf(readFileSync("lib/contract/read.ts", "utf8"));
-  const adminTx = codeOf(readFileSync("lib/admin/transactions.ts", "utf8"));
+  const bridgeSource = srcOf("lib/bookings/create.ts");
+  const bridgeCore = srcOf("lib/core/booking/bridge.ts");
+  const chainSource = srcOf("lib/bookings/chain.ts");
+  const contractRead = srcOf("lib/contract/read.ts");
+  const adminTx = srcOf("lib/admin/transactions.ts");
 
   // ── 층 1: 표에 쓰기가 열리지 않았는가 ───────────────────────────────────
   check(
@@ -13331,8 +13429,8 @@ if (!vendorStaff || !adminUser) {
   // ── 세 면이 같은 사실을 읽는가 (조회 계층 공유) ─────────────────────────
   check(
     "**소비자·업체가 같은 조회 계층을 쓴다** — 따로 쓰면 같은 예약이 다르게 보인다",
-    readFileSync("lib/bookings/read.ts", "utf8").includes("loadChainFacts") &&
-      readFileSync("lib/bookings/vendor-detail.ts", "utf8").includes("loadChainFacts"),
+    srcOf("lib/bookings/read.ts").includes("loadChainFacts") &&
+      srcOf("lib/bookings/vendor-detail.ts").includes("loadChainFacts"),
   );
   check(
     "**공유 계층은 세션으로 읽는다** — 서비스롤로 읽으면 RLS 경계를 우회한다",
@@ -13359,23 +13457,61 @@ if (!vendorStaff || !adminUser) {
   }
   check(
     "**업체 목록이 거래 상세로 잇는다** — 안 이으면 URL 을 아는 사람만 연다(FIX-25)",
-    readFileSync("app/(vendor)/vendor/bookings/page.tsx", "utf8")
+    srcOf("app/(vendor)/vendor/bookings/page.tsx")
       .includes("/vendor/bookings/"),
   );
   check(
     "**운영자 내비가 거래 조회를 가리킨다**",
-    readFileSync("components/layout/AdminShell.tsx", "utf8").includes("/admin/transactions"),
+    srcOf("components/layout/AdminShell.tsx").includes("/admin/transactions"),
   );
   check(
     "**문의 화면의 '준비 중' 안내가 사라졌다** — S5-04·S5-06 은 이미 완료다",
-    !codeOf(readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8"))
+    !srcOf("app/(consumer)/inquiries/InquiriesView.tsx")
       .includes("계약서 작성과 결제는 준비 중"),
   );
   check(
     "**수락한 견적이 예약으로 이어진다** — 화면이 갈 곳을 준다",
-    readFileSync("app/(consumer)/inquiries/InquiriesView.tsx", "utf8")
+    srcOf("app/(consumer)/inquiries/InquiriesView.tsx")
       .includes("quote-booking-link"),
   );
+  /**
+   * **<p> 안에 <div> 를 넣지 않는다** (C-1b · 하이드레이션)
+   *
+   * Badge·Card 는 <div> 다. <p> 안에 넣으면 브라우저가 문단을 **강제로 닫아** 서버
+   * HTML 과 클라이언트 트리가 엇갈리고 하이드레이션이 깨진다.
+   *
+   * 세 자리에서 실제로 깨져 있었다 — 운영 콘솔은 **항상**, 업체 거래 상세는
+   * **지금 할 일이 있을 때만**, 채팅 목록은 **끝난 대화방만**. 하필 쓸모있는
+   * 순간에만 깨졌고, 그래서 눈으로는 안 보였다(사슬 주행의 음성 대조에서 잡혔다).
+   *
+   * **본 파일을 실제로 읽었는지부터 묻는다** — 목록이 비면 이 검사는 언제나
+   * 조용히 통과한다(운영 규칙 7.0b).
+   */
+  {
+    const screens = listScreenSources();
+    check(
+      "**화면 소스를 실제로 모았다** — 0개면 아래 검사가 빈 목록을 통과시킨다",
+      screens.length > 50,
+      `${screens.length}개`,
+    );
+
+    const DIVISH =
+      /<(Badge|Card|CardContent|CardHeader|Separator|Progress|EmptyState|ErrorState|LoadingState|div)[\s/>]/;
+    const offenders = [];
+    for (const [file, code] of screens) {
+      for (const m of code.matchAll(/<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/g)) {
+        const hit = DIVISH.exec(m[1]);
+        if (hit) offenders.push(`${file} <p> ⊃ <${hit[1]}>`);
+      }
+    }
+
+    check(
+      "**<p> 안에 블록 요소가 없다** — 하이드레이션이 깨지는 중첩이다(C-1b)",
+      offenders.length === 0,
+      offenders.slice(0, 5).join(" / "),
+    );
+  }
+
   check(
     "**운영자 조회가 판정 어휘를 쓰지 않는다**(D-24) — 조율자이지 판정자가 아니다",
     !adminTx.includes("지연") && !adminTx.includes("위반"),

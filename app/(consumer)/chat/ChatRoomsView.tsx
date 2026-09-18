@@ -76,14 +76,17 @@ export function ChatRoomsView({ initialRooms }: { initialRooms: RoomListItem[] }
                 <Card className="transition-colors hover:bg-secondary/50">
                   <CardContent className="flex items-start gap-3 py-3.5">
                     <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                      {/* **<p> 가 아니라 <div> 다**(C-1b). `Badge` 는 `<div>` 라 `<p>` 안에
+                          넣으면 하이드레이션이 깨진다 — 하필 **대화가 끝난 방**일 때만 배지가
+                          떠서 그 방만 깨졌다. */}
+                      <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
                         <span className="truncate">{room.vendorName}</span>
                         {room.status !== "active" ? (
                           <Badge variant="outline" className="shrink-0">
                             {ROOM_STATUS_LABEL[room.status]}
                           </Badge>
                         ) : null}
-                      </p>
+                      </div>
 
                       <p className="mt-0.5 truncate text-caption text-muted-foreground">
                         {room.vendorCategory

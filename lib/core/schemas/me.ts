@@ -222,17 +222,18 @@ export const UNLINK_KEEPS_NOTICE =
 // =============================================================================
 
 /** 자리는 두되 숫자를 지어내지 않는다(S2-08·S3-11 과 같은 원칙). */
-export const ME_PENDING_SECTIONS = [
-  // '멤버십·결제수단' 은 **S7-11 이** 채웠고(`/membership`), '문서 파기 이력' 은
-  // **S7-03 이** 채웠다. 둘 다 목록에서 걷었다 — 만들어 둔 기능을 화면이
-  // "아직 없다" 고 말하면 **없는 것과 같아진다**(FIX-29).
-  {
-    key: "notifications",
-    label: "알림 수신 설정",
-    reason: "알림센터를 아직 만들지 않았습니다.",
-    filledBy: "S4-13",
-  },
-] as const satisfies readonly PendingSection[];
+// '멤버십·결제수단' 은 **S7-11 이** 채웠고(`/membership`), '문서 파기 이력' 은
+// **S7-03 이** 채웠다. 둘 다 목록에서 걷었다 — 만들어 둔 기능을 화면이 "아직 없다" 고
+// 말하면 **없는 것과 같아진다**(FIX-29).
+//
+// '알림 수신 설정' 은 **S4-13 이** 채웠다(C-1b 가 걷었다) — `/notifications` 에 수신
+// 설정 절이 있고 **같은 `/me` 화면이 세 절 위에서 그리로 링크한다**(`me-notifications`).
+// 한 화면이 위에서는 "여기 있다" 고 잇고 아래에서는 "아직 없다" 고 적고 있었다.
+//
+// **비었으므로 `as const` 를 쓰지 않는다** — 빈 `as const` 배열은 원소 타입이 `never`
+// 가 되어 `.key`·`.reason` 이 전부 컴파일 오류가 난다. 홈(`HOME_PENDING_SECTIONS`)이
+// 같은 자리에서 같은 방식으로 적혀 있다.
+export const ME_PENDING_SECTIONS: readonly PendingSection[] = [];
 
 /** 홈과 같은 이유로 좁히지 않는다 — 자리는 담당 태스크가 끝날 때마다 빠진다. */
 export type MePendingKey = PendingSection["key"];
