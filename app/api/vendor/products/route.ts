@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { ProductInputSchema } from "@/lib/core/schemas/product";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
@@ -93,13 +93,13 @@ export async function POST(request: NextRequest) {
     actor: { id: user.id, role: user.role },
   });
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_product_create",
-    target_type: "product",
-    target_id: created.id,
-    after_json: { name: created.name, base_price_total: created.base_price_total, status: "draft" },
+    targetType: "product",
+    targetId: created.id,
+    after: { name: created.name, base_price_total: created.base_price_total, status: "draft" },
   });
 
   const rate = await resolveVendorCommission(supabase, {

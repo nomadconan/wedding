@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
   VENDOR_MEDIA_MAX,
@@ -229,17 +229,17 @@ export async function PUT(request: NextRequest) {
     const pick = (source: Record<string, unknown>) =>
       Object.fromEntries(changedFields.filter((key) => key !== "media").map((key) => [key, source[key] ?? null]));
 
-    await admin.from("audit_logs").insert({
-      actor_id: user.id,
-      actor_role: user.role,
+    await recordAudit({
+      actorId: user.id,
+      actorRole: user.role,
       action: "vendor_profile_update",
-      target_type: "vendor",
-      target_id: vendorId,
-      before_json: {
+      targetType: "vendor",
+      targetId: vendorId,
+      before: {
         ...pick(before as Record<string, unknown>),
         ...(mediaChanged ? { media_count: currentCount } : {}),
       },
-      after_json: {
+      after: {
         ...pick(updated as Record<string, unknown>),
         ...(mediaChanged
           ? { media_count: currentCount - media.remove.length + media.add.length }

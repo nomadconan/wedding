@@ -236,7 +236,7 @@ export async function releaseDeposit(input: {
       entityType: "consultation_deposit",
       entityId: deposit.id,
       eventType: "deposit_release_failed",
-      actor: { id: input.actorId ?? "00000000-0000-0000-0000-000000000000" },
+      actor: { id: input.actorId ?? null },
       beforeState: deposit.status,
       memo: `action=${input.action} retryable=${result.retryable}`,
     });
@@ -260,7 +260,7 @@ export async function releaseDeposit(input: {
     entityType: "consultation_deposit",
     entityId: deposit.id,
     eventType: input.action === "refund" ? "deposit_refunded" : "deposit_forfeited",
-    actor: { id: input.actorId ?? "00000000-0000-0000-0000-000000000000" },
+    actor: { id: input.actorId ?? null },
     beforeState: deposit.status,
     afterState: nextStatus,
     // 사유 코드를 남긴다 — 왜 그렇게 처리했는지가 곧 조율의 근거다(§3.11 4번).
@@ -295,7 +295,9 @@ export async function disputeDeposit(input: {
     entityType: "consultation_deposit",
     entityId: deposit.id,
     eventType: "deposit_disputed",
-    actor: { id: "00000000-0000-0000-0000-000000000000" },
+    // 이의 제기는 시스템이 옮기는 전이다 — **사람이 없다**(D-173).
+    actor: { id: null },
+    source: "system",
     beforeState: "held",
     afterState: "disputed",
     memo: input.reason.slice(0, 200),

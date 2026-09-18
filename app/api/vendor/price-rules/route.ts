@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { PriceRuleInputSchema } from "@/lib/core/schemas/price-rule";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -82,13 +82,13 @@ export async function POST(request: NextRequest) {
 
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_price_rule_create",
-    target_type: "vendor",
-    target_id: vendor.id,
-    after_json: {
+    targetType: "vendor",
+    targetId: vendor.id,
+    after: {
       rule_id: created.id,
       rule_type: input.ruleType,
       adjust_type: input.adjustType,

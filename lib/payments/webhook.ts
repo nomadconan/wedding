@@ -55,7 +55,13 @@ export async function handleWebhook(input: {
   provider: string;
   rawBody: string;
   signature: string | null;
-  actorId: string;
+  /**
+   * **웹훅에는 사람이 없으므로 null 이다**(D-173 · FIX-72).
+   * 전에는 0 으로 채운 uuid 를 넣었는데 `entity_events.actor_id` 는 `auth.users` 를
+   * 참조해 **FK 가 거절했고 증적이 통째로 사라졌다** — `recordEvent` 가 결과를
+   * 보긴 했지만 부르는 쪽은 그것을 몰랐다. 실행자는 `source` 가 말한다.
+   */
+  actorId: string | null;
 }): Promise<WebhookOutcome> {
   const admin = createAdminClient();
 
@@ -198,6 +204,7 @@ export async function handleWebhook(input: {
     entityId: payment.id,
     eventType: "payment_webhook_processed",
     actor: { id: input.actorId },
+    source: "system",
     memo: `event=${eventType}`,
   });
 

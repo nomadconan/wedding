@@ -543,7 +543,8 @@ export async function applyVerdict(
     entityType: "consultation",
     entityId: consultationId,
     eventType: verdict.deposit === "dispute" ? "consultation_disputed" : "consultation_resolved",
-    actor: { id: actorId ?? "00000000-0000-0000-0000-000000000000", role: "system" },
+    actor: { id: actorId ?? null, role: "system" },
+    source: "system",
     afterState: verdict.status,
     // **판정 근거를 남긴다.** §3.11 4번이 요구하는 것이고, 조율 화면(S4-10)이
     // "왜 이렇게 정해졌나" 를 이 기록에서 읽는다.

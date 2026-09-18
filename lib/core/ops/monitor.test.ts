@@ -109,6 +109,66 @@ describe("buildAlerts", () => {
     expect(buildAlerts({ batches: healthy, purgeOverdue: 0, loginFailures: [] })).toEqual([]);
   });
 
+  // ── 증적 유실 (FIX-72) ────────────────────────────────────────────────────
+  //
+  // **성공한 실행에서도 올라와야 한다.** 배치가 할 일을 다 하고 증적만 못 남기는 일이
+  // 실제로 있었고(FIX-71), 그때 `status` 는 `succeeded` 였다. 상태만 보면 안 잡힌다.
+
+  const withAuditLost = (summary: string | null) =>
+    rowsOf({
+      runs: BATCH_SPECS.map((spec) =>
+        run({
+          name: spec.name,
+          ...(spec.name === "price-index-refresh" ? { errorSummary: summary } : {}),
+        }),
+      ),
+    });
+
+  it("**성공한 실행이라도 증적을 잃었으면 경보다** — 상태만 보면 안 잡힌다", () => {
+    const alerts = buildAlerts({
+      batches: withAuditLost("audit_lost:3"),
+      purgeOverdue: 0,
+      loginFailures: [],
+    });
+    const lost = alerts.find((alert) => alert.key === "audit_lost:price-index-refresh");
+
+    expect(lost).toBeDefined();
+    expect(lost?.severity).toBe("critical");
+    // 몇 건인지 말한다 — "있다" 만으로는 운영자가 무엇을 할지 모른다.
+    expect(lost?.title).toContain("3건");
+  });
+
+  it("**다른 사유는 이 경보를 올리지 않는다** — 늘 우는 경보는 소음이다", () => {
+    const alerts = buildAlerts({
+      batches: withAuditLost("insufficient_sample:2"),
+      purgeOverdue: 0,
+      loginFailures: [],
+    });
+
+    expect(alerts.filter((alert) => alert.key.startsWith("audit_lost:"))).toEqual([]);
+  });
+
+  it("**0 건이면 경보가 아니다** — 표본 부족과 섞어 적어도 그렇다", () => {
+    const alerts = buildAlerts({
+      batches: withAuditLost("audit_lost:0 insufficient_sample:1"),
+      purgeOverdue: 0,
+      loginFailures: [],
+    });
+
+    expect(alerts.filter((alert) => alert.key.startsWith("audit_lost:"))).toEqual([]);
+  });
+
+  it("**둘을 함께 적어도 증적 유실을 읽어낸다** — 배치가 사유를 이어 붙인다", () => {
+    const alerts = buildAlerts({
+      batches: withAuditLost("audit_lost:2 insufficient_sample:1"),
+      purgeOverdue: 0,
+      loginFailures: [],
+    });
+    const lost = alerts.find((alert) => alert.key === "audit_lost:price-index-refresh");
+
+    expect(lost?.title).toContain("2건");
+  });
+
   it("**법적 의무가 걸린 배치가 안 도는 것이 critical 이다** — 실패보다 먼저 본다", () => {
     const alerts = buildAlerts({ batches: rowsOf(), purgeOverdue: 0, loginFailures: [] });
     const purge = alerts.find((alert) => alert.key.includes("purge-documents"));

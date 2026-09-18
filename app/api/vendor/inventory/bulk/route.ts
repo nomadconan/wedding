@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { parseInventoryCsv } from "@/lib/core/inventory/csv";
 import {
@@ -176,12 +176,12 @@ async function writeEvent(
     actor: { id: user.id, role: user.role },
   });
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: `vendor_inventory_${action}`,
-    target_type: "vendor",
-    target_id: vendorId,
-    after_json: { count, mode: mode ?? null },
+    targetType: "vendor",
+    targetId: vendorId,
+    after: { count, mode: mode ?? null },
   });
 }

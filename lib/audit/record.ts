@@ -1,4 +1,6 @@
+import type { UserRole } from "@/lib/supabase/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Json } from "@/types/database";
 
 /**
  * 증적 기록 (S4-03 · D-23 · §7.3)
@@ -210,7 +212,14 @@ export type RecordEventInput = {
   memo?: string | null;
 };
 
-export async function recordEvent(input: RecordEventInput): Promise<void> {
+/**
+ * 상태 전이를 남긴다. **남았는지를 돌려준다**(FIX-72).
+ *
+ * 전에는 `Promise<void>` 라 부르는 쪽이 성공과 실패를 구별할 방법이 없었다.
+ * 대부분은 그대로 흘려보내도 되지만, **배치는 `job_runs.error_summary` 에
+ * 접어 넣을 수 있어야 한다** — 그것이 운영자 화면이 읽는 경보의 출처다(D-124).
+ */
+export async function recordEvent(input: RecordEventInput): Promise<boolean> {
   const admin = createAdminClient();
 
   const { error } = await admin.from("entity_events").insert({
@@ -234,5 +243,91 @@ export async function recordEvent(input: RecordEventInput): Promise<void> {
       eventType: input.eventType,
       code: error.code,
     });
+
+    return false;
   }
+
+  return true;
+}
+
+// =============================================================================
+// 감사 로그 — `recordEvent` 와 같은 규칙으로 (FIX-72)
+// =============================================================================
+
+/**
+ * 운영자·업체의 행위를 `audit_logs` 에 남긴다.
+ *
+ * ── 왜 래퍼인가 ─────────────────────────────────────────────────────────────
+ * 전에는 **25자리가 손으로 적혀 있었고 그 중 결과를 보는 자리가 하나도 없었다.**
+ * `await admin.from("audit_logs").insert({...})` 로 끝나므로 **DB 가 거절해도 부르는
+ * 쪽은 성공으로 읽는다.** FIX-71 이 정확히 그렇게 났다 — 배치가 `actor_id` 에 0 으로
+ * 채운 uuid 를 넣어 FK 에 걸렸는데, 배치는 `{"ok":true,"built":1}` 을 돌려줬고
+ * 증적만 사라졌다. **증적은 분쟁에서 쓰려고 남기는 것이라**(D-23) 없는데 있다고 믿는
+ * 상태가 가장 나쁘다.
+ *
+ * 한 자리씩 고치면 **26번째가 생기는 날 같은 일이 반복된다.** 그래서 자리를 하나로
+ * 모으고, 손으로 적는 길은 `db:rls` 가 막는다.
+ *
+ * ── 실패하면 어떻게 하나 ────────────────────────────────────────────────────
+ * **던지지 않는다.** `recordEvent` 와 같은 결론이며 이유가 하나 더 있다 — 이 쓰기는
+ * 본 작업이 **이미 커밋된 뒤**에 일어난다(같은 트랜잭션이 아니다). 여기서 던지면
+ * 상태 변경은 그대로 남은 채 사용자만 500 을 보고, **증적은 여전히 안 남는다.**
+ * 되돌릴 수 없는 일을 실패로 보고하는 것은 더 나쁘다.
+ *
+ * **대신 조용히 삼키지 않는다.** 실패 사실을 로그에 남기고 **남았는지를 돌려준다** —
+ * 배치는 그 값을 `job_runs.error_summary` 에 접어 넣어 운영자 화면까지 올린다(D-124 는
+ * 경보 표를 새로 만들지 말라고 정했고, 경보는 기존 표에서 계산된다).
+ *
+ * ── 무엇을 안 담는가 ────────────────────────────────────────────────────────
+ * 실패 로그에 **행 내용을 싣지 않는다**(§5.3 · §7.3). 남기는 것은 `action` 과
+ * `targetType`, 그리고 DB 가 준 오류 코드뿐이다.
+ */
+export type RecordAuditInput = {
+  /**
+   * 행위자.
+   *
+   * **`id` 가 null 일 수 있다**(D-173). 배치가 옮긴 일에는 **사람이 없고**, 그 자리에
+   * uuid 를 지어 넣으면 `auth.users` FK 가 거절해 **증적이 통째로 사라진다**(FIX-71).
+   * `role` 도 마찬가지다 — `user_role` enum 에 없는 값은 DB 가 받지 않는다.
+   */
+  actorId: string | null;
+  actorRole: UserRole | null;
+  /** 무슨 일을 했는지. `<도메인>_<동사 과거형>` 으로 적는다. */
+  action: string;
+  /** 대상 테이블 이름과 그 행의 id. */
+  targetType: string;
+  targetId: string | null;
+  /** 상태값만 담는다 — 서류 내용·원문을 넣지 않는다(§7.3). */
+  before?: Record<string, Json | undefined> | null;
+  after?: Record<string, Json | undefined> | null;
+  /** 판단의 근거가 된 `entity_events` id 들(§7.2). */
+  resolutionBasis?: string[] | null;
+};
+
+export async function recordAudit(input: RecordAuditInput): Promise<boolean> {
+  const { error } = await createAdminClient()
+    .from("audit_logs")
+    .insert({
+      actor_id: input.actorId,
+      actor_role: input.actorRole,
+      action: input.action,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      before_json: input.before ?? null,
+      after_json: input.after ?? null,
+      resolution_basis: input.resolutionBasis ?? null,
+    });
+
+  if (error) {
+    // **식별자만 남긴다.** before/after 를 로그에 실으면 §7.3 을 어긴다.
+    console.error("[audit_logs] insert failed", {
+      action: input.action,
+      targetType: input.targetType,
+      code: error.code,
+    });
+
+    return false;
+  }
+
+  return true;
 }

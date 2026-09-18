@@ -1,4 +1,4 @@
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import {
   type DeletionAction,
   type DeletionStatus,
@@ -107,16 +107,16 @@ export async function resolveDeletionRequest(input: ResolveInput): Promise<Resol
 
   const basis = ((basisRows ?? []) as { id: string }[]).map((row) => row.id);
 
-  await admin.from("audit_logs").insert({
-    actor_id: input.operatorId,
-    actor_role: input.operatorRole,
+  await recordAudit({
+    actorId: input.operatorId,
+    actorRole: input.operatorRole,
     action: `deletion_request_${input.action}`,
-    target_type: "data_deletion_request",
-    target_id: input.requestId,
-    before_json: { status: before },
-    after_json: { status: after },
+    targetType: "data_deletion_request",
+    targetId: input.requestId,
+    before: { status: before },
+    after: { status: after },
     // 빈 배열은 CHECK 이 막는다 — '아무것도 안 보고 정했다' 는 상태가 없다.
-    resolution_basis: basis.length > 0 ? basis : null,
+    resolutionBasis: basis.length > 0 ? basis : null,
   });
 
   return { ok: true, status: after };

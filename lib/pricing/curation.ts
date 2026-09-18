@@ -1,5 +1,5 @@
 import { readIntSetting } from "@/lib/app-settings";
-import { recordEvent, type EventSource } from "@/lib/audit/record";
+import { recordAudit, recordEvent, type EventSource } from "@/lib/audit/record";
 import {
   type AnomalyFlag,
   type AnomalyScan,
@@ -312,8 +312,23 @@ function detectBaitAcrossCells(
 
 // ── 재계산 ──────────────────────────────────────────────────────────────────
 
+/**
+ * `auditLost` 는 **증적이 안 남았다는 사실**이다 (FIX-72).
+ *
+ * 증적 적재가 실패해도 본 작업을 되돌리지 않는다 — 지수는 이미 저장됐고, 여기서
+ * 던지면 사용자만 실패를 보고 증적은 여전히 안 남는다. **대신 사실을 밖으로
+ * 들고 나간다**: 배치가 이 값을 `job_runs.error_summary` 에 접어 넣고, 운영자
+ * 화면이 거기서 경보를 계산한다(D-124 — 경보 표를 새로 만들지 않는다).
+ */
 export type RecalculateResult =
-  | { ok: true; indexId: string; sampleSize: number; p50: number | null; blocked: string | null }
+  | {
+      ok: true;
+      indexId: string;
+      sampleSize: number;
+      p50: number | null;
+      blocked: string | null;
+      auditLost: boolean;
+    }
   | { ok: false; status: number; code: string; message: string };
 
 /**
@@ -443,7 +458,7 @@ export async function recalculateIndex(input: {
   }
 
   // 지수를 움직인 것은 상태 변경이다. 증적과 감사 로그에 남긴다.
-  await recordEvent({
+  const eventOk = await recordEvent({
     entityType: "price_index",
     entityId: savedId,
     eventType: "price_index_recalculated",
@@ -465,15 +480,15 @@ export async function recalculateIndex(input: {
 
   const basis = ((basisRows ?? []) as { id: string }[]).map((row) => row.id);
 
-  await admin.from("audit_logs").insert({
-    actor_id: input.operatorId,
-    actor_role: input.operatorRole,
+  const auditOk = await recordAudit({
+    actorId: input.operatorId,
+    actorRole: input.operatorRole,
     action: "price_index_recalculated",
-    target_type: "price_index",
-    target_id: savedId,
-    before_json: { region: input.regionCode, category: input.category },
-    after_json: { sampleSize: patch.sample_size, hasIndex: result.ok },
-    resolution_basis: basis.length > 0 ? basis : null,
+    targetType: "price_index",
+    targetId: savedId,
+    before: { region: input.regionCode, category: input.category },
+    after: { sampleSize: patch.sample_size, hasIndex: result.ok },
+    resolutionBasis: basis.length > 0 ? basis : null,
   });
 
   return {
@@ -482,6 +497,8 @@ export async function recalculateIndex(input: {
     sampleSize: result.ok ? result.sampleSize : result.sampleSize,
     p50: result.ok ? result.p50 : null,
     blocked: result.ok ? null : "insufficient_sample",
+    // 둘 중 하나라도 안 남았으면 안 남은 것이다.
+    auditLost: !auditOk || !eventOk,
   };
 }
 
@@ -652,15 +669,15 @@ async function writeAuditLog(
 
   const basis = ((basisRows ?? []) as { id: string }[]).map((row) => row.id);
 
-  await admin.from("audit_logs").insert({
-    actor_id: input.actorId,
-    actor_role: input.actorRole,
+  await recordAudit({
+    actorId: input.actorId,
+    actorRole: input.actorRole,
     action: input.action,
-    target_type: input.targetType,
-    target_id: input.targetId,
-    before_json: input.before,
-    after_json: input.after,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    before: input.before,
+    after: input.after,
     // 빈 배열은 CHECK 이 막는다.
-    resolution_basis: basis.length > 0 ? basis : null,
+    resolutionBasis: basis.length > 0 ? basis : null,
   });
 }

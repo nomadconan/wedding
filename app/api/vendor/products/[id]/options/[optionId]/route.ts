@@ -1,3 +1,4 @@
+import { recordAudit } from "@/lib/audit/record";
 import type { NextRequest } from "next/server";
 
 import { fail, failValidation, ok } from "@/lib/api/response";
@@ -85,14 +86,14 @@ export async function PATCH(
   }
 
   const admin = createAdminClient();
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_product_option_update",
-    target_type: "product",
-    target_id: id,
-    before_json: { name: before.name, price: before.price },
-    after_json: { name: updated.name, price: updated.price },
+    targetType: "product",
+    targetId: id,
+    before: { name: before.name, price: before.price },
+    after: { name: updated.name, price: updated.price },
   });
 
   return ok({ option: updated });
@@ -122,13 +123,13 @@ export async function DELETE(
   }
 
   const admin = createAdminClient();
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_product_option_delete",
-    target_type: "product",
-    target_id: id,
-    before_json: { name: deleted.name, price: deleted.price },
+    targetType: "product",
+    targetId: id,
+    before: { name: deleted.name, price: deleted.price },
   });
 
   return ok({ id: optionId });

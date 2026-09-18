@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { failValidation, fail, ok } from "@/lib/api/response";
 import { VendorReviewInputSchema } from "@/lib/core/schemas/vendor";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -99,14 +99,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
 
   // 심사 액션 감사 로그(§7.2). before/after 는 상태값만 담는다 — 서류 내용을 넣지 않는다.
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: `vendor_review_${action}`,
-    target_type: "vendor",
-    target_id: vendorId,
-    before_json: { application_status: application.status },
-    after_json: { application_status: nextStatus, business_number_verified: businessNumberVerified },
+    targetType: "vendor",
+    targetId: vendorId,
+    before: { application_status: application.status },
+    after: { application_status: nextStatus, business_number_verified: businessNumberVerified },
   });
 
   await recordEvent({

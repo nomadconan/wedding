@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { recordEvent } from "@/lib/audit/record";
+import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import { PriceRuleInputSchema } from "@/lib/core/schemas/price-rule";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -86,19 +86,19 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_price_rule_update",
-    target_type: "vendor",
-    target_id: before.vendor_id,
-    before_json: {
+    targetType: "vendor",
+    targetId: before.vendor_id,
+    before: {
       rule_id: id,
       adjust_value: Number(before.adjust_value),
       priority: before.priority,
       is_active: before.is_active,
     },
-    after_json: {
+    after: {
       rule_id: id,
       adjust_value: Number(updated.adjust_value),
       priority: updated.priority,
@@ -142,13 +142,13 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
 
   const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({
-    actor_id: user.id,
-    actor_role: user.role,
+  await recordAudit({
+    actorId: user.id,
+    actorRole: user.role,
     action: "vendor_price_rule_delete",
-    target_type: "vendor",
-    target_id: vendor.id,
-    before_json: { rule_id: id, rule_type: deleted.rule_type },
+    targetType: "vendor",
+    targetId: vendor.id,
+    before: { rule_id: id, rule_type: deleted.rule_type },
   });
 
   return ok({ id });

@@ -279,6 +279,36 @@ export function buildAlerts(input: {
 
   // **파기 잔존은 배치 상태와 별도 신호다.** 배치가 성공으로 남아도 남은 문서가
   // 있으면 그것이 사실이다(S8-04 가 세운 규칙 그대로).
+  /**
+   * **증적 유실은 배치 상태와 별도 신호다** (FIX-72).
+   *
+   * 배치가 할 일을 다 하고도 **증적만 못 남길 수 있다** — FIX-71 이 그랬다. 그때
+   * 지수는 정상으로 저장됐으므로 실행을 `failed` 로 적는 것은 거짓이고, 진짜 실패를
+   * 가린다. 그래서 **성공한 실행에서도** 이 신호를 따로 올린다 — 바로 아래 파기
+   * 잔존이 "배치가 성공으로 남아도 남은 문서가 있으면 그것이 사실이다" 로 세운 규칙과
+   * 같은 모양이다.
+   *
+   * 증적은 분쟁에서 쓰려고 남기는 것이라(D-23) **없는데 있다고 믿는 상태**가 가장
+   * 나쁘다. 그래서 `warning` 이 아니라 `critical` 이다.
+   */
+  const auditLost = input.batches
+    .map((batch) => ({
+      name: batch.name,
+      count: Number(/\baudit_lost:(\d+)\b/.exec(batch.lastRun?.errorSummary ?? "")?.[1] ?? 0),
+    }))
+    .filter((row) => row.count > 0);
+
+  for (const row of auditLost) {
+    alerts.push({
+      key: `audit_lost:${row.name}`,
+      severity: "critical",
+      title: `${row.name} 이 증적 ${row.count}건을 남기지 못했습니다`,
+      detail:
+        "작업은 됐는데 감사 로그·전이 기록이 안 남았습니다. 증적은 분쟁의 근거이므로(D-23) 없는데 있다고 믿는 상태가 가장 나쁩니다.",
+      href: null,
+    });
+  }
+
   if (input.purgeOverdue > 0) {
     alerts.push({
       key: "purge_overdue",
