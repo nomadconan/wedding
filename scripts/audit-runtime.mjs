@@ -39,7 +39,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { listRoutes } from "./lib/app-routes.mjs";
-import { killTree, removeProfile, sweepOrphans, memoryNote } from "./lib/chrome-teardown.mjs";
+import { killTree, removeProfile, sweepOrphans, memoryNote, ms, walkScale } from "./lib/chrome-teardown.mjs";
 
 /** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
 let lastProfile = "";
@@ -270,7 +270,7 @@ function findChrome() {
   throw new Error("Chrome 을 찾지 못했다. CHROME_PATH 환경변수로 지정한다.");
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (delayMs) => new Promise((r) => setTimeout(r, delayMs));
 
 async function launchChrome() {
   const port = 9333 + Math.floor(Math.random() * 400);
@@ -324,6 +324,7 @@ async function launchChromeWithRetry() {
 // **다음 주행이 남의 쓰레기 때문에 실패한다** — 그리고 그 실패는 제품 결함처럼 보인다.
 sweepOrphans();
 console.log(memoryNote());
+if (walkScale() > 1) console.log(`[대기] WALK_TIMEOUT_SCALE=${walkScale()} — 모든 기다림 상한에 배율을 걸었다(FIX-77).`);
 
     const started = await launchChrome();
     if (started) return started;
@@ -451,7 +452,7 @@ async function visit(cdp, sessionId, url, state) {
    * 화면이 자리를 잡을 때까지(본문이 차거나 경로가 바뀔 때까지) 다시 읽는다.
    */
   let dom = await readDom();
-  const settleUntil = Date.now() + 6000;
+  const settleUntil = Date.now() + ms(6000);
   while (
     Date.now() < settleUntil &&
     !dom.error &&
@@ -639,7 +640,7 @@ async function login(cdp, sessionId, state, account) {
    * '로그인 요구' 로 기록되고 — 표는 조용히 거짓말을 한다.
    */
   let r = null;
-  const tryUntil = Date.now() + 20000;
+  const tryUntil = Date.now() + ms(20000);
   for (;;) {
     r = await cdp.send("Runtime.evaluate", { expression: fill, returnByValue: true }, sessionId);
     if (r.result?.value === "제출") break;
@@ -649,7 +650,7 @@ async function login(cdp, sessionId, state, account) {
   if (r.result?.value !== "제출") return `실패(${r.result?.value ?? "evaluate 오류"})`;
 
   // 로그인 성공은 **경로가 /login 을 벗어나는 것**으로 본다.
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + ms(30000);
   while (Date.now() < deadline) {
     await sleep(200);
     const now = await cdp.send(

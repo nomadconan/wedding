@@ -36,7 +36,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { killTree, removeProfile, sweepOrphans, memoryNote } from "./lib/chrome-teardown.mjs";
+import { killTree, removeProfile, sweepOrphans, memoryNote, ms, walkScale } from "./lib/chrome-teardown.mjs";
 
 /** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
 let lastProfile = "";
@@ -57,7 +57,7 @@ if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE)) {
   process.exit(1);
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (delayMs) => new Promise((r) => setTimeout(r, delayMs));
 
 // --- DB 직접 조회 (픽스처 찾기·상태 확인) -------------------------------------
 const CONTAINER = execFileSync("docker", [
@@ -237,13 +237,13 @@ async function goto(face, path) {
 
   await face.cdp.send("Page.navigate", { url: BASE + path }, face.sessionId);
 
-  const deadline = Date.now() + 45000;
+  const deadline = Date.now() + ms(45000);
   while (!face.state.loaded && Date.now() < deadline) await sleep(50);
   await sleep(400);
 
   // 화면이 자리를 잡을 때까지 기다린다 — `loading.tsx` 가 있는 라우트는 본문이
   // 비어 있는 순간이 있고, 그때 읽으면 정상 화면이 '빈 화면' 으로 기록된다.
-  const settle = Date.now() + 8000;
+  const settle = Date.now() + ms(8000);
   for (;;) {
     const info = await snapshot(face);
     const still = info.textLength < 40 || info.loadingState;
@@ -292,7 +292,7 @@ async function login(face) {
   })()`;
 
   let value = null;
-  const until = Date.now() + 25000;
+  const until = Date.now() + ms(25000);
   for (;;) {
     value = await evaluate(face, fill);
     if (value === "제출") break;
@@ -311,7 +311,7 @@ async function login(face) {
    * 기다림을 늘려도 **빠른 기계에서는 비용이 없다** — 경로가 바뀌는 순간 빠져나온다.
    * `WALK_LOGIN_TIMEOUT_MS` 로 조절한다(CI 는 기본값으로 충분하다).
    */
-  const LOGIN_NAV_MS = Number(process.env.WALK_LOGIN_TIMEOUT_MS) || 120000;
+  const LOGIN_NAV_MS = Number(process.env.WALK_LOGIN_TIMEOUT_MS) || ms(120000);
   const deadline = Date.now() + LOGIN_NAV_MS;
   while (Date.now() < deadline) {
     await sleep(250);
@@ -381,7 +381,7 @@ async function click(face, selector, { text = null } = {}) {
     return { ok: true, found: nodes.length };
   })()`;
 
-  const until = Date.now() + 12000;
+  const until = Date.now() + ms(12000);
   for (;;) {
     const r = await evaluate(face, expr);
     if (r.ok) {
@@ -433,6 +433,7 @@ async function step(name, face, fn) {
 // **다음 주행이 남의 쓰레기 때문에 실패한다** — 그리고 그 실패는 제품 결함처럼 보인다.
 sweepOrphans();
 console.log(memoryNote());
+if (walkScale() > 1) console.log(`[대기] WALK_TIMEOUT_SCALE=${walkScale()} — 모든 기다림 상한에 배율을 걸었다(FIX-77).`);
 
 const { proc, ws } = await launchChrome();
 const cdp = connect(ws);
@@ -487,7 +488,7 @@ try {
     if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
     await click(admin, '[data-testid="review-panel"] button', { text: "승인" });
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const status = sql(`select status from public.vendors where id = '${chain.vendorId}';`);
       if (status === "active") return "vendors.status=active";
@@ -527,7 +528,7 @@ try {
 
     // **고정 대기를 쓰지 않는다.** 개발 서버는 처음 여는 라우트를 그 자리에서
     // 컴파일하므로 클라이언트 내비가 몇 초 걸린다 — 1.2초로 재다가 실제로 틀렸다.
-    const until = Date.now() + 30000;
+    const until = Date.now() + ms(30000);
     for (;;) {
       const after = await snapshot(consumer);
       if (after.path.startsWith("/inquiries/new")) return after.path;
@@ -572,7 +573,7 @@ try {
       throw new Error(`업체가 ${preselected} :: 화면 ${seen}`);
     }
 
-    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    const eventDate = new Date(Date.now() + ms(200) * 86400000).toISOString().slice(0, 10);
     await fill(consumer, "#inquiry-date", eventDate);
     await click(consumer, "#category-hall");
     await sleep(400);
@@ -587,7 +588,7 @@ try {
 
     await click(consumer, '[data-testid="send-inquiry"]');
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const id = sql(`select id::text from public.inquiries order by created_at desc limit 1;`);
       const targets = id
@@ -632,7 +633,7 @@ try {
   await step("견적을 보낸다", vendor, async () => {
     await click(vendor, '[data-testid="vendor-inquiry-inbox"] li button');
     await click(vendor, '[data-testid="send-quote"]');
-    const until = Date.now() + 15000;
+    const until = Date.now() + ms(15000);
     for (;;) {
       const id = sql(`select id::text from public.quotes order by created_at desc limit 1;`);
       if (id) {
@@ -657,7 +658,7 @@ try {
 
   await step("견적을 수락하면 예약이 함께 생긴다 (C-1 의 다리)", consumer, async () => {
     await click(consumer, '[data-testid="accept-quote"]');
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const row = sql(
         `select id::text || '|' || status || '|' || coalesce(quote_id::text,'-')
@@ -684,7 +685,7 @@ try {
      * 개발 서버는 처음 여는 라우트를 그 자리에서 컴파일하므로 `/bookings/[id]` 로 가는
      * 내비가 1.2초를 넘길 때가 있다. 그러면 검사가 **화면이 아니라 컴파일 속도를** 잰다.
      */
-    const until = Date.now() + 30000;
+    const until = Date.now() + ms(30000);
     for (;;) {
       const info = await snapshot(consumer);
       if (info.path.startsWith("/bookings/")) return info.path;
@@ -700,7 +701,7 @@ try {
     await click(vendor, '[data-testid="decide-panel"] button', { text: "승인" });
     await click(vendor, '[data-testid="decide-accept"] button', { text: "승인하기" });
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const acceptedAt = sql(
         `select coalesce(accepted_at::text,'') from public.bookings where id = '${chain.bookingId}';`,
@@ -717,7 +718,7 @@ try {
     await click(vendor, '[data-testid="issue-panel"] button', { text: "계약서 발행" });
     await click(vendor, '[data-testid="issue-confirm"] button', { text: "발행하기" });
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const row = sql(
         `select id::text || '|' || status || '|' || coalesce(quote_id::text,'-')
@@ -765,7 +766,7 @@ try {
 
   await step("소비자(대표)가 서명한다", consumer, async () => {
     await click(consumer, '[data-testid="contract-sign"]');
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const n = sql(
         `select count(*) from public.contract_signatures
@@ -804,7 +805,7 @@ try {
   await step("업체가 서명하면 계약이 확정된다", vendor, async () => {
     await goto(vendor, `/contracts/${chain.contractId}`);
     await click(vendor, '[data-testid="contract-sign"]');
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const status = sql(`select status from public.contracts where id = '${chain.contractId}';`);
       if (status === "active") return "contracts.status=active";
@@ -912,7 +913,7 @@ try {
 
     await click(consumer, "button", { text: "결제하기" });
 
-    const until = Date.now() + 40000;
+    const until = Date.now() + ms(40000);
     for (;;) {
       const row = sql(
         `select status from public.payments where booking_id = '${chain.bookingId}' order by created_at desc limit 1;`,

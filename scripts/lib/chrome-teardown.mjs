@@ -139,6 +139,30 @@ export function sweepOrphans({ quiet = false } = {}) {
 }
 
 /**
+ * **기다림에 배율을 건다** (FIX-77).
+ *
+ * 주행의 기다림은 전부 `Date.now() + N` 으로 적혀 있고 그 `N` 들은 **여유 있는
+ * 기계에서 맞춘 값**이다. 메모리가 빠듯한 PC 에서는 같은 일이 몇 배씩 걸려서
+ * **매 주행마다 다른 자리에서** 시간 초과가 난다 — 하나를 늘리면 다음 자리가 터진다.
+ * 그때마다 그 자리만 늘리는 것은 **증상 쫓기**다.
+ *
+ * 그래서 **한 손잡이로 전부** 늘린다. `WALK_TIMEOUT_SCALE=3` 이면 모든 기다림이
+ * 세 배가 된다. **빠른 기계에서는 비용이 없다** — 기본이 1 이고, 늘려도 조건이
+ * 차는 순간 빠져나온다(기다림은 상한이지 지연이 아니다).
+ *
+ * CI 는 기본값 1 로 돈다 — 거기서는 원래 값으로 충분했다.
+ */
+export function walkScale() {
+  const raw = Number(process.env.WALK_TIMEOUT_SCALE);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 20 ? raw : 1;
+}
+
+/** 기다림 상한(ms)에 배율을 적용한다. */
+export function ms(base) {
+  return Math.round(base * walkScale());
+}
+
+/**
  * 메모리 여유를 한 줄로 적는다.
  *
  * **막지는 않는다.** 여유가 없다고 주행을 거부하면 "환경이 모자라다" 가
