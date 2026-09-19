@@ -459,6 +459,9 @@ try {
     await fill(owner, "#capacityMax", "250");
     await click(owner, "button", { text: "항목 추가" });
     await fill(owner, '[aria-label="포함 항목 1"]', "홀 대관 4시간");
+    // 본문 두 칸도 같은 화면에서 채운다(C-2b). 선택 입력이지만 **등록 화면에 있어야** 쓴다.
+    await fill(owner, "#summary", "평일 낮 예식을 위한 단독홀 패키지");
+    await fill(owner, "#description", "## 구성\n\n- 홀 대관 4시간\n- 기본 데코\n\n**평일 낮**에는 더 여유롭습니다.");
     await click(owner, 'button[type="submit"]', { text: "상품 등록" });
 
     const until = Date.now() + ms(25000);
@@ -476,6 +479,112 @@ try {
       }
       await sleep(700);
     }
+  });
+
+  // ── C-2b — 본문·사진 ────────────────────────────────────────────────────
+  await step("**한 줄 소개와 본문이 함께 저장됐다**(C-2b) — 등록 화면에서 같이 받는다", null, async () => {
+    const row = sql(`select coalesce(summary, '-') || '|' ||
+                            coalesce(description_json ->> 'source', '-') || '|' ||
+                            coalesce((description_json ->> 'v'), '-')
+                       from public.products where id = '${walk.productId}';`);
+    const [summary, source, version] = row.split("|");
+    if (summary === "-") throw new Error("한 줄 소개가 저장되지 않았다");
+    if (!source.includes("홀 대관 4시간")) throw new Error(`본문이 저장되지 않았다: ${source.slice(0, 80)}`);
+    if (version !== "1") throw new Error(`봉투 판본이 이상하다: ${version}`);
+
+    return `summary="${summary.slice(0, 16)}…" · source ${source.length}자 · v${version}`;
+  });
+
+  await step("**본문에 블록을 저장하지 않는다** — 원문만 담긴다(D-97)", null, async () => {
+    const keys = sql(`select string_agg(k, ',' order by k)
+                        from public.products, jsonb_object_keys(description_json) k
+                       where id = '${walk.productId}';`);
+    if (keys !== "source,v") throw new Error(`봉투에 다른 칸이 있다: ${keys}`);
+
+    return `keys=${keys}`;
+  });
+
+  await step("**가격 회피 문구를 본문에 쓰면 저장이 잠긴다**(F-V-03) — 총액 강제가 본문으로 새지 않는다", owner, async () => {
+    const info = await goto(owner, `/vendor/products/${walk.productId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    await fill(owner, "#summary", "자세한 가격은 별도 문의 주세요");
+
+    const state = await evaluate(owner, `(() => {
+      const box = document.querySelector('[data-testid="content-problems"]');
+      const submit = [...document.querySelectorAll('button[type="submit"]')].pop();
+      return JSON.stringify({ problem: box ? box.innerText.trim() : "", disabled: submit ? submit.disabled : null });
+    })()`);
+    const { problem, disabled } = JSON.parse(state);
+
+    if (!problem) throw new Error("가격 회피 문구인데 화면이 아무 말도 하지 않는다");
+    if (disabled !== true) throw new Error("문구가 걸렸는데 저장 버튼이 열려 있다");
+
+    return problem.slice(0, 60);
+  });
+
+  await step("**연락처를 본문에 쓰면 막는다** — 밖에서 거래가 성사되면 증적이 남지 않는다", owner, async () => {
+    await fill(owner, "#summary", "평일 낮 예식을 위한 단독홀 패키지");
+    await fill(owner, "#description", "예약 문의는 010-1234-5678 로 주세요");
+
+    const state = await evaluate(owner, `(() => {
+      const box = document.querySelector('[data-testid="content-problems"]');
+      const submit = [...document.querySelectorAll('button[type="submit"]')].pop();
+      return JSON.stringify({ problem: box ? box.innerText.trim() : "", disabled: submit ? submit.disabled : null });
+    })()`);
+    const { problem, disabled } = JSON.parse(state);
+
+    if (!/전화번호/.test(problem)) throw new Error(`연락처를 못 잡았다: ${problem.slice(0, 80)}`);
+    if (disabled !== true) throw new Error("연락처가 걸렸는데 저장 버튼이 열려 있다");
+    // **걸린 값 자체를 화면에 되풀이하지 않는다.**
+    if (problem.includes("010-1234-5678")) throw new Error("걸린 번호를 화면이 그대로 되읊는다");
+
+    return problem.slice(0, 60);
+  });
+
+  await step("**정상 문구는 통과한다** — 늘 잠그는 화면이 아니다", owner, async () => {
+    await fill(owner, "#description", "## 구성\n\n- 홀 대관 4시간");
+
+    const disabled = await evaluate(owner, `(() => {
+      const submit = [...document.querySelectorAll('button[type="submit"]')].pop();
+      return String(submit ? submit.disabled : "none");
+    })()`);
+    if (disabled !== "false") throw new Error(`정상 문구인데 저장이 잠겨 있다: ${disabled}`);
+
+    return "저장 열림";
+  });
+
+  await step("**완성도 권유가 게시 조건과 다른 자리에 있다**(D-209) — 게시를 막지 않는다", owner, async () => {
+    const view = await evaluate(owner, `(() => {
+      const card = document.querySelector('[data-testid="content-suggestions"]');
+      const photos = document.querySelector('[data-testid="product-photos"]');
+      return JSON.stringify({
+        suggestion: card ? card.innerText.replace(/\s+/g, " ").trim() : "",
+        hasPhotoPanel: Boolean(photos),
+      });
+    })()`);
+    const { suggestion, hasPhotoPanel } = JSON.parse(view);
+
+    if (!hasPhotoPanel) throw new Error("사진 관리 자리가 없다");
+    if (!suggestion) throw new Error("사진이 없는데 권유가 뜨지 않는다");
+    if (!/게시를 막지 않습니다/.test(suggestion)) {
+      throw new Error(`권유가 게시 조건처럼 읽힌다: ${suggestion.slice(0, 80)}`);
+    }
+
+    return suggestion.slice(0, 70);
+  });
+
+  await step("**기존 게시 상품이 내려가지 않았다**(C-2b 완료 조건) — 분모부터 센다", null, async () => {
+    const bare = Number(sql(`select count(*) from public.products
+                              where status = 'published' and summary is null and description_json is null
+                                and not exists (select 1 from public.vendor_media m where m.product_id = products.id);`));
+    if (bare === 0) throw new Error("본문·사진 없는 게시 상품이 없다 — 이 검사가 빈 표로 통과할 뻔했다");
+
+    const demoted = sql(`select count(*) from public.products
+                          where published_at is not null and status <> 'published';`);
+    if (demoted !== "0") throw new Error(`게시였다가 내려간 상품이 있다: ${demoted}건`);
+
+    return `본문·사진 없는 게시 ${bare}건 · 내려간 것 0건`;
   });
 
   await step("**등록 직후에는 게시할 수 없다**(D-06) — 추가금 확정이 남아 있다", null, async () => {

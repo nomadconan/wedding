@@ -3978,12 +3978,14 @@ export type Database = {
           capacity_min: number | null
           category: string
           created_at: string
+          description_json: Json | null
           id: string
           included_items_json: Json
           name: string
           price_includes_vat: boolean
           published_at: string | null
           status: string
+          summary: string | null
           updated_at: string
           vendor_id: string
         }
@@ -3994,12 +3996,14 @@ export type Database = {
           capacity_min?: number | null
           category: string
           created_at?: string
+          description_json?: Json | null
           id?: string
           included_items_json?: Json
           name: string
           price_includes_vat?: boolean
           published_at?: string | null
           status?: string
+          summary?: string | null
           updated_at?: string
           vendor_id: string
         }
@@ -4010,12 +4014,14 @@ export type Database = {
           capacity_min?: number | null
           category?: string
           created_at?: string
+          description_json?: Json | null
           id?: string
           included_items_json?: Json
           name?: string
           price_includes_vat?: boolean
           published_at?: string | null
           status?: string
+          summary?: string | null
           updated_at?: string
           vendor_id?: string
         }
@@ -5383,6 +5389,7 @@ export type Database = {
           alt_text: string | null
           created_at: string
           id: string
+          product_id: string | null
           sort_order: number
           storage_path: string
           type: string
@@ -5393,6 +5400,7 @@ export type Database = {
           alt_text?: string | null
           created_at?: string
           id?: string
+          product_id?: string | null
           sort_order?: number
           storage_path: string
           type: string
@@ -5403,6 +5411,7 @@ export type Database = {
           alt_text?: string | null
           created_at?: string
           id?: string
+          product_id?: string | null
           sort_order?: number
           storage_path?: string
           type?: string
@@ -5410,6 +5419,13 @@ export type Database = {
           vendor_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "vendor_media_product_same_vendor_fk"
+            columns: ["product_id", "vendor_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "vendor_id"]
+          },
           {
             foreignKeyName: "vendor_media_vendor_id_fkey"
             columns: ["vendor_id"]

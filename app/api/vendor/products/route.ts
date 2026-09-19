@@ -2,7 +2,15 @@ import type { NextRequest } from "next/server";
 
 import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
-import { ProductInputSchema } from "@/lib/core/schemas/product";
+import {
+  ProductContentInputSchema,
+  productContentProblems,
+  toProductDescription,
+} from "@/lib/core/product/content";
+import {
+  ProductInputFieldsSchema,
+  capacityRangeIsValid,
+} from "@/lib/core/schemas/product";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -40,6 +48,17 @@ export async function GET() {
   return ok({ products: products ?? [], rate });
 }
 
+/**
+ * 등록 입력 = 기본 필드 + 본문 두 칸(C-2b).
+ *
+ * `ProductInputSchema` 를 쓰지 않는 이유: 그것은 이미 `refine` 이 붙은 ZodEffects 라
+ * `extend` 할 수 없다. 필드 객체에 본문을 얹고 같은 `refine` 을 다시 건다.
+ */
+const CreateSchema = ProductInputFieldsSchema.extend(ProductContentInputSchema.shape).refine(
+  capacityRangeIsValid,
+  { message: "수용 인원 하한이 상한보다 큽니다.", path: ["capacityMax"] },
+);
+
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
@@ -51,10 +70,21 @@ export async function POST(request: NextRequest) {
     return fail(400, "VENDOR_INVALID_BODY", "요청 본문을 읽을 수 없습니다.");
   }
 
-  const parsed = ProductInputSchema.safeParse(body);
+  const parsed = CreateSchema.safeParse(body);
   if (!parsed.success) return failValidation(parsed.error.issues);
 
   const input = parsed.data;
+
+  // 본문 판정(C-2b) — 가격 회피·연락처는 상품명·포함 항목과 같은 무게로 막는다.
+  const contentProblems = productContentProblems({
+    summary: input.summary,
+    descriptionSource: input.description,
+  });
+
+  if (contentProblems.length > 0) {
+    return fail(422, "VENDOR_PRODUCT_CONTENT_REJECTED", contentProblems[0]!.message, contentProblems);
+  }
+
   const vendor = await findMemberVendor(user.id);
   if (!vendor) return fail(404, "VENDOR_NOT_FOUND", "등록된 업체가 없습니다.");
 
@@ -70,6 +100,8 @@ export async function POST(request: NextRequest) {
       included_items_json: input.includedItems,
       capacity_min: input.capacityMin,
       capacity_max: input.capacityMax,
+      summary: input.summary && input.summary.length > 0 ? input.summary : null,
+      description_json: toProductDescription(input.description ?? null),
       // 새 상품은 항상 작성 중으로 시작한다. 게시는 체크리스트를 통과해야 한다.
       status: "draft",
     })
