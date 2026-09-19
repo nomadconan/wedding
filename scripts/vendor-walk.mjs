@@ -25,7 +25,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { killTree, removeProfile, sweepOrphans, memoryNote } from "./lib/chrome-teardown.mjs";
+import { killTree, removeProfile, sweepOrphans, memoryNote, ms, walkScale } from "./lib/chrome-teardown.mjs";
 
 /** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
 let lastProfile = "";
@@ -46,7 +46,7 @@ if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE)) {
   process.exit(1);
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (delayMs) => new Promise((r) => setTimeout(r, delayMs));
 
 const CONTAINER = execFileSync("docker", [
   "ps", "--filter", "name=supabase_db_", "--format", "{{.Names}}",
@@ -234,11 +234,11 @@ async function goto(face, path) {
   face.state.consoleErrors.length = 0;
   await face.cdp.send("Page.navigate", { url: BASE + path }, face.sessionId);
 
-  const deadline = Date.now() + 45000;
+  const deadline = Date.now() + ms(45000);
   while (!face.state.loaded && Date.now() < deadline) await sleep(50);
   await sleep(400);
 
-  const settle = Date.now() + 10000;
+  const settle = Date.now() + ms(10000);
   for (;;) {
     const info = await snapshot(face);
     if (!(info.textLength < 40 || info.loadingState) || Date.now() > settle) return info;
@@ -267,7 +267,7 @@ async function login(face) {
     return "제출";
   })()`;
 
-  const until = Date.now() + 25000;
+  const until = Date.now() + ms(25000);
   for (;;) {
     const value = await evaluate(face, fill);
     if (value === "제출") break;
@@ -286,7 +286,7 @@ async function login(face) {
    * 기다림을 늘려도 **빠른 기계에서는 비용이 없다** — 경로가 바뀌는 순간 빠져나온다.
    * `WALK_LOGIN_TIMEOUT_MS` 로 조절한다(CI 는 기본값으로 충분하다).
    */
-  const LOGIN_NAV_MS = Number(process.env.WALK_LOGIN_TIMEOUT_MS) || 120000;
+  const LOGIN_NAV_MS = Number(process.env.WALK_LOGIN_TIMEOUT_MS) || ms(120000);
   const deadline = Date.now() + LOGIN_NAV_MS;
   while (Date.now() < deadline) {
     await sleep(250);
@@ -352,7 +352,7 @@ async function click(face, selector, { text = null } = {}) {
     return { ok: true, found: nodes.length };
   })()`;
 
-  const until = Date.now() + 12000;
+  const until = Date.now() + ms(12000);
   for (;;) {
     const r = await evaluate(face, expr);
     if (r.ok) {
@@ -393,6 +393,7 @@ async function step(name, face, fn) {
 // **다음 주행이 남의 쓰레기 때문에 실패한다** — 그리고 그 실패는 제품 결함처럼 보인다.
 sweepOrphans();
 console.log(memoryNote());
+if (walkScale() > 1) console.log(`[대기] WALK_TIMEOUT_SCALE=${walkScale()} — 모든 기다림 상한에 배율을 걸었다(FIX-77).`);
 
 const { proc, ws } = await launchChrome();
 const cdp = connect(ws);
@@ -434,7 +435,7 @@ try {
     if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
     await click(admin, '[data-testid="review-panel"] button', { text: "승인" });
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const status = sql(`select status from public.vendors where id = '${vendorId}';`);
       if (status === "active") return "vendors.status=active";
@@ -460,7 +461,7 @@ try {
     await fill(owner, '[aria-label="포함 항목 1"]', "홀 대관 4시간");
     await click(owner, 'button[type="submit"]', { text: "상품 등록" });
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const id = sql(`select id::text from public.products
                        where vendor_id = '${vendorId}' and name = 'C-3 주말 점심 패키지' limit 1;`);
@@ -513,7 +514,7 @@ try {
      * 기본을 넉넉히 두고 `WALK_STEP_TIMEOUT_MS` 로 조절한다. **빠른 기계에서는
      * 비용이 없다** — 행이 생기는 순간 빠져나온다.
      */
-    const STEP_MS = Number(process.env.WALK_STEP_TIMEOUT_MS) || 90000;
+    const STEP_MS = Number(process.env.WALK_STEP_TIMEOUT_MS) || ms(90000);
     const optionUntil = Date.now() + STEP_MS;
     for (;;) {
       const count = Number(
@@ -533,7 +534,7 @@ try {
 
     await click(owner, "button", { text: "확정" });
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const declared = sql(`select coalesce(add_ons_declared_at::text, '')
                               from public.products where id = '${walk.productId}';`);
@@ -554,7 +555,7 @@ try {
     await goto(owner, `/vendor/products/${walk.productId}`);
     await click(owner, "button", { text: "게시" });
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const status = sql(`select status from public.products where id = '${walk.productId}';`);
       if (status === "published") return "status=published";
@@ -579,7 +580,7 @@ try {
 
     await click(owner, '[data-testid="duplicate-product"] button', { text: "복제" });
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const row = sql(`select id::text || '|' || name || '|' || status || '|' ||
                               coalesce(add_ons_declared_at::text,'-') || '|' || base_price_total::text
@@ -661,7 +662,7 @@ try {
     await fill(owner, "#qr-body", "주차는 건물 지하 2층에 100대까지 가능합니다.");
     await click(owner, '[data-testid="add-quick-reply"]');
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const count = sql(`select count(*) from public.vendor_templates
                           where vendor_id = '${vendorId}' and kind = 'quick_reply' and title = 'C-3 주차 안내';`);
@@ -730,13 +731,13 @@ try {
     const form = await evaluate(consumer, `!!document.querySelector('[data-testid="inquiry-form"]')`);
     if (!form) throw new Error(`폼이 안 열렸다: ${info.text.slice(0, 150)}`);
 
-    const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+    const eventDate = new Date(Date.now() + ms(200) * 86400000).toISOString().slice(0, 10);
     await fill(consumer, "#inquiry-date", eventDate);
     await click(consumer, "#category-hall");
     await sleep(400);
     await click(consumer, '[data-testid="send-inquiry"]');
 
-    const until = Date.now() + 25000;
+    const until = Date.now() + ms(25000);
     for (;;) {
       const count = sql(`select count(*) from public.inquiry_targets t
                            join public.inquiries i on i.id = t.inquiry_id
@@ -778,7 +779,7 @@ try {
     await fill(owner, "#quote-base", "11000000");
     await click(owner, '[data-testid="save-quote-template"]');
 
-    const until = Date.now() + 20000;
+    const until = Date.now() + ms(20000);
     for (;;) {
       const count = sql(`select count(*) from public.vendor_templates
                           where vendor_id = '${walk.vendorId}' and kind = 'quote' and title = 'C-3 주말 구성';`);
