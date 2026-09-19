@@ -1317,6 +1317,7 @@ export type Database = {
           body_md: string | null
           created_at: string
           id: string
+          prep_category: string | null
           published_at: string | null
           seo_json: Json
           slug: string
@@ -1329,6 +1330,7 @@ export type Database = {
           body_md?: string | null
           created_at?: string
           id?: string
+          prep_category?: string | null
           published_at?: string | null
           seo_json?: Json
           slug: string
@@ -1341,6 +1343,7 @@ export type Database = {
           body_md?: string | null
           created_at?: string
           id?: string
+          prep_category?: string | null
           published_at?: string | null
           seo_json?: Json
           slug?: string
@@ -4995,6 +4998,7 @@ export type Database = {
           offset_days: number
           title: string
           updated_at: string
+          vendor_category: string | null
         }
         Insert: {
           category: string
@@ -5006,6 +5010,7 @@ export type Database = {
           offset_days: number
           title: string
           updated_at?: string
+          vendor_category?: string | null
         }
         Update: {
           category?: string
@@ -5017,6 +5022,7 @@ export type Database = {
           offset_days?: number
           title?: string
           updated_at?: string
+          vendor_category?: string | null
         }
         Relationships: []
       }
@@ -5034,6 +5040,7 @@ export type Database = {
           template_code: string | null
           title: string
           updated_at: string
+          vendor_category: string | null
         }
         Insert: {
           assignee_id?: string | null
@@ -5048,6 +5055,7 @@ export type Database = {
           template_code?: string | null
           title: string
           updated_at?: string
+          vendor_category?: string | null
         }
         Update: {
           assignee_id?: string | null
@@ -5062,6 +5070,7 @@ export type Database = {
           template_code?: string | null
           title?: string
           updated_at?: string
+          vendor_category?: string | null
         }
         Relationships: [
           {
@@ -5844,10 +5853,12 @@ export type Database = {
       is_membership_status: { Args: { p_value: string }; Returns: boolean }
       is_operator: { Args: never; Returns: boolean }
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
+      is_prep_category: { Args: { p_value: string }; Returns: boolean }
       is_published_post: { Args: { p_post_id: string }; Returns: boolean }
       is_rsvp_status: { Args: { p_value: string }; Returns: boolean }
       is_share_resource_type: { Args: { p_value: string }; Returns: boolean }
       is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }
+      is_vendor_category: { Args: { p_value: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {
         Args: { p_category: string }

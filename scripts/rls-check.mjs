@@ -14050,6 +14050,169 @@ if (!vendorStaff || !adminUser) {
       ),
     );
   }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 카테고리 두 축 (C-2a · D-206)
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // ── 코드 ↔ DB 어휘 대조 ─────────────────────────────────────────────────
+  // **사본은 어긋나고 어긋나면 조용하다**(0045 예산 축과 같은 구조).
+  // 배열 블록만 읽는다 — 파일 전체를 훑으면 라벨표의 따옴표까지 걸려 수가 부푼다.
+  {
+    const vendorBlock = (srcOf("lib/core/schemas/vendor.ts")
+      .match(/VENDOR_CATEGORIES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
+    const vendorCodes = [...vendorBlock.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+
+    // **목록을 실제로 읽었는지 먼저 본다.** 빈 목록이면 아래 every 가 조용히 통과한다.
+    check(
+      "**파는 축 어휘를 코드에서 실제로 읽었다** (빈 목록으로 통과하지 않는다)",
+      vendorCodes.length === 6,
+      `code=${vendorCodes.length}`,
+    );
+    check(
+      "**코드의 파는 축 어휘와 DB `is_vendor_category()` 가 같다**",
+      vendorCodes.length > 0 &&
+        vendorCodes.every((c) => sql(`select public.is_vendor_category('${c}');`) === "t") &&
+        sql(`select public.is_vendor_category('sdm');`) === "f" &&
+        sql(`select public.is_vendor_category('nope');`) === "f",
+      `code=${vendorCodes.length}`,
+    );
+
+    const prepBlock = (srcOf("lib/core/schedule/templates.ts")
+      .match(/TASK_CATEGORIES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
+    const prepCodes = [...prepBlock.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+
+    check(
+      "**준비 축 어휘를 코드에서 실제로 읽었다**",
+      prepCodes.length === 6,
+      `code=${prepCodes.length}`,
+    );
+    check(
+      "**코드의 준비 축 어휘와 DB `is_prep_category()` 가 같다**",
+      prepCodes.length > 0 &&
+        prepCodes.every((c) => sql(`select public.is_prep_category('${c}');`) === "t") &&
+        sql(`select public.is_prep_category('studio');`) === "f" &&
+        sql(`select public.is_prep_category('nope');`) === "f",
+      `code=${prepCodes.length}`,
+    );
+
+    // 두 축이 **다른 것을 센다**는 사실 자체를 고정한다. 누가 합치려 들면 여기서 걸린다.
+    check(
+      "**두 축이 겹치는 값은 `hall` 하나뿐이다** — 합칠 수 없다는 근거(D-206)",
+      vendorCodes.filter((c) => prepCodes.includes(c)).join(",") === "hall",
+    );
+  }
+
+  // ── 매핑은 코드가 갖는다 — 표로 옮겨 가지 않았는지 본다 ─────────────────
+  {
+    const axes = srcOf("lib/core/category/axes.ts");
+    check(
+      "**매핑이 `lib/core` 에 코드로 있다**(C-2a 판단) — 표가 아니다",
+      /\bPREP_TO_VENDOR\b/.test(axes) && /\bVENDOR_TO_PREP\b/.test(axes),
+    );
+    check(
+      "**`lib/core` 가 React·Next 를 import 하지 않는다**(CLAUDE.md §3.1)",
+      !/from "(react|next)/.test(axes),
+    );
+    // 낱말 경계로 본다 — `not_sold` → `not_soldX` 로 바꿔도 통과하면 검사가 아니다.
+    check(
+      "**'없다' 와 '아직 안 했다' 를 가르는 세 상태가 살아 있다**(C-2a 의 요점)",
+      ["sold", "not_sold", "unmapped", "not_a_purchase", "not_yet_listed"].every(
+        (kind) => new RegExp(`"${kind}"`).test(axes),
+      ),
+    );
+    check(
+      "**매핑 표에 준비 축이 없는 카테고리가 없다** — 완전성 검사가 살아 있다",
+      /\bassertPrepAxisFullyMapped\b/.test(axes),
+    );
+  }
+
+  // ── DB 가 어휘를 실제로 막는가 (CHECK 이 서 있는가) ─────────────────────
+  check(
+    "**어휘 밖의 파는 카테고리를 막는다** — 오타 하나가 새 카테고리를 만들지 않는다",
+    rejectedWith(/task_templates_vendor_category_vocab|check constraint/, () =>
+      sql(`insert into public.task_templates (code, category, title, offset_days, vendor_category)
+           values ('T-rls-probe', 'hall', 'probe', -1, 'nope');`),
+    ),
+  );
+  check(
+    "**`tasks` 도 같은 어휘를 쓴다**",
+    rejectedWith(/tasks_vendor_category_vocab|check constraint/, () =>
+      sql(`update public.tasks set vendor_category = 'nope';`),
+    ),
+  );
+  check(
+    "**글의 준비 단계도 어휘 밖을 막는다**",
+    rejectedWith(/content_posts_prep_category_vocab|check constraint/, () =>
+      sql(`update public.content_posts set prep_category = 'studio';`),
+    ),
+  );
+  // **있을 때 조용한가** — 늘 경보하는 CHECK 는 아무것도 지키지 않는다(운영 규칙 7).
+  check(
+    "**어휘 안의 값은 통과한다** (늘 거절하는 CHECK 이 아니다)",
+    sqlOrNull(`begin; update public.tasks set vendor_category = 'hall'; rollback;`) !== null &&
+      sqlOrNull(`begin; update public.content_posts set prep_category = 'sdm'; rollback;`) !== null &&
+      sqlOrNull(`begin; update public.tasks set vendor_category = null; rollback;`) !== null,
+  );
+
+  // ── 시드가 실제로 값을 넣었는가 ─────────────────────────────────────────
+  // `db:reset` 은 **마이그레이션을 먼저, seed.sql 을 나중에** 적용한다. 값 넣기를
+  // 마이그레이션에 적으면 **빈 표를 훑고 성공**한다 — 조용히 헛도는 문장이 된다.
+  check(
+    "**템플릿이 19종 그대로다** (분모가 실재한다)",
+    sql(`select count(*) from public.task_templates;`) === "19",
+  );
+  check(
+    "**좁힌 템플릿이 여덟이다** — 시드가 실제로 값을 넣었다(빈 표를 훑고 통과하지 않았다)",
+    sql(`select count(*) from public.task_templates where vendor_category is not null;`) === "8",
+  );
+  check(
+    "**`T-sdm-contract` 는 일부러 null 이다** — 좁히면 나머지 셋으로 가는 길이 사라진다",
+    sql(`select vendor_category is null from public.task_templates where code = 'T-sdm-contract';`) === "t",
+  );
+  check(
+    "**좁힌 값이 전부 파는 축 어휘 안에 있다**",
+    sql(`select count(*) from public.task_templates
+         where vendor_category is not null and not public.is_vendor_category(vendor_category);`) === "0",
+  );
+
+  // ── 권한 세 층 (§5.5) ───────────────────────────────────────────────────
+  //
+  // **층 1 — 표 단위 권한·CHECK·컬럼 권한.**
+  // `content_posts` 는 0060 이 **표에서** 쓰기를 걷었다. 표 단위라 **새 칸도 자동으로**
+  // 걷힌 상태로 들어온다 — 칸마다 걷었다면 여기서 다시 걷어야 했고, 그것이 §5.5 가
+  // 적은 "칸만 걷으면 무효다" 의 뒷면이다. **가정하지 않고 실제로 눌러 본다.**
+  check(
+    "**층 1 — 아무 로그인 사용자나 글의 준비 단계를 못 고친다** (표 단위 revoke 가 새 칸을 덮는다)",
+    asUser(owner, `select count(*) from public.content_posts;`) !== null &&
+      rejectedWith(/permission denied|new row violates|0 rows/, () =>
+        asUser(owner, `update public.content_posts set prep_category = 'hall';`),
+      ),
+  );
+  check(
+    "**층 1 — 아무나 템플릿의 카테고리를 못 고친다** (쓰기 정책 자체가 없다)",
+    sql(`select count(*) from pg_policies where tablename = 'task_templates' and cmd <> 'SELECT';`) === "0",
+  );
+
+  // **층 2 — 부모를 타는 정책에 소유자 조건이 있는가.**
+  // `tasks` 는 부모(`couples`)를 `is_couple_member()` 로 묻는다 — 소유자 조건이 함수 안에
+  // 있다. 부모가 열려 있어도 자식이 열리지 않는지 **남의 커플 행으로 눌러 본다.**
+  check(
+    "**층 2 — 남의 커플 태스크의 카테고리를 못 고친다** (부모 조건에 소유자가 들어 있다)",
+    asUser(outsider,
+      `select count(*) from public.tasks where vendor_category is not null;`) === "0",
+  );
+
+  // **층 3 — 자격의 근거 표를 자격을 얻으려는 사람이 직접 쓸 수 있는가.**
+  // 이 칸은 **자격이 아니라 길 안내**다. 값을 바꿔도 얻는 것이 없다 — 그 사실을
+  // 고정한다. 나중에 이 칸이 노출·순위에 쓰이면 이 검사가 먼저 깨져야 한다.
+  check(
+    "**층 3 — 카테고리 칸이 노출·순위·요율 어디에도 쓰이지 않는다** (자격이 아니라 길 안내다)",
+    sql(`select count(*) from pg_proc
+         where prosrc like '%vendor_category%'
+           and proname in ('is_active_vendor', 'resolve_commission_rate', 'published_content');`) === "0",
+  );
+}
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
