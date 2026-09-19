@@ -39,6 +39,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { listRoutes } from "./lib/app-routes.mjs";
+import { killTree, removeProfile, sweepOrphans, memoryNote } from "./lib/chrome-teardown.mjs";
+
+/** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
+let lastProfile = "";
 
 const ROOT = process.cwd();
 const ARGS = process.argv.slice(2);
@@ -271,6 +275,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function launchChrome() {
   const port = 9333 + Math.floor(Math.random() * 400);
   const profile = mkdtempSync(join(tmpdir(), "wc-audit-"));
+  lastProfile = profile;
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
@@ -305,13 +310,21 @@ async function launchChrome() {
     }
     await sleep(200);
   }
-  proc.kill();
+  killTree(proc);
+  removeProfile(lastProfile);
   return null;
 }
 
 /** 포트가 겹쳤을 수도 있다. 다른 포트로 한 번 더 해 본다. */
 async function launchChromeWithRetry() {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+// ── 주행 전 정리 (FIX-77) ───────────────────────────────────────────────────
+// 지난 주행이 중간에 끊기면 Chrome 자식들이 **고아로 살아남는다**(Windows 에서
+// `proc.kill()` 은 부모만 죽인다). 이 PC 는 물리 메모리가 7.8GB 라 그것이 쌓이면
+// **다음 주행이 남의 쓰레기 때문에 실패한다** — 그리고 그 실패는 제품 결함처럼 보인다.
+sweepOrphans();
+console.log(memoryNote());
+
     const started = await launchChrome();
     if (started) return started;
     console.log(`  Chrome 이 안 떴다 — 다시 시도한다 (${attempt}/3)`);
@@ -791,7 +804,8 @@ async function main() {
     }
   } finally {
     cdp.close();
-    proc.kill();
+    killTree(proc);
+  removeProfile(lastProfile);
   }
 
   mkdirSync(join(ROOT, "tmp"), { recursive: true });
