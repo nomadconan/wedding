@@ -11,8 +11,20 @@
 // 인데 **그 순서를 그대로 따르면 두 번째 칸에서 멈춘다.** C-1b 가 세 번, C-3 가 여러 번
 // 같은 자리에서 멈췄고 그때마다 "시드가 깨졌나" 를 먼저 의심했다 — 앱 결함이 아니다.
 //
-// 그래서 **되돌리는 일을 한 명령으로 묶는다**: reset → kong 재시작 → 시드가 설 때까지
-// 다시 시도. 사람이 순서를 기억할 필요가 없어야 절차가 지켜진다.
+// 그래서 **되돌리는 일을 한 명령으로 묶는다**: reset → storage·kong 재시작(healthy 대기)
+// → 시드가 설 때까지 다시 시도. 사람이 순서를 기억할 필요가 없어야 절차가 지켜진다.
+//
+// ── storage 도 같은 병을 앓는다 (FIX-76 해소 · 2026-09-19) ──────────────────
+// `supabase db reset` 은 마이그레이션·`seed.sql` 을 **다 적용한 뒤** 컨테이너를
+// 재시작하는데, 거기서 **`supabase_storage_*` 가 DB 보다 먼저 일어나** DB 에
+// `ECONNREFUSED` 로 붙지 못하고 `unhealthy` 로 남는다. CLI 는 그것을
+// `failed to bootstrap the local database` 로 **exit 1** 이라 적는다 —
+// **스키마와 시드는 이미 들어간 상태로.**
+//
+// 예전에는 그 자리에서 죽었다. 그래서 **DB 가 비워져 스키마만 있고 계정은 없는 상태**로
+// 남았고, 그걸 모르고 손으로 `seed:accounts` 를 돌리면 픽스처가 어긋나 **실주행이
+// 엉뚱한 이유로 실패**했다 — C-2a 가 그렇게 두 번 잃었고 **제품 결함(FIX-77)을
+// 의심하게 만든 원인 중 하나**다. 지금은 **결과로 판정한다.**
 //
 // ── 왜 전부 동기인가 ────────────────────────────────────────────────────────
 // 처음에는 `fetch` 로 auth 가 살아났는지 물어보며 기다렸는데, **`npx supabase db reset`
@@ -58,6 +70,89 @@ function run(command, args, label) {
   }
 }
 
+/** `run` 과 같지만 **죽지 않는다.** 성공 여부만 돌려준다(FIX-76). */
+function runSoft(command, args, label) {
+  process.stdout.write(`\n[${label}] ${command} ${args.join(" ")}\n`);
+  const result = spawnSync(command, args, { stdio: "inherit", shell: process.platform === "win32" });
+  if (result.status !== 0) console.error(`[${label}] exit ${result.status} — 결과로 판정한다`);
+  return result.status === 0;
+}
+
+/** 이름 접두어로 컨테이너 하나를 찾는다. 없으면 빈 문자열. */
+function containerNamed(prefix) {
+  try {
+    return (
+      execFileSync("docker", ["ps", "-a", "--filter", `name=${prefix}`, "--format", "{{.Names}}"])
+        .toString()
+        .trim()
+        .split(NL)
+        .filter(Boolean)[0] ?? ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 컨테이너를 재시작하고 **healthy 가 될 때까지 기다린다** (FIX-76).
+ *
+ * 재시작만 하고 넘어가면 다음 단계가 **아직 안 일어난 컨테이너**를 상대하게 된다 —
+ * 그것이 `seed:accounts` 가 502 로 죽던 이유이고(FIX-69), `storage` 도 같은 모양이다.
+ * healthcheck 가 없는 컨테이너는 기다릴 것이 없으므로 재시작만 하고 넘어간다.
+ */
+function restartAndWait(prefix, label, timeoutMs = 180_000) {
+  const name = containerNamed(prefix);
+  if (!name) {
+    console.log(`\n[${label}] ${prefix}* 컨테이너가 없다 — 재시작할 것이 없다.`);
+    return;
+  }
+
+  run("docker", ["restart", name], label);
+
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let status = "";
+    try {
+      status = execFileSync("docker", [
+        "inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", name,
+      ]).toString().trim();
+    } catch {
+      status = "unknown";
+    }
+
+    if (status === "healthy" || status === "none") {
+      console.log(`[${label}] ${name} — ${status === "none" ? "healthcheck 없음(대기 불필요)" : "healthy"}`);
+      return;
+    }
+    if (Date.now() > deadline) {
+      console.error(`[${label}] ${name} 이 ${timeoutMs / 1000}초 안에 healthy 가 되지 않았다 (${status}).`);
+      return;
+    }
+    sleepSync(2000);
+  }
+}
+
+/**
+ * 시드가 실제로 들어왔는지 **결과로** 본다 — `task_templates` 는 `seed.sql` 이 넣는
+ * 19행짜리 표라 "마이그레이션과 시드가 둘 다 지나갔다" 의 증거가 된다.
+ * 못 세면 0 이 아니라 **-1** 을 돌려준다(빈 결과로 통과하지 않는다).
+ */
+function countTaskTemplates() {
+  const db = containerNamed("supabase_db_");
+  if (!db) return -1;
+  try {
+    const out = execFileSync("docker", [
+      "exec", "-i", db, "psql", "-U", "postgres", "-d", "postgres",
+      "-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1",
+      "-c", "select count(*) from public.task_templates;",
+    ]).toString().trim();
+    const value = Number(out);
+    return Number.isInteger(value) && value >= 0 ? value : -1;
+  } catch {
+    return -1;
+  }
+}
+
 function dbContainer() {
   try {
     return execFileSync("docker", [
@@ -94,25 +189,43 @@ function seededUserCount() {
   }
 }
 
-run("npx", ["supabase", "db", "reset"], "reset");
-
 /**
- * **kong 을 재시작한다.** 이름은 프로젝트마다 다르므로 `docker ps` 로 찾는다.
- * 컨테이너가 없으면 조용히 넘어간다 — 그럴 때는 재시작할 것도 없다.
+ * **`db:reset` 도 종료 코드로 판정하지 않는다 (FIX-76).**
+ *
+ * `supabase db reset` 은 마이그레이션과 `seed.sql` 을 적용한 **뒤에** 컨테이너를
+ * 재시작하는데, 거기서 **`supabase_storage_*` 가 DB 보다 먼저 일어나** DB 에
+ * `ECONNREFUSED` 로 붙지 못하고 `unhealthy` 로 남는다. 그러면 CLI 가
+ * `failed to bootstrap the local database` 로 **exit 1** 을 낸다 —
+ * **스키마와 시드는 이미 다 들어간 상태로.**
+ *
+ * 예전에는 그 자리에서 `process.exit` 했다. 그 바람에 **DB 는 비워져 스키마만 있고
+ * 계정은 없는 상태**로 남았고, 그걸 모르고 손으로 시드하면 픽스처가 어긋나
+ * **실주행이 엉뚱한 이유로 실패**했다(C-2a 가 두 번 잃었다 · FIX-77 을 의심하게 만든
+ * 원인 중 하나다).
+ *
+ * 그래서 여기서도 **결과로 판정한다** — 종료 코드가 아니라 `task_templates` 가
+ * 실제로 들어왔는지를 본다(위 `seed:accounts` 와 같은 철학).
  */
-let kong = "";
-try {
-  kong = execFileSync("docker", [
-    "ps", "--filter", "name=supabase_kong_", "--format", "{{.Names}}",
-  ]).toString().trim().split(NL).filter(Boolean)[0] ?? "";
-} catch {
-  kong = "";
-}
+const resetOk = runSoft("npx", ["supabase", "db", "reset"], "reset");
 
-if (kong) {
-  run("docker", ["restart", kong], "kong");
-} else {
-  console.log("\n[kong] supabase_kong_* 컨테이너가 없다 — 재시작할 것이 없다.");
+restartAndWait("supabase_storage_", "storage");
+restartAndWait("supabase_kong_", "kong");
+
+if (!resetOk) {
+  const templates = countTaskTemplates();
+  if (templates > 0) {
+    console.log(
+      `\n[reset] CLI 는 실패로 끝났지만 **스키마와 시드는 들어와 있다**(task_templates ${templates}건).\n` +
+        "        컨테이너 재시작 단계의 실패이며(FIX-76) 위에서 되살렸다 — 계속 간다.",
+    );
+  } else {
+    console.error(
+      "\n[reset] 실패했고 **시드도 안 들어왔다**(task_templates 0건).\n" +
+        "        DB 가 빈 채로 남았다 — 손으로 시드하지 말고 다시 돌린다:\n" +
+        "          npm run db:reseed\n",
+    );
+    process.exit(1);
+  }
 }
 
 console.log(`\n[seed] npm run seed:accounts (최대 ${ATTEMPTS}회 · 결과로 판정한다)`);
@@ -157,4 +270,4 @@ if (!seeded) {
   process.exit(1);
 }
 
-console.log("\n되돌렸다 — db:reset + kong 재시작 + seed:accounts");
+console.log("\n되돌렸다 — db:reset + storage·kong 재시작(healthy 대기) + seed:accounts");

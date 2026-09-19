@@ -36,6 +36,10 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { killTree, removeProfile, sweepOrphans, memoryNote } from "./lib/chrome-teardown.mjs";
+
+/** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
+let lastProfile = "";
 
 const ARGS = process.argv.slice(2);
 const has = (f) => ARGS.includes(f);
@@ -89,6 +93,7 @@ function findChrome() {
 async function launchChrome() {
   const port = 9733 + Math.floor(Math.random() * 400);
   const profile = mkdtempSync(join(tmpdir(), "wc-chain-"));
+  lastProfile = profile;
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
@@ -118,7 +123,8 @@ async function launchChrome() {
     }
     await sleep(200);
   }
-  proc.kill();
+  killTree(proc);
+  removeProfile(lastProfile);
   throw new Error("Chrome DevTools 엔드포인트가 열리지 않았다.");
 }
 
@@ -294,13 +300,49 @@ async function login(face) {
     await sleep(400);
   }
 
-  const deadline = Date.now() + 40000;
+  /**
+   * **왜 이렇게 오래 기다리나 (FIX-77).**
+   *
+   * 40초로 잡혀 있었다. 그것은 **여유 있는 기계에서 맞춘 값**이고, 물리 메모리가
+   * 7.8GB 인 이 개발 PC 에서는 스택·개발 서버·Chrome 넷이 함께 올라가면
+   * 스왑으로 밀려 **로그인 왕복 하나가 40초를 넘는다.** 그러면 주행이
+   * `로그인이 이동하지 않았다` 로 죽고, 그 문구는 **제품이 고장 난 것처럼 읽힌다.**
+   *
+   * 기다림을 늘려도 **빠른 기계에서는 비용이 없다** — 경로가 바뀌는 순간 빠져나온다.
+   * `WALK_LOGIN_TIMEOUT_MS` 로 조절한다(CI 는 기본값으로 충분하다).
+   */
+  const LOGIN_NAV_MS = Number(process.env.WALK_LOGIN_TIMEOUT_MS) || 120000;
+  const deadline = Date.now() + LOGIN_NAV_MS;
   while (Date.now() < deadline) {
     await sleep(250);
     const path = await evaluate(face, "location.pathname");
     if (!String(path).startsWith("/login")) return `성공 → ${path}`;
   }
-  throw new Error(`로그인이 이동하지 않았다(${face.key})`);
+
+  /**
+   * **못 갔으면 무엇을 봤는지 적는다.**
+   *
+   * FIX-24 가 값을 치르고 배운 것이다 — 로그인 실패에 화면 문구가 없으면
+   * 아무도 원인을 못 찾는다. 여기서도 `이동하지 않았다` 한 줄만 남기면
+   * **느린 기계**와 **진짜 로그인 실패**가 구분되지 않는다.
+   */
+  let why = "";
+  try {
+    why = await evaluate(
+      face,
+      `(() => {
+        const alert = document.querySelector('[role="alert"]')?.textContent?.trim() ?? "";
+        const busy = document.querySelector('[data-testid="login-form"] button[disabled]') ? "제출 중" : "";
+        return JSON.stringify({ path: location.pathname, alert: alert.slice(0, 160), busy });
+      })()`,
+    );
+  } catch {
+    why = '{"path":"?","alert":"CDP 응답 없음 — 브라우저가 죽었을 수 있다"}';
+  }
+  throw new Error(
+    `로그인이 ${LOGIN_NAV_MS / 1000}초 안에 이동하지 않았다(${face.key}) :: ${why}` +
+      " — 화면 문구가 비어 있으면 **자격 증명이 아니라 속도** 문제일 수 있다(FIX-77).",
+  );
 }
 
 /** 값을 넣는다. React 가 보게 네이티브 setter 로 넣고 input 이벤트를 쏜다. */
@@ -385,6 +427,13 @@ async function step(name, face, fn) {
 // =============================================================================
 // 주행
 // =============================================================================
+// ── 주행 전 정리 (FIX-77) ───────────────────────────────────────────────────
+// 지난 주행이 중간에 끊기면 Chrome 자식들이 **고아로 살아남는다**(Windows 에서
+// `proc.kill()` 은 부모만 죽인다). 이 PC 는 물리 메모리가 7.8GB 라 그것이 쌓이면
+// **다음 주행이 남의 쓰레기 때문에 실패한다** — 그리고 그 실패는 제품 결함처럼 보인다.
+sweepOrphans();
+console.log(memoryNote());
+
 const { proc, ws } = await launchChrome();
 const cdp = connect(ws);
 await cdp.ready;
@@ -498,7 +547,30 @@ try {
           ? "미리 골라짐" : "안 골라짐";
       })()`,
     );
-    if (preselected !== "미리 골라짐") throw new Error(`업체가 ${preselected}`);
+    if (preselected !== "미리 골라짐") {
+      /**
+       * **못 찾았으면 화면이 무엇을 그리고 있었는지 함께 적는다** (FIX-77 이 여기서 시작됐다).
+       *
+       * 예전에는 `업체가 후보에 없음` 한 줄만 남겼다. 그 문구는 **후보 계산이 틀렸다**
+       * 로 읽히는데 실제 원인은 **메모리가 모자라 화면이 덜 그려진 것**이었다 —
+       * 그 탓에 회차 하나를 제품 결함 추적에 썼다.
+       *
+       * 무엇을 봤는지 남기면 둘이 구분된다: 후보 상자가 **0개면** 화면이 안 그려진
+       * 쪽이고, **다른 업체만 있으면** 후보 계산이 틀린 쪽이다.
+       */
+      const seen = await evaluate(
+        consumer,
+        `(() => {
+          const ids = [...document.querySelectorAll('[id^="vendor-"]')].map((n) => n.id);
+          return JSON.stringify({
+            path: location.pathname + location.search,
+            boxes: ids.length,
+            heading: document.querySelector("h1,h2")?.textContent?.trim()?.slice(0, 60) ?? "",
+          });
+        })()`,
+      );
+      throw new Error(`업체가 ${preselected} :: 화면 ${seen}`);
+    }
 
     const eventDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
     await fill(consumer, "#inquiry-date", eventDate);
@@ -933,7 +1005,8 @@ try {
   steps.push({ name: "주행", face: "-", ok: false, note: String(error.message ?? error) });
 } finally {
   cdp.close();
-  proc.kill();
+  killTree(proc);
+  removeProfile(lastProfile);
 }
 
 mkdirSync(dirname(OUT), { recursive: true });
