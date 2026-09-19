@@ -31,7 +31,14 @@ export type GenerateResult = {
   undated: number;
 };
 
-type TemplateRow = { code: string; category: string; title: string; offset_days: number };
+type TemplateRow = {
+  code: string;
+  category: string;
+  title: string;
+  offset_days: number;
+  /** 템플릿이 좁혀 둔 파는 카테고리(C-2a). null 이면 준비 축 매핑이 답한다. */
+  vendor_category: string | null;
+};
 
 export async function generateChecklist(
   client: SupabaseClient<Database>,
@@ -39,14 +46,25 @@ export async function generateChecklist(
 ): Promise<GenerateResult> {
   const { data: templateRows } = await client
     .from("task_templates")
-    .select("code, category, title, offset_days");
+    .select("code, category, title, offset_days, vendor_category");
 
-  const templates = ((templateRows ?? []) as TemplateRow[]).map((row) => ({
+  const rows = (templateRows ?? []) as TemplateRow[];
+
+  const templates = rows.map((row) => ({
     code: row.code,
     category: row.category,
     title: row.title,
     offsetDays: row.offset_days,
   }));
+
+  /**
+   * 템플릿이 좁혀 둔 파는 카테고리를 태스크로 **복사한다**(C-2a).
+   *
+   * 복사하는 이유는 손으로 추가한 태스크(`source='manual'`)에는 템플릿이 없어
+   * 조인할 곳이 없기 때문이다. 값이 없으면 `null` 로 두고 **준비 축 매핑이 답한다** —
+   * `null` 은 "아직 안 했다" 가 아니라 "따로 좁히지 않았다" 다.
+   */
+  const narrowedCategory = new Map(rows.map((row) => [row.code, row.vendor_category ?? null]));
 
   if (templates.length === 0) return { created: 0, skipped: 0, edges: 0, undated: 0 };
 
@@ -80,6 +98,7 @@ export async function generateChecklist(
           title: task.title,
           due_date: task.dueDate,
           template_code: task.templateCode,
+          vendor_category: narrowedCategory.get(task.templateCode) ?? null,
           source: "auto",
         })),
       )
