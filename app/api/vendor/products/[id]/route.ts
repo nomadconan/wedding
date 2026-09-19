@@ -4,6 +4,12 @@ import { z } from "zod";
 import { recordAudit, recordEvent } from "@/lib/audit/record";
 import { fail, failValidation, ok } from "@/lib/api/response";
 import {
+  ProductContentInputSchema,
+  descriptionSource,
+  productContentProblems,
+  toProductDescription,
+} from "@/lib/core/product/content";
+import {
   ProductInputFieldsSchema,
   ProductStatusSchema,
   capacityRangeIsValid,
@@ -26,6 +32,7 @@ import type { TablesUpdate } from "@/types/database";
  * 막는 상황이 생기지 않는다. DB 에도 같은 조건이 CHECK 로 걸려 있어 세 겹이다.
  */
 const PatchSchema = ProductInputFieldsSchema.partial()
+  .extend(ProductContentInputSchema.shape)
   .extend({
     status: ProductStatusSchema.optional(),
     /**
@@ -82,7 +89,28 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
           : null,
   };
 
+  // 본문 판정(C-2b). **합친 뒤에 본다** — 부분 수정에서 한쪽만 보내면 기존 값과
+  // 합쳐진 결과가 실제로 저장되는 내용이고, 그것을 검사해야 한다.
+  const mergedSummary =
+    input.summary === undefined ? (before.summary ?? null) : input.summary;
+  const mergedDescription =
+    input.description === undefined
+      ? descriptionSource(before.description_json)
+      : input.description;
+
+  const contentProblems = productContentProblems({
+    summary: mergedSummary,
+    descriptionSource: mergedDescription,
+  });
+
+  if (contentProblems.length > 0) {
+    return fail(422, "VENDOR_PRODUCT_CONTENT_REJECTED", contentProblems[0]!.message, contentProblems);
+  }
+
   // 게시 전 체크리스트. 미충족이면 게시할 수 없다(F-V-03).
+  //
+  // **본문·사진은 여기 없다**(C-2b). 게시 조건에 넣으면 이미 게시된 상품이 전부
+  // 내려간다 — 완성도는 `productContentSuggestions` 가 권유로만 말한다.
   if (input.status === "published") {
     const blockers = publishBlockersOf(merged as Parameters<typeof publishBlockersOf>[0]);
 
@@ -107,6 +135,13 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (input.includedItems !== undefined) patch.included_items_json = input.includedItems;
   if (input.capacityMin !== undefined) patch.capacity_min = input.capacityMin;
   if (input.capacityMax !== undefined) patch.capacity_max = input.capacityMax;
+  if (input.summary !== undefined) {
+    // 빈 문자열은 **지운다**는 뜻이다. DB CHECK 이 빈 문자열을 받지 않는다(0076).
+    patch.summary = input.summary && input.summary.length > 0 ? input.summary : null;
+  }
+  if (input.description !== undefined) {
+    patch.description_json = toProductDescription(input.description);
+  }
   if (input.declareAddOns !== undefined) {
     patch.add_ons_declared_at = merged.add_ons_declared_at;
   }

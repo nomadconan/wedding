@@ -14215,5 +14215,344 @@ if (!vendorStaff || !adminUser) {
 }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 상품 본문·사진 (C-2b · D-209 · D-210) + 파는 축 어휘 CHECK (FIX-75)
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const vendorOwner = outsider; // vendor@local.test — 업체 대표
+  const DRAFT = "00000000-0000-0000-0000-0000000c2b01";
+  const PUBLISHED = "00000000-0000-0000-0000-0000000c2b0f";
+
+  /**
+   * 초안 상품 하나 · 게시 상품 하나 · 사진 셋을 만든다.
+   * `asUser`/`asAnon` 의 setup 은 **역할을 바꾸기 전에 postgres 로** 돌고 같은
+   * 트랜잭션이라 rollback 으로 함께 사라진다.
+   */
+  const fixture = `
+    update public.vendors set status = 'active'
+     where id = (select vendor_id from public.vendor_members where user_id = '${vendorOwner}' limit 1);
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at)
+    select '${DRAFT}', vm.vendor_id, 'hall', 'C2B 초안', 1000000, 'draft',
+           '[{"label":"대관","note":null}]'::jsonb, now(), null
+      from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at)
+    select '${PUBLISHED}', vm.vendor_id, 'hall', 'C2B 게시', 1000000, 'published',
+           '[{"label":"대관","note":null}]'::jsonb, now(), now()
+      from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+    insert into public.vendor_media (id, vendor_id, product_id, type, storage_path, sort_order)
+    select '00000000-0000-0000-0000-0000000c2b02', vm.vendor_id, '${DRAFT}', 'photo', 'p/draft.jpg', 0
+      from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+    insert into public.vendor_media (id, vendor_id, product_id, type, storage_path, sort_order)
+    select '00000000-0000-0000-0000-0000000c2b03', vm.vendor_id, '${PUBLISHED}', 'photo', 'p/pub.jpg', 0
+      from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+    insert into public.vendor_media (id, vendor_id, product_id, type, storage_path, sort_order)
+    select '00000000-0000-0000-0000-0000000c2b04', vm.vendor_id, null, 'photo', 'p/vendor.jpg', 0
+      from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+  `;
+
+  // ── 완료 조건 — **기존 게시 상품이 내려가지 않는다** ─────────────────────
+  //
+  // 이것이 C-2b 의 완료 조건이고, 지켜졌는지 **분모부터** 확인한다. 본문·사진이
+  // 없는 게시 상품이 **실재해야** 이 검사가 뜻을 갖는다 — 그런 상품이 0개인 DB 에서는
+  // "안 내려갔다" 가 공짜로 참이 된다(빈 표로 통과하는 검사를 만들지 않는다).
+  const barePublished = sql(`
+    select count(*) from public.products
+     where status = 'published' and summary is null and description_json is null
+       and not exists (select 1 from public.vendor_media m where m.product_id = products.id);`);
+
+  check(
+    "**본문·사진 없는 게시 상품이 실재한다** — 아래 검사의 분모다",
+    Number(barePublished) > 0,
+    `bare_published=${barePublished}`,
+  );
+  check(
+    "**그 상품들이 여전히 published 다** — C-2b 가 기존 게시를 내리지 않았다",
+    sql(`select count(*) from public.products
+          where summary is null and description_json is null and status = 'draft'
+            and published_at is not null;`) === "0",
+  );
+  // **되돌림 검사.** 누군가 본문·사진을 게시 조건에 넣으면 이 줄이 먼저 깨진다.
+  check(
+    "**게시 CHECK 이 본문·사진을 요구하지 않는다** (넣으면 기존 게시분이 전부 내려간다)",
+    !/summary|description_json|vendor_media/.test(
+      sql(`select pg_get_constraintdef(oid) from pg_constraint
+            where conrelid = 'public.products'::regclass
+              and conname = 'products_publish_requirements_chk';`),
+    ),
+  );
+  check(
+    "**게시 차단 목록에도 본문·사진이 없다** (화면·API 가 DB 와 같은 말을 한다)",
+    !/SUMMARY_MISSING|DESCRIPTION_MISSING|PHOTO_MISSING/.test(
+      srcOf("lib/core/schemas/product.ts") + srcOf("lib/vendor/products.ts"),
+    ),
+  );
+  check(
+    "**권유는 권유의 자리에 있다** — 네 가지가 실제로 있다(빈 목록이 아니다)",
+    ["SUMMARY_MISSING", "DESCRIPTION_MISSING", "PHOTO_MISSING", "ALT_TEXT_MISSING"].every((code) =>
+      new RegExp(`"${code}"`).test(srcOf("lib/core/product/content.ts")),
+    ),
+  );
+
+  // ── 본문은 원문만 저장한다 (계산 가능한 값을 저장하지 않는다) ──────────
+  check(
+    "**본문 봉투에 블록을 담지 않는다** — 블록은 원문에서 계산된다",
+    /v: PRODUCT_DESCRIPTION_VERSION, source: trimmed/.test(srcOf("lib/core/product/content.ts")) &&
+      !/blocks:/.test(srcOf("lib/core/product/content.ts")),
+  );
+  check(
+    "**본문 모양을 DB 도 막는다** — 봉투가 아닌 값은 들어가지 않는다",
+    rejectedWith(/products_description_shape_chk|check constraint/, () =>
+      sql(`update public.products set description_json = '"그냥 문자열"'::jsonb
+            where id = '00000000-0000-0000-0000-00000000d001';`),
+    ),
+  );
+  check(
+    "**빈 본문은 봉투로 저장되지 않는다**",
+    rejectedWith(/products_description_shape_chk|check constraint/, () =>
+      sql(`update public.products set description_json = '{"v":1,"source":"   "}'::jsonb
+            where id = '00000000-0000-0000-0000-00000000d001';`),
+    ),
+  );
+  check(
+    "**제대로 된 봉투는 통과한다** (늘 거절하는 CHECK 이 아니다)",
+    sqlOrNull(`begin;
+      update public.products set description_json = '{"v":1,"source":"## 구성"}'::jsonb,
+                                 summary = '한 줄 소개'
+       where id = '00000000-0000-0000-0000-00000000d001';
+      rollback;`) !== null,
+  );
+
+  // ── 층 2 — 초안 상품의 사진이 새는가 ────────────────────────────────────
+  //
+  // **부모 정책에 기대지 않는다.** `products` 의 공개 조건이 넓어지는 날 이쪽도 같이
+  // 넓어지면 아무도 모른다 — 그래서 정책이 `status` 를 직접 본다. 그 사실과 실제
+  // 동작을 둘 다 고정한다.
+  check(
+    "**층 2 — 공개 정책이 게시 여부를 직접 본다** (다른 표의 정책에 기대지 않는다)",
+    /published/.test(
+      sql(`select pg_get_expr(polqual, polrelid) from pg_policy
+            where polrelid = 'public.vendor_media'::regclass
+              and polname = 'vendor_media_select_public';`),
+    ),
+  );
+  check(
+    "**층 2 — 비로그인은 초안 상품의 사진을 못 본다**",
+    asAnon(
+      `select count(*) from public.vendor_media where id = '00000000-0000-0000-0000-0000000c2b02';`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**층 2 — 게시 상품의 사진은 보인다** (늘 가리는 정책이 아니다)",
+    asAnon(
+      `select count(*) from public.vendor_media where id = '00000000-0000-0000-0000-0000000c2b03';`,
+      fixture,
+    ) === "1",
+  );
+  check(
+    "**층 2 — 업체 사진은 그대로 보인다** (기존 동작을 바꾸지 않았다)",
+    asAnon(
+      `select count(*) from public.vendor_media where id = '00000000-0000-0000-0000-0000000c2b04';`,
+      fixture,
+    ) === "1",
+  );
+  // C-3 이 기록으로 남긴 자리를 **이번에 다시 본다**(지시 — products 를 손댔으므로).
+  check(
+    "**층 2 — 초안 상품의 추가금도 새지 않는다** (C-3 가 남긴 자리를 다시 봤다)",
+    asAnon(
+      `select count(*) from public.product_options o
+        join public.products p on p.id = o.product_id where p.status = 'draft';`,
+      fixture + `
+      insert into public.product_options (product_id, name, price, is_mandatory)
+      values ('${DRAFT}', '초안 추가금', 50000, true);`,
+    ) === "0",
+  );
+
+  // ── 층 1·3 — 누가 상품 사진을 다루는가 ──────────────────────────────────
+  //
+  // 상품 사진은 **owner 전용**이다(`products` 쓰기가 owner 전용인 것과 같은 경계).
+  // staff 가 넘어오는 길이 셋이라 셋 다 눌러 본다 — 만들기 · 붙이기 · 떼어내기.
+  check(
+    "**층 1 — staff 는 상품 사진을 만들 수 없다**",
+    rejectedWith(/row-level security|violates/, () =>
+      asUser(
+        vendorStaff,
+        `insert into public.vendor_media (vendor_id, product_id, type, storage_path, sort_order)
+         select vm.vendor_id, '${DRAFT}', 'photo', 'p/staff.jpg', 9
+           from public.vendor_members vm where vm.user_id = '${vendorStaff}' limit 1;`,
+        fixture,
+      ),
+    ),
+  );
+  check(
+    "**층 3 — staff 는 업체 사진에 product_id 를 붙일 수 없다** (`with check` 가 바뀐 뒤를 본다)",
+    rejectedWith(/row-level security|violates/, () =>
+      asUser(
+        vendorStaff,
+        `update public.vendor_media set product_id = '${DRAFT}'
+          where id = '00000000-0000-0000-0000-0000000c2b04';`,
+        fixture,
+      ),
+    ),
+  );
+  check(
+    "**층 3 — staff 는 상품 사진을 업체 사진으로 떼어 낼 수 없다** (`using` 이 원래 행을 본다)",
+    asUser(
+      vendorStaff,
+      `update public.vendor_media set product_id = null
+        where id = '00000000-0000-0000-0000-0000000c2b03';
+       select count(*) from public.vendor_media
+        where id = '00000000-0000-0000-0000-0000000c2b03' and product_id is null;`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**층 1 — staff 는 상품 사진을 지울 수 없다**",
+    asUser(
+      vendorStaff,
+      `delete from public.vendor_media where id = '00000000-0000-0000-0000-0000000c2b03';
+       select count(*) from public.vendor_media where id = '00000000-0000-0000-0000-0000000c2b03';`,
+      fixture,
+    ) === "1",
+  );
+  check(
+    "**staff 는 업체 사진을 계속 다룬다** (기존 동작을 좁히지 않았다)",
+    asUser(
+      vendorStaff,
+      `update public.vendor_media set alt_text = 'ok'
+        where id = '00000000-0000-0000-0000-0000000c2b04';
+       select count(*) from public.vendor_media
+        where id = '00000000-0000-0000-0000-0000000c2b04' and alt_text = 'ok';`,
+      fixture,
+    ) === "1",
+  );
+  check(
+    "**owner 는 상품 사진을 만들 수 있다** (늘 거절하는 정책이 아니다)",
+    asUser(
+      vendorOwner,
+      `insert into public.vendor_media (vendor_id, product_id, type, storage_path, sort_order)
+       select vm.vendor_id, '${DRAFT}', 'photo', 'p/owner.jpg', 9
+         from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;
+       select count(*) from public.vendor_media where storage_path = 'p/owner.jpg';`,
+      fixture,
+    ) === "1",
+  );
+
+  // ── 층 2 — 남의 업체 상품에 사진을 붙일 수 있는가 ───────────────────────
+  //
+  // 정책만으로는 못 막는다(`is_vendor_member(vendor_id)` 는 **내 업체**만 보고
+  // product_id 가 누구 것인지는 안 본다). **복합 FK** 가 선언으로 막는다.
+  check(
+    "**층 2 — 남의 업체 상품에는 사진을 붙일 수 없다** (복합 FK)",
+    rejectedWith(/vendor_media_product_same_vendor_fk|foreign key/, () =>
+      sql(`insert into public.vendor_media (vendor_id, product_id, type, storage_path, sort_order)
+           select vm.vendor_id, '00000000-0000-0000-0000-000000000951', 'photo', 'p/x.jpg', 0
+             from public.vendor_members vm where vm.user_id = '${vendorOwner}' limit 1;`),
+    ),
+  );
+  check(
+    "**같은 업체 상품이면 붙는다** (늘 거절하는 FK 가 아니다)",
+    sqlOrNull(`begin;
+      insert into public.vendor_media (vendor_id, product_id, type, storage_path, sort_order)
+      values ((select vendor_id from public.products where id = '00000000-0000-0000-0000-00000000d001'),
+              '00000000-0000-0000-0000-00000000d001', 'photo', 'p/same.jpg', 0);
+      rollback;`) !== null,
+  );
+
+  // ── Storage — 공개 버킷이 무엇을 받는가 ─────────────────────────────────
+  {
+    const bucketMimes = sql(
+      `select coalesce(array_to_string(allowed_mime_types, ','), '') from storage.buckets
+        where id = 'vendor-media';`,
+    );
+    const codeBlock = (srcOf("lib/core/product/media.ts")
+      .match(/PRODUCT_IMAGE_MIME_TYPES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
+    const codeMimes = [...codeBlock.matchAll(/"([\w/+-]+)"/g)].map((m) => m[1]);
+
+    check(
+      "**코드의 허용 형식을 실제로 읽었다** (빈 목록으로 통과하지 않는다)",
+      codeMimes.length === 5,
+      `code=${codeMimes.length}`,
+    );
+    check(
+      "**코드가 허용한 형식을 버킷도 허용한다** — 화면이 받고 Storage 가 거절하는 일이 없다",
+      codeMimes.length > 0 && codeMimes.every((mime) => bucketMimes.split(",").includes(mime)),
+    );
+    check(
+      "**공개 버킷이 SVG 를 받지 않는다** — 같은 출처에서 스크립트가 된다",
+      bucketMimes.length > 0 && !bucketMimes.includes("svg"),
+    );
+    check(
+      "**공개 버킷에 크기 상한이 있다** (무제한이 아니다)",
+      Number(
+        sql(`select coalesce(file_size_limit, 0) from storage.buckets where id = 'vendor-media';`),
+      ) > 0,
+    );
+  }
+
+  // ── 운영 파라미터 — 값이 없으면 지어내지 않는다 ─────────────────────────
+  check(
+    "**상품 사진 상한이 `app_settings` 에 있다**",
+    sql(`select count(*) from public.app_settings
+          where key = 'products.media_max_per_product';`) === "1",
+  );
+  check(
+    "**상한을 코드에 박지 않았다** — 값이 없으면 업로드를 거절한다",
+    /LIMIT_UNKNOWN/.test(srcOf("lib/core/product/media.ts")) &&
+      !/max_per_product\s*=\s*\d/.test(srcOf("lib/core/product/media.ts")),
+  );
+
+  // ── 본문이 정찰제를 무너뜨리지 못하게 한다 (F-V-03) ─────────────────────
+  check(
+    "**본문 판정이 가격 회피 문구를 같은 함수로 본다** — 두 벌을 두지 않았다",
+    /findPriceEvasionPhrase/.test(srcOf("lib/core/product/content.ts")),
+  );
+  check(
+    "**본문 판정이 연락처를 마스킹 패턴으로 본다** — 정규식을 두 벌 두지 않았다",
+    /detectResidualPii/.test(srcOf("lib/core/product/content.ts")),
+  );
+  check(
+    "**등록·수정 두 경로가 모두 본문을 판정한다**",
+    ["app/api/vendor/products/route.ts", "app/api/vendor/products/[id]/route.ts"].every((file) =>
+      /productContentProblems/.test(srcOf(file)),
+    ),
+  );
+
+  // ── FIX-75 — 파는 축 본체 CHECK ─────────────────────────────────────────
+  check(
+    "**FIX-75 — `products.category` 가 어휘 밖을 막는다**",
+    rejectedWith(/products_category_vocab_chk|check constraint/, () =>
+      sql(`update public.products set category = 'nope'
+            where id = '00000000-0000-0000-0000-00000000d001';`),
+    ),
+  );
+  check(
+    "**FIX-75 — `vendors.category` 가 어휘 밖을 막는다**",
+    rejectedWith(/vendors_category_vocab_chk|check constraint/, () =>
+      sql(`update public.vendors set category = 'nope'
+            where id = (select vendor_id from public.products
+                         where id = '00000000-0000-0000-0000-00000000d001');`),
+    ),
+  );
+  check(
+    "**FIX-75 — 어휘 안의 값은 통과한다** (늘 거절하는 CHECK 이 아니다)",
+    sqlOrNull(`begin;
+      update public.products set category = 'studio'
+       where id = '00000000-0000-0000-0000-00000000d001';
+      rollback;`) !== null,
+  );
+  // `not valid` 로 남아 있으면 **기존 행을 아무도 안 본 것**이다. 그 상태를 통과로
+  // 읽지 않는다 — 검증까지 끝났는지 확인한다.
+  check(
+    "**FIX-75 — 두 제약이 기존 행까지 검증됐다** (`not valid` 로 남아 있지 않다)",
+    sql(`select count(*) from pg_constraint
+          where conname in ('products_category_vocab_chk', 'vendors_category_vocab_chk')
+            and convalidated;`) === "2",
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

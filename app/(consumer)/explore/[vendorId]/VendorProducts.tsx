@@ -26,7 +26,7 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
   const { data: productRows } = await client
     .from("products")
     .select(
-      "id, name, base_price_total, price_includes_vat, included_items_json, capacity_min, capacity_max, add_ons_declared_at",
+      "id, name, base_price_total, price_includes_vat, included_items_json, capacity_min, capacity_max, add_ons_declared_at, summary",
     )
     .eq("vendor_id", vendorId)
     .eq("status", "published")
@@ -42,6 +42,7 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
     capacity_min: number | null;
     capacity_max: number | null;
     add_ons_declared_at: string | null;
+    summary: string | null;
   }[];
 
   if (products.length === 0) {
@@ -89,6 +90,11 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
           <Card key={product.id} data-testid="vendor-product">
             <CardHeader>
               <CardTitle className="text-base">{product.name}</CardTitle>
+              {/* 한 줄 소개(C-2b). 본문·사진 전체를 보여 주는 자리는 상품 상세(C-2c)이며
+                  여기서는 업체가 적은 한 줄이 실제로 고객에게 닿는지를 잇는다. */}
+              {product.summary ? (
+                <CardDescription data-testid="product-summary">{product.summary}</CardDescription>
+              ) : null}
               {product.capacity_min !== null || product.capacity_max !== null ? (
                 <CardDescription>
                   수용 인원 {product.capacity_min ?? "-"} ~ {product.capacity_max ?? "-"}명

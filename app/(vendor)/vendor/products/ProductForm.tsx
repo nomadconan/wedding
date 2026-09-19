@@ -17,6 +17,11 @@ import {
 } from "@/components/ui/select";
 import { calculateSettlement } from "@/lib/core/pricing/rates";
 import {
+  PRODUCT_DESCRIPTION_MAX,
+  PRODUCT_SUMMARY_MAX,
+  productContentProblems,
+} from "@/lib/core/product/content";
+import {
   VENDOR_PRICING_NOTICE,
   productPublishBlockers,
   type IncludedItem,
@@ -56,6 +61,9 @@ export type ProductFormProps = {
     capacityMin: number | null;
     capacityMax: number | null;
     priceIncludesVat: boolean;
+    /** 한 줄 소개·본문(C-2b). 게시 조건이 아니라 완성도다. */
+    summary: string | null;
+    descriptionSource: string | null;
   };
   rate: RateInfo;
   /**
@@ -96,9 +104,21 @@ export function ProductForm({
   const [capacityMax, setCapacityMax] = useState(
     product?.capacityMax === null || product?.capacityMax === undefined ? "" : String(product.capacityMax),
   );
+  const [summary, setSummary] = useState(product?.summary ?? "");
+  const [description, setDescription] = useState(product?.descriptionSource ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  /**
+   * 본문 판정을 **입력 중에** 보여준다(C-2b).
+   * 서버와 **같은 함수**를 쓴다 — 저장 눌렀을 때 처음 알려주면 업체는 무엇이 문제인지
+   * 모른 채 글을 지우게 된다. 막는 것은 서버이고 여기는 미리 말하는 자리다.
+   */
+  const contentProblems = productContentProblems({
+    summary,
+    descriptionSource: description,
+  });
 
   const priceNumber = Number(price);
   const priceValid = price.trim() !== "" && Number.isInteger(priceNumber) && priceNumber > 0;
@@ -131,6 +151,9 @@ export function ProductForm({
       includedItems: items.filter((item) => item.label.trim().length > 0),
       capacityMin: capacityMin.trim() === "" ? null : Number(capacityMin),
       capacityMax: capacityMax.trim() === "" ? null : Number(capacityMax),
+      // 빈 칸은 **지운다**는 뜻으로 보낸다(null). 안 보내면 기존 값이 남는다.
+      summary: summary.trim() === "" ? null : summary.trim(),
+      description: description.trim() === "" ? null : description.trim(),
     };
 
     try {
@@ -254,6 +277,59 @@ export function ProductForm({
               ) : null}
             </div>
           </div>
+        </div>
+
+        {/* ── 소개·본문 (C-2b) ──────────────────────────────────────────
+            **게시 조건이 아니다.** 비워 두고도 게시할 수 있다 — 이미 팔고 있는
+            상품이 이 칸 때문에 내려가면 안 된다. 화면도 그렇게 말한다. */}
+        <div className="space-y-4" data-testid="product-content">
+          <div className="space-y-1.5">
+            <Label htmlFor="summary">한 줄 소개 (선택)</Label>
+            <Input
+              id="summary"
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+              maxLength={PRODUCT_SUMMARY_MAX}
+              placeholder="예: 평일 낮 예식을 위한 단독홀 패키지"
+            />
+            <p className="text-caption text-muted-foreground">
+              목록에서 고객이 먼저 보는 문장입니다. {PRODUCT_SUMMARY_MAX}자까지.
+            </p>
+            {fieldErrors.summary ? (
+              <p className="text-caption text-danger">{fieldErrors.summary}</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="description">상품 소개 (선택)</Label>
+            <textarea
+              id="description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={8}
+              maxLength={PRODUCT_DESCRIPTION_MAX}
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder={"## 구성\n\n- 대관 4시간\n- 기본 데코\n\n**평일 낮**에는 더 여유롭게 쓰실 수 있어요."}
+            />
+            <p className="text-caption text-muted-foreground">
+              제목(`##`)·목록(`-`)·굵게(`**`)를 쓸 수 있어요. 바깥으로 나가는 링크는 글자로만
+              남습니다. {PRODUCT_DESCRIPTION_MAX.toLocaleString()}자까지.
+            </p>
+            {fieldErrors.description ? (
+              <p className="text-caption text-danger">{fieldErrors.description}</p>
+            ) : null}
+          </div>
+
+          {/* 서버와 같은 함수가 낸 판정. 저장 전에 미리 말한다. */}
+          {contentProblems.length > 0 ? (
+            <ul data-testid="content-problems" className="space-y-1">
+              {contentProblems.map((problem) => (
+                <li key={`${problem.field}-${problem.code}`} className="text-caption text-danger">
+                  {problem.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
 
         {/* ── 포함 항목 ─────────────────────────────────────────────────── */}
@@ -410,7 +486,13 @@ export function ProductForm({
       ) : null}
 
       {canEdit ? (
-        <Button type="submit" size="touch" disabled={pending}>
+        /* 본문에 막힐 것이 있으면 누르지 못하게 한다 — 눌러서 422 를 받는 것보다
+           무엇을 고쳐야 하는지 위에 적힌 채로 기다리는 편이 낫다. */
+        <Button
+          type="submit"
+          size="touch"
+          disabled={pending || contentProblems.length > 0}
+        >
           {pending ? "저장 중…" : isEdit ? "상품 저장" : "상품 등록"}
         </Button>
       ) : (
