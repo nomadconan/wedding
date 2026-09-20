@@ -5642,7 +5642,7 @@ if (!vendorStaff || !adminUser) {
     insert into public.tasks (id, couple_id, category, title, status)
       values ('${TA}', '${coupleId}', 'hall', '웨딩홀 계약', 'todo'),
              ('${TB}', '${coupleId}', 'sdm', '스드메 계약', 'todo'),
-             ('${TC}', '${coupleId}', 'etc', '청첩장 주문', 'todo');
+             ('${TC}', '${coupleId}', 'document', '청첩장 주문', 'todo');
     insert into public.couples (id, owner_id, stage)
       values ('${DEP_OTHER_COUPLE}', '${outsider}', 'onboarding');
     insert into public.tasks (id, couple_id, category, title, status)
@@ -5893,7 +5893,7 @@ if (!vendorStaff || !adminUser) {
     insert into public.tasks (id, couple_id, category, title, status)
       values ('${TA}', '${coupleId}', 'hall', '웨딩홀 계약', 'todo'),
              ('${TB}', '${coupleId}', 'sdm', '스드메 계약', 'todo'),
-             ('${TC}', '${coupleId}', 'etc', '청첩장 주문', 'todo');
+             ('${TC}', '${coupleId}', 'document', '청첩장 주문', 'todo');
   `;
 
   check(
@@ -14083,8 +14083,9 @@ if (!vendorStaff || !adminUser) {
     const prepCodes = [...prepBlock.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
 
     check(
+      // C-4a 가 여섯 → 아홉으로 늘렸다(family·attire·gift).
       "**준비 축 어휘를 코드에서 실제로 읽었다**",
-      prepCodes.length === 6,
+      prepCodes.length === 9,
       `code=${prepCodes.length}`,
     );
     check(
@@ -14159,8 +14160,9 @@ if (!vendorStaff || !adminUser) {
   // `db:reset` 은 **마이그레이션을 먼저, seed.sql 을 나중에** 적용한다. 값 넣기를
   // 마이그레이션에 적으면 **빈 표를 훑고 성공**한다 — 조용히 헛도는 문장이 된다.
   check(
-    "**템플릿이 19종 그대로다** (분모가 실재한다)",
-    sql(`select count(*) from public.task_templates;`) === "19",
+    // C-4a 가 여섯을 더했다(상견례·축의금 정산·예복 한복 맞춤·답례품 준비·답례 인사·혼인신고 제출).
+    "**템플릿이 25종이다** (분모가 실재한다)",
+    sql(`select count(*) from public.task_templates;`) === "25",
   );
   check(
     "**좁힌 템플릿이 여덟이다** — 시드가 실제로 값을 넣었다(빈 표를 훑고 통과하지 않았다)",
@@ -15693,6 +15695,267 @@ if (!vendorStaff || !adminUser) {
     "**부분 일치가 사라졌다** — `ilike %값%` 로 돌아가지 않았다",
     !/region_code.*ilike/.test(srcOf("lib/explore/query.ts")),
   );
+}
+
+// =============================================================================
+// C-4a — 준비 항목 확장 · 예식 후 태스크
+// =============================================================================
+/**
+ * 두 가지를 본다.
+ *
+ *  · **어휘가 늘었는데 DB 가 아는가** — 코드는 아홉인데 DB 가 여섯만 알면 새 항목은
+ *    스키마에서 막히고, 반대로 DB 만 알면 화면에서 못 고르는 값이 생긴다.
+ *  · **양수 오프셋이 끝까지 서는가** — 목록·DB·생성·표현 넷 중 하나라도 음수를
+ *    가정하면 예식 뒤 항목이 **만들어지기는 하는데 어디에도 안 뜬다.**
+ *
+ * **C-4a 가 층 1 에서 찾은 것** — 준비 축 본체(`task_templates.category`·
+ * `tasks.category`)에 CHECK 이 **하나도 없었다**(FIX-82). C-2a 가 `is_prep_category()`
+ * 를 만들어 두고 `content_posts` 에만 걸었던 것이다. 0081 이 닫았고 여기서 고정한다.
+ */
+{
+  const templateSrc = srcOf("lib/core/schedule/templates.ts");
+
+  // ── 어휘 — 코드와 DB 가 같은 아홉을 말하는가 ─────────────────────────────
+  const prepCodes = [
+    ...((templateSrc.match(/TASK_CATEGORIES = \[([\s\S]*?)\] as const/) ?? ["", ""])[1]
+      .matchAll(/"([a-z_]+)"/g)),
+  ].map((m) => m[1]);
+
+  check(
+    "**준비 축 어휘를 실제로 읽었다** — 못 읽으면 아래가 0개를 견주고 통과한다",
+    prepCodes.length === 9,
+    `code=${prepCodes.length}`,
+  );
+
+  check(
+    "**C-4a 가 더한 셋이 코드에 있다**",
+    ["family", "attire", "gift"].every((code) => prepCodes.includes(code)),
+  );
+
+  check(
+    "**DB 가 코드보다 더 알지 않는다** — 화면에서 못 고르는 값이 생기지 않게",
+    ["etc", "misc", "after", "nope"].every(
+      (code) => sqlOrNull(`select public.is_prep_category('${code}');`) === "f",
+    ),
+  );
+
+  // ── 층 1 — 준비 축 본체의 CHECK (FIX-82) ─────────────────────────────────
+  //
+  // **"없을 때 말하는가" 와 "있을 때 조용한가" 를 둘 다 본다.**
+  check(
+    "**층1 — `task_templates.category` 가 어휘 밖을 거절한다**(FIX-82)",
+    rejectedWith(/task_templates_category_vocab/, () =>
+      sql(`begin; insert into public.task_templates (code, category, title, offset_days)
+                  values ('T-c4a-probe', 'etc', '검사용', -10); rollback;`),
+    ),
+  );
+  check(
+    "**층1 — 어휘 안 카테고리는 통과한다** (늘 거절하는 CHECK 이 아니다)",
+    sqlOrNull(
+      `begin; insert into public.task_templates (code, category, title, offset_days)
+              values ('T-c4a-probe', 'gift', '검사용', -10);
+       select count(*) from public.task_templates where code = 'T-c4a-probe'; rollback;`,
+    ) === "1",
+  );
+  check(
+    "**층1 — `tasks.category` 도 같은 어휘로 막힌다** (본체 둘 다 걸었다)",
+    rejectedWith(/tasks_category_vocab/, () =>
+      sql(`begin; update public.tasks set category = 'etc'; rollback;`),
+    ),
+  );
+
+  // ── 층 1 — 오프셋 범위 ────────────────────────────────────────────────────
+  //
+  // 원장과 B-1 은 *"오프셋이 전부 음수라 예식 뒤를 못 적는다"* 고 했는데 **막고 있던
+  // 것은 제약이 아니라 목록 자체**였다(제약이 아예 없었다). 이제 범위를 적었으니
+  // **양수가 통과한다는 사실**과 **터무니없는 값이 막힌다는 사실**을 함께 고정한다.
+  check(
+    "**양수 오프셋이 DB 를 통과한다** — 예식 뒤를 적을 수 있다",
+    sqlOrNull(
+      `begin; insert into public.task_templates (code, category, title, offset_days)
+              values ('T-c4a-probe', 'family', '검사용', 30);
+       select offset_days from public.task_templates where code = 'T-c4a-probe'; rollback;`,
+    ) === "30",
+  );
+  check(
+    "**터무니없는 오프셋은 막힌다** — 상한이 없으면 오타가 10년 뒤 기한을 만든다",
+    rejectedWith(/task_templates_offset_range/, () =>
+      sql(`begin; insert into public.task_templates (code, category, title, offset_days)
+                  values ('T-c4a-probe', 'family', '검사용', 4000); rollback;`),
+    ) &&
+      rejectedWith(/task_templates_offset_range/, () =>
+        sql(`begin; insert into public.task_templates (code, category, title, offset_days)
+                    values ('T-c4a-probe', 'family', '검사용', -5000); rollback;`),
+      ),
+  );
+
+  // ── 시드가 실제로 넣었는가 ────────────────────────────────────────────────
+  //
+  // 값은 마이그레이션이 아니라 `seed.sql` 이 넣는다(`db:reset` 이 마이그레이션을
+  // 먼저 적용하므로 마이그레이션의 update 는 **빈 표를 훑고 성공**한다 · C-2a 가 밟았다).
+  check(
+    "**요구받은 넷이 DB 에 있다** (B-1 조사 4-2 — 답례품·상견례·예복·축의금)",
+    sqlOrNull(
+      `select count(*) from public.task_templates
+        where title ~ '답례품' or title ~ '상견례' or title ~ '예복' or title ~ '축의금';`,
+    ) === "4",
+  );
+  check(
+    "**예식 뒤 항목이 DB 에 셋 있다** — 양수 오프셋이 실제로 적혔다",
+    sqlOrNull(`select count(*) from public.task_templates where offset_days > 0;`) === "3",
+  );
+  check(
+    "**기존 19종이 그대로다** — 늘렸지 갈아치우지 않았다",
+    sqlOrNull(`select count(*) from public.task_templates where offset_days < 0;`) === "22" &&
+      sqlOrNull(
+        `select count(*) from public.task_templates
+          where code in ('T-hall-tour','T-sdm-contract','T-doc-marriage','T-honeymoon-doc');`,
+      ) === "4",
+  );
+  check(
+    "**새 카테고리마다 템플릿이 있다** — 고를 수는 있는데 아무것도 없는 칸을 만들지 않았다",
+    sqlOrNull(
+      `select count(distinct category) from public.task_templates
+        where category in ('family', 'attire', 'gift');`,
+    ) === "3",
+  );
+
+  // ── 선행 — 양수가 섞여도 순서가 뒤집히지 않는가 ──────────────────────────
+  check(
+    "**예식 후 항목의 선행이 예식 전에 있다** — 뒤집힌 순서가 없다",
+    sqlOrNull(
+      `select count(*) from public.task_template_dependencies d
+         join public.task_templates t on t.code = d.template_code
+         join public.task_templates p on p.code = d.depends_on_code
+        where t.offset_days > 0 and p.offset_days > t.offset_days;`,
+    ) === "0",
+  );
+  check(
+    "**예식 후 항목에도 선행이 걸려 있다** — 0건이라 위 검사가 통과한 것이 아니다",
+    Number(
+      sqlOrNull(
+        `select count(*) from public.task_template_dependencies d
+           join public.task_templates t on t.code = d.template_code
+          where t.offset_days > 0;`,
+      ),
+    ) > 0,
+  );
+
+  // ── 표현 — 예식 후 구간이 코드에 서 있는가 ───────────────────────────────
+  const graphSrc = srcOf("lib/core/schedule/graph.ts");
+
+  check(
+    "**타임라인에 '예식 후' 구간이 있다** — 없으면 양수 항목이 예식 전 칸에 섞인다",
+    /TIMELINE_AFTER_BUCKETS/.test(graphSrc) && /예식 후/.test(graphSrc),
+  );
+  check(
+    "**예식일을 받아야 그 구간이 선다** — 근거 없이 '예식 후' 라고 적지 않는다",
+    /weddingDate\?: string \| null/.test(graphSrc) &&
+      /weddingDate !== null && task\.dueDate > weddingDate/.test(graphSrc),
+  );
+  check(
+    "**조회가 예식일을 실제로 넘긴다** — 함수만 받고 아무도 안 주면 구간이 영영 안 선다",
+    /weddingDate: input\.weddingDate/.test(srcOf("lib/tasks/loader.ts")) &&
+      /weddingDate,/.test(srcOf("app/(consumer)/checklist/page.tsx")),
+  );
+  check(
+    "**마지막 구간이 '예식 당일·이후' 라고 더 말하지 않는다** — 두 자리가 같은 것을 주장하지 않게",
+    !/예식 당일·이후/.test(graphSrc),
+  );
+
+  // ── 소급하지 않는다 — 대신 무엇이 빠졌는지 보인다 ────────────────────────
+  //
+  // **소급 생성은 하지 않기로 했다**(S7-08 — 사용자가 만들지 않은 항목이 갑자기
+  // 생긴다). 그러면 늘어난 항목이 **기존 커플에게 영영 안 간다**는 문제가 남으므로,
+  // 빠진 것을 **이름으로** 보이고 넣을지는 사용자가 누른다.
+  check(
+    "**조회가 빠진 템플릿을 돌려준다**",
+    /missingTemplates/.test(srcOf("lib/tasks/loader.ts")),
+  );
+  check(
+    "**목록을 코드에 적지 않고 표에서 센다** — 두 벌은 어긋나고 어긋나면 조용하다",
+    /from\("task_templates"\)/.test(srcOf("lib/tasks/loader.ts")),
+  );
+  check(
+    "**화면이 이름을 보인다** — 버튼만 있으면 무엇이 들어올지 모른 채 누른다",
+    /\{missingTemplates\.map\(\(template\) => template\.title\)\.join/.test(
+      srcOf("app/(consumer)/checklist/ChecklistView.tsx"),
+    ),
+  );
+  check(
+    "**넣을 것이 없으면 버튼이 눌리지 않는다** — '0건을 만들었어요' 를 받지 않게",
+    /generated && missingTemplates\.length === 0/.test(
+      srcOf("app/(consumer)/checklist/ChecklistView.tsx"),
+    ),
+  );
+  check(
+    "**자동 생성은 여전히 사용자가 누른다** — 온보딩이 조용히 만들지 않는다",
+    sqlOrNull(
+      `select count(*) from public.tasks t
+         join public.couples c on c.id = t.couple_id
+        where t.source = 'auto' and c.stage = 'onboarding';`,
+    ) === "0",
+  );
+
+  // ── 층 2 · 층 3 ───────────────────────────────────────────────────────────
+  //
+  // **층 2** — 자식 정책이 부모의 정책에 기대는가. `task_dependencies` 는
+  // `owns_task()` 를 타는데 그 함수 **안에 소유자 조건**(`is_couple_member`)이 있다.
+  check(
+    "**층2 — `owns_task()` 안에 소유자 조건이 있다** (부모가 열려도 자식이 안 열린다)",
+    /is_couple_member/.test(
+      sqlOrNull(
+        `select pg_get_functiondef(p.oid) from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public' and p.proname = 'owns_task';`,
+      ) ?? "",
+    ),
+  );
+
+  // **층 3** — 자격의 근거 표를 자격을 얻으려는 사람이 직접 쓰는가.
+  // 준비 항목의 근거는 `task_templates` 이고 **커플은 그 표를 못 쓴다** — 쓸 수 있으면
+  // 자기 체크리스트에 아무 항목이나 만들어 넣을 수 있다(그 자체는 해롭지 않지만,
+  // **모든 커플에게 복제되는 표**라 한 사람이 전체를 바꾸는 모양이 된다).
+  {
+    // **커플에 실제로 속한 사용자여야 한다.** `couple-a` 는 연동 전 계정이라
+    // `is_couple_member` 가 거짓이고, 그 계정으로는 아래 "만들 수 있다" 가 늘 실패한다.
+    const coupleUser = idOf("couple-linked-a@local.test");
+    const coupleOf = coupleUser
+      ? sqlOrNull(`select couple_id from public.couple_members where user_id = '${coupleUser}' limit 1;`)
+      : null;
+
+    check(
+      "**커플 픽스처가 있고 실제로 커플에 속한다** — 없으면 아래 층3 검사가 헛돈다",
+      Boolean(coupleUser) && Boolean(coupleOf),
+      `user=${coupleUser ? "있음" : "없음"} couple=${coupleOf ?? "없음"}`,
+    );
+
+    if (coupleUser && coupleOf) {
+      check(
+        // **0행이 아니라 거절이다.** `task_templates` 에 쓰기 정책이 아예 없어 RLS 가
+        // 삽입 자체를 끊는다 — 0행으로 비교하면 스크립트가 폭사해 남은 검사가 안 돈다.
+        "**층3 — 커플이 템플릿 표를 못 쓴다** — 한 사람이 모두의 목록을 바꾸지 못한다",
+        rejectedWith(/row-level security|permission denied/, () =>
+          asUser(
+            coupleUser,
+            `insert into public.task_templates (code, category, title, offset_days)
+              values ('T-c4a-evil', 'gift', '남의 목록에 끼우기', -10);`,
+          ),
+        ),
+      );
+      check(
+        "**층3 — 그래도 자기 태스크는 만든다** — 표를 통째로 잠근 것이 아니다",
+        asUser(
+          coupleUser,
+          `with u as (insert into public.tasks (couple_id, category, title, source)
+                      select id, 'gift', 'C-4a 확인', 'manual' from public.couples
+                       where public.is_couple_member(id) limit 1
+                      returning 1)
+           select count(*) from u;`,
+        ) === "1",
+      );
+    }
+  }
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

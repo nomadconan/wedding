@@ -205,7 +205,31 @@ export const TIMELINE_BUCKETS: readonly { code: string; label: string; fromDays:
   { code: "d90", label: "3개월 전", fromDays: 31 },
   { code: "d30", label: "1개월 전", fromDays: 8 },
   { code: "d7", label: "1주 전", fromDays: 1 },
-  { code: "d0", label: "예식 당일·이후", fromDays: Number.NEGATIVE_INFINITY },
+  { code: "d0", label: "오늘·지난 일", fromDays: Number.NEGATIVE_INFINITY },
+];
+
+/**
+ * 예식 **뒤**에 오는 일 (C-4a).
+ *
+ * ── 왜 별도의 축인가 ────────────────────────────────────────────────────────
+ * 위 구간은 **오늘로부터 남은 날**로 묶는다. 그 방식으로는 *예식 전*과 *예식 후*를
+ * 가를 수 없다 — 예식이 100일 남은 커플에게 축의금 정산(D+7)은 "107일 뒤" 이고,
+ * 그러면 **"3개월 전" 칸에 들어가 예식 전 일로 보인다.** 라벨이 거짓말을 한다.
+ *
+ * 그래서 예식 뒤 항목만 **예식일 기준**으로 따로 묶는다. 두 기준을 한 축에 섞는 대신
+ * **경계를 예식일 하나로** 두었다: 기한이 예식일보다 뒤면 이쪽, 아니면 위쪽이다.
+ *
+ * **예식일을 모르면 이 축은 서지 않는다.** 그때는 위 구간이 전부를 받는다 —
+ * 기준이 없는데 "예식 후" 라고 적을 수는 없다(측정하지 않은 것을 적지 않는다).
+ */
+export const TIMELINE_AFTER_BUCKETS: readonly {
+  code: string;
+  label: string;
+  untilDays: number;
+}[] = [
+  { code: "a7", label: "예식 후 1주", untilDays: 7 },
+  { code: "a30", label: "예식 후 1개월", untilDays: 30 },
+  { code: "a", label: "예식 후", untilDays: Number.POSITIVE_INFINITY },
 ];
 
 export const TIMELINE_UNDATED = { code: "undated", label: "기한 미정" };
@@ -224,6 +248,8 @@ export function buildTimeline(input: {
   tasks: readonly AnnotatedTask[];
   today: string;
   order: readonly string[];
+  /** 예식일. **없으면 '예식 후' 구간을 만들지 않는다**(C-4a). */
+  weddingDate?: string | null;
 }): TimelineBucket[] {
   const rank = new Map(input.order.map((id, index) => [id, index]));
   const sorted = [...input.tasks].sort(
@@ -238,6 +264,14 @@ export function buildTimeline(input: {
     tasks: [],
   }));
 
+  const after: TimelineBucket[] = TIMELINE_AFTER_BUCKETS.map((bucket) => ({
+    code: bucket.code,
+    label: bucket.label,
+    fromDays: null,
+    toDays: null,
+    tasks: [],
+  }));
+
   const undated: TimelineBucket = {
     ...TIMELINE_UNDATED,
     fromDays: null,
@@ -245,9 +279,20 @@ export function buildTimeline(input: {
     tasks: [],
   };
 
+  const weddingDate = input.weddingDate ?? null;
+
   for (const task of sorted) {
     if (task.dueDate === null) {
       undated.tasks.push(task);
+      continue;
+    }
+
+    // **예식 뒤인가 먼저 묻는다**(C-4a). 예식일을 모르면 묻지 않는다.
+    if (weddingDate !== null && task.dueDate > weddingDate) {
+      const sinceWedding = daysUntil(weddingDate, task.dueDate);
+      const slot = TIMELINE_AFTER_BUCKETS.findIndex((bucket) => sinceWedding <= bucket.untilDays);
+
+      after[slot === -1 ? after.length - 1 : slot].tasks.push(task);
       continue;
     }
 
@@ -259,7 +304,8 @@ export function buildTimeline(input: {
 
   // **빈 구간은 내보내지 않는다.** 12개월 전이 비어 있는데 자리를 그리면 화면이
   // "여기서 뭔가 놓쳤다" 고 말하는 셈이 된다.
-  return [...buckets, undated].filter((bucket) => bucket.tasks.length > 0);
+  // 예식 후 구간은 **맨 뒤**다 — 축이 시간순이라 그 자리가 곧 "예식 다음" 이다.
+  return [...buckets, ...after, undated].filter((bucket) => bucket.tasks.length > 0);
 }
 
 // =============================================================================

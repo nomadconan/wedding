@@ -16,6 +16,16 @@
  * 프레임워크를 모르는 순수 모듈이다.
  */
 
+/**
+ * 준비 축 어휘.
+ *
+ * **여섯에서 아홉이 됐다**(C-4a). 넷을 더해 달라는 요구(답례품 · 상견례 · 예복·한복 ·
+ * 축의금 정산)를 받았는데, **기존 여섯에 우겨 넣으면 매핑이 거짓말을 한다** —
+ * 예복·한복을 `sdm` 에 넣으면 그 칸은 `sold`(studio·dress·makeup·video)라서 화면이
+ * "여기서 살 수 있어요" 라고 말하지만 **한복을 파는 곳은 우리에게 없다**. 답례품·
+ * 축의금은 아예 들어갈 칸이 없다. D-206 이 두 축을 합치지 않기로 한 이유가 그대로
+ * 여기에도 적용된다 — **칸이 없으면 만들지, 있는 칸의 뜻을 늘리지 않는다.**
+ */
 export const TASK_CATEGORIES = [
   "hall",
   "sdm",
@@ -23,11 +33,17 @@ export const TASK_CATEGORIES = [
   "honsu",
   "document",
   "honeymoon",
+  /** 양가가 함께 정하고 정리하는 일 — 상견례 · 축의금 정산(C-4a). */
+  "family",
+  /** 입는 것 중 신부 드레스가 아닌 것 — 신랑 예복 · 양가 한복(C-4a). */
+  "attire",
+  /** 하객에게 돌려주는 것 — 답례품 · 답례 인사(C-4a). */
+  "gift",
 ] as const;
 
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 
-/** §2.1 이 적은 여섯 가지 그대로다(홀·스드메·예단·혼수·서류·허니문). */
+/** §2.1 의 여섯에 C-4a 가 셋을 더했다. */
 export const TASK_CATEGORY_LABEL: Record<TaskCategory, string> = {
   hall: "웨딩홀",
   sdm: "스드메",
@@ -35,6 +51,9 @@ export const TASK_CATEGORY_LABEL: Record<TaskCategory, string> = {
   honsu: "혼수",
   document: "서류",
   honeymoon: "허니문",
+  family: "양가",
+  attire: "예복·한복",
+  gift: "답례",
 };
 
 export type ScheduleTemplate = {
@@ -42,7 +61,13 @@ export type ScheduleTemplate = {
   code: string;
   category: TaskCategory;
   title: string;
-  /** 예식일 기준 오프셋(D-360 → -360). */
+  /**
+   * 예식일 기준 오프셋(D-360 → -360).
+   *
+   * **양수는 예식 뒤다**(C-4a). 축의금 정산·혼인신고 제출·답례처럼 예식이 끝나야
+   * 시작되는 일이 있는데, 전에는 목록이 전부 음수라 **적을 자리가 없었다**.
+   * DB 에도 부호 제약이 없었으므로(실측) 막고 있던 것은 제약이 아니라 **목록 자체**였다.
+   */
   offsetDays: number;
   /** 이 템플릿보다 **먼저** 끝나야 하는 코드. */
   dependsOn: readonly string[];
@@ -54,7 +79,7 @@ export type ScheduleTemplate = {
  * 목록이 바뀌면 올린다 — `db:rls` 가 코드↔DB 판본을 대조하므로 시드를 다시 넣지 않으면
  * 검사가 어긋남을 알린다(S7-01 과 같은 방식).
  */
-export const SCHEDULE_TEMPLATES_VERSION = "2026-08-16-a";
+export const SCHEDULE_TEMPLATES_VERSION = "2026-09-21-a";
 
 /**
  * 역산 목록.
@@ -190,6 +215,14 @@ export const SCHEDULE_TEMPLATES: readonly ScheduleTemplate[] = [
     offsetDays: -14,
     dependsOn: [],
   },
+  {
+    code: "T-doc-marriage-file",
+    category: "document",
+    title: "혼인신고 제출",
+    // **예식 뒤다.** 서류 '확인'(D-14)만 있고 실제 '제출' 이 없었다(B-1 조사 4-2).
+    offsetDays: 30,
+    dependsOn: ["T-doc-marriage"],
+  },
 
   // ── 허니문 ─────────────────────────────────────────────────────────────────
   {
@@ -212,6 +245,52 @@ export const SCHEDULE_TEMPLATES: readonly ScheduleTemplate[] = [
     title: "여권·비자 확인",
     offsetDays: -60,
     dependsOn: ["T-honeymoon-plan"],
+  },
+// ── 양가 — 함께 정하고 함께 정리한다 ──────────────────────────────────────
+  {
+    code: "T-family-meeting",
+    category: "family",
+    title: "상견례",
+    offsetDays: -320,
+    // **홀 투어의 선행으로 걸지 않는다.** 양가가 만나기 전에 홀을 보러 다니는 커플이
+    // 있고 그것이 틀린 것이 아니다(§3.2 — 없으면 곤란한 것만 건다).
+    dependsOn: [],
+  },
+  {
+    code: "T-family-settlement",
+    category: "family",
+    title: "축의금 정산",
+    // **예식 뒤다.** 받은 뒤에야 셀 수 있다.
+    offsetDays: 7,
+    dependsOn: [],
+  },
+
+  // ── 예복·한복 — 신부 드레스가 아닌 입을 것 ────────────────────────────────
+  {
+    code: "T-attire-fitting",
+    category: "attire",
+    title: "예복·한복 맞춤",
+    offsetDays: -90,
+    // 날짜가 정해져야 맞춤·대여 일정을 잡는다(드레스 가봉과 같은 이유).
+    dependsOn: ["T-hall-contract"],
+  },
+
+  // ── 답례 — 하객에게 돌려주는 것 ───────────────────────────────────────────
+  {
+    code: "T-gift-prepare",
+    category: "gift",
+    title: "답례품 준비",
+    offsetDays: -30,
+    // 수량이 하객 수에서 나온다.
+    dependsOn: ["T-hall-guest-count"],
+  },
+  {
+    code: "T-gift-thanks",
+    category: "gift",
+    title: "답례 인사",
+    // **예식 뒤다.** 와 준 사람이 정해져야 한다.
+    offsetDays: 14,
+    dependsOn: ["T-gift-prepare"],
   },
 ];
 

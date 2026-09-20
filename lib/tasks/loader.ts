@@ -39,6 +39,16 @@ export type ChecklistView = {
   next: AnnotatedTask[];
   /** 이미 만들어진 자동 생성 템플릿 코드. 다시 만들 때 건너뛴다. */
   generatedCodes: string[];
+  /**
+   * 아직 이 커플에게 없는 템플릿 (C-4a).
+   *
+   * **소급 생성을 하지 않기 때문에 필요한 값이다.** 준비 항목이 늘어도 이미
+   * 만든 사람의 목록에 **말없이 끼워 넣지 않는다**(S7-08 판단 — 사용자가 만들지
+   * 않은 항목이 갑자기 생긴다). 대신 **무엇이 빠졌는지 이름으로 보이고** 넣을지는
+   * 사용자가 누른다. 이름을 함께 주는 이유는, 버튼만 있으면 무엇이 들어올지 모른 채
+   * 누르게 되기 때문이다 — 지운 항목이 돌아오는 경우도 여기서 미리 보인다.
+   */
+  missingTemplates: { code: string; title: string }[];
 };
 
 type TaskRow = {
@@ -69,7 +79,7 @@ function toNode(row: TaskRow): TaskNode {
 
 export async function loadChecklist(
   client: SupabaseClient<Database>,
-  input: { coupleId: string; today: string },
+  input: { coupleId: string; today: string; weddingDate?: string | null },
 ): Promise<ChecklistView> {
   const { data: taskRows } = await client
     .from("tasks")
@@ -95,6 +105,14 @@ export async function loadChecklist(
     (row) => ({ taskId: row.task_id, dependsOn: row.depends_on_task_id }),
   );
 
+  // **어떤 템플릿이 빠졌는지**는 표를 보고 센다(C-4a). 코드 목록을 여기서 다시 적으면
+  // 시드와 두 벌이 되고, 두 벌은 어긋나며 어긋나면 조용하다.
+  const { data: templateRows } = await client.from("task_templates").select("code, title");
+
+  const hasCode = new Set(
+    rows.map((row) => row.template_code).filter((code): code is string => code !== null),
+  );
+
   const tasks = annotate(nodes, edges);
   const sorted = topoSort(nodes, edges);
   const order = sorted.ok ? sorted.order : nodes.map((node) => node.id);
@@ -106,12 +124,20 @@ export async function loadChecklist(
     // **순환이 남아 있으면 숨기지 않는다.** DB 가 막지만 조회가 잘려 들어올 수 있고,
     // 그때 화면이 조용히 임의 순서를 그리면 사용자는 그것을 순서로 믿는다.
     cycle: sorted.ok ? [] : sorted.remaining,
-    timeline: buildTimeline({ tasks, today: input.today, order }),
+    timeline: buildTimeline({
+      tasks,
+      today: input.today,
+      order,
+      weddingDate: input.weddingDate ?? null,
+    }),
     progress: categoryProgress(nodes),
     next: nextTasks(tasks),
     generatedCodes: rows
       .map((row) => row.template_code)
       .filter((code): code is string => code !== null),
+    missingTemplates: ((templateRows ?? []) as { code: string; title: string }[])
+      .filter((template) => !hasCode.has(template.code))
+      .sort((a, b) => a.code.localeCompare(b.code)),
   };
 }
 

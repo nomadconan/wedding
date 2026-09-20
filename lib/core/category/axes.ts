@@ -10,10 +10,10 @@
  * | 축 | 어휘 | 세는 것 |
  * |---|---|---|
  * | **파는 축** | `VENDOR_CATEGORIES` (6) | 마켓플레이스가 **파는 것** — `vendors`·`products`·탐색 필터 |
- * | **준비 축** | `TASK_CATEGORIES` (6) | 예비부부가 **준비하는 것** — `tasks`·`task_templates`·체크리스트 |
+ * | **준비 축** | `TASK_CATEGORIES` (9) | 예비부부가 **준비하는 것** — `tasks`·`task_templates`·체크리스트 |
  *
  * **겹치는 값은 `hall` 하나뿐이다.** 그 이유가 둘이 다른 것을 세기 때문이다 —
- * 체크리스트가 말하는 **예단·혼수·서류·허니문을 마켓플레이스는 팔 수 없고**, 반대로
+ * 체크리스트가 말하는 **예단·혼수·서류·허니문·양가·예복·답례를 마켓플레이스는 팔 수 없고**, 반대로
  * `studio`·`dress`·`makeup`·`video` 넷은 준비 축에서 **`sdm` 한 칸**이다.
  *
  * **하나로 합치지 않는다**(D-206). 합치면 둘 중 하나가 거짓말을 한다 — *팔 수 없는
@@ -82,7 +82,7 @@ export type PrepResolution = PrepMapping | { readonly kind: "unmapped"; readonly
 /**
  * 준비 축 → 파는 축.
  *
- * **`TASK_CATEGORIES` 의 여섯 값을 하나도 빠짐없이 갖는다.** 타입이 그것을 요구하고
+ * **`TASK_CATEGORIES` 를 하나도 빠짐없이 갖는다.** 타입이 그것을 요구하고
  * (`Record<TaskCategory, …>`) 테스트가 한 번 더 센다 — 타입만으로는 **새 준비 카테고리가
  * 생겼을 때** 컴파일이 막아 주지만, 컴파일을 고치려고 아무 값이나 넣는 것까지는 못 막는다.
  */
@@ -114,6 +114,29 @@ export const PREP_TO_VENDOR: Readonly<Record<TaskCategory, PrepMapping>> = {
     kind: "not_sold",
     why: "not_a_purchase",
     note: "혼인신고·여권 같은 서류는 사고파는 일이 아니라 직접 하셔야 해요.",
+  },
+
+  // ── C-4a 가 더한 셋 ───────────────────────────────────────────────────────
+  //
+  // **셋을 서로 다른 칸에 둔 것이 판단이다.** 하나로 묶어 `not_yet_listed` 로
+  // 적으면 상견례·축의금처럼 **애초에 살 것이 아닌 일**까지 "언젠가 열리겠지" 로
+  // 읽힌다 — `document` 를 위 셋과 갈라 둔 것과 같은 이유다.
+  family: {
+    kind: "not_sold",
+    why: "not_a_purchase",
+    note: "상견례·축의금 정산은 양가가 직접 정하는 일이라 사고파는 것이 아니에요.",
+  },
+  attire: {
+    kind: "not_sold",
+    why: "not_yet_listed",
+    // **`dress` 로 보내지 않는다.** 그쪽은 신부 웨딩드레스이고, 신랑 예복·양가
+    // 한복을 그리로 보내면 **틀린 목적지**를 자신 있게 알려 주는 셈이다.
+    note: "신랑 예복·한복은 아직 등록 카테고리에 없어요.",
+  },
+  gift: {
+    kind: "not_sold",
+    why: "not_yet_listed",
+    note: "답례품은 아직 등록 카테고리에 없어요.",
   },
 };
 
