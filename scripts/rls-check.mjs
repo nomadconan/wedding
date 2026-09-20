@@ -14554,5 +14554,266 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 상품 상세 (C-2c · F-C-38) + 사업자번호 해시 공개 차단 (FIX-79) + FIX-78
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const DRAFT = "00000000-0000-0000-0000-0000000c2c01";
+  const PUBLISHED = "00000000-0000-0000-0000-0000000c2c0f";
+  const PENDING_VENDOR = "00000000-0000-0000-0000-0000000c2c90";
+  const PENDING_PRODUCT = "00000000-0000-0000-0000-0000000c2c91";
+
+  /**
+   * active 업체 하나에 **초안 1 · 게시 1**, 그리고 **심사 중 업체**에 게시 상품 1.
+   *
+   * 심사 중 업체를 따로 세우는 이유: C-2b 는 *초안 상품*만 눌러 봤다. 상품이
+   * `published` 인데 **업체가 아직 심사 중**인 경우는 다른 경로이고, 상품 상세를
+   * 열면 그 경로로 들어오는 사람이 생긴다.
+   */
+  const fixture = `
+    insert into public.vendors (id, name, category, region_code, status)
+    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', '서울 강남', 'pending');
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at,
+                                 summary, description_json)
+    select '${DRAFT}', v.id, 'hall', 'C2C 초안', 1000000, 'draft',
+           '[{"label":"대관","note":null}]'::jsonb, now(), null,
+           '초안 소개', '{"v":1,"source":"초안 본문"}'::jsonb
+      from public.vendors v where v.status = 'active' order by v.id limit 1;
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at,
+                                 summary, description_json)
+    select '${PUBLISHED}', v.id, 'hall', 'C2C 게시', 2000000, 'published',
+           '[{"label":"대관","note":null}]'::jsonb, now(), now(),
+           '게시 소개', '{"v":1,"source":"게시 본문"}'::jsonb
+      from public.vendors v where v.status = 'active' order by v.id limit 1;
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at,
+                                 summary, description_json)
+    values ('${PENDING_PRODUCT}', '${PENDING_VENDOR}', 'hall', '심사중 업체의 게시 상품', 3000000,
+            'published', '[{"label":"대관","note":null}]'::jsonb, now(), now(),
+            '심사중 소개', '{"v":1,"source":"심사중 본문"}'::jsonb);
+
+    insert into public.product_options (product_id, name, price, is_mandatory) values
+      ('${DRAFT}', '초안 추가금', 111111, true),
+      ('${PUBLISHED}', '게시 추가금', 222222, true),
+      ('${PENDING_PRODUCT}', '심사중 추가금', 333333, true);
+
+    insert into public.vendor_media (vendor_id, product_id, type, storage_path, sort_order)
+    select p.vendor_id, p.id, 'photo', 'probe/' || p.id || '.jpg', 0
+      from public.products p
+     where p.id in ('${DRAFT}', '${PUBLISHED}', '${PENDING_PRODUCT}');
+
+    insert into public.price_rules (vendor_id, product_id, rule_type, condition_json,
+                                    adjust_type, adjust_value, floor_price, cap_price)
+    select p.vendor_id, p.id, 'season', '{"months":[5]}'::jsonb, 'percent_bp', 1000, 1500000, 9000000
+      from public.products p where p.id = '${PUBLISHED}';
+  `;
+
+  const anonCount = (body) => asAnon(body, fixture);
+
+  // ── 층 2 — 비로그인이 상품 상세 경로로 무엇을 가져가는가 ────────────────
+  //
+  // **화면에 안 그리는 것만으로는 부족하다.** 이 화면은 익명 클라이언트로 읽으므로
+  // 여기서 새면 응답 본문에 그대로 실린다. 표를 하나씩 눌러 본다.
+  check(
+    "**층 2 — 비로그인은 초안 상품을 못 본다**",
+    anonCount(`select count(*) from public.products where id = '${DRAFT}';`) === "0",
+  );
+  check(
+    "**층 2 — 초안 상품의 추가금이 새지 않는다** (C-2b 가 남긴 자리를 상세 경로로 다시 눌렀다)",
+    anonCount(`select count(*) from public.product_options where price = 111111;`) === "0",
+  );
+  check(
+    "**층 2 — 초안 상품의 사진이 새지 않는다**",
+    anonCount(`select count(*) from public.vendor_media where storage_path = 'probe/${DRAFT}.jpg';`) === "0",
+  );
+  // **심사 중 업체 — C-2b 가 안 본 경로다.**
+  check(
+    "**층 2 — 심사 중 업체의 '게시' 상품이 안 보인다** (상품은 published 인데 업체가 pending 이다)",
+    anonCount(`select count(*) from public.products where id = '${PENDING_PRODUCT}';`) === "0",
+  );
+  check(
+    "**층 2 — 심사 중 업체 상품의 추가금도 안 보인다**",
+    anonCount(`select count(*) from public.product_options where price = 333333;`) === "0",
+  );
+  check(
+    "**층 2 — 심사 중 업체 상품의 사진도 안 보인다**",
+    anonCount(`select count(*) from public.vendor_media where storage_path = 'probe/${PENDING_PRODUCT}.jpg';`) === "0",
+  );
+  check(
+    "**층 2 — 심사 중 업체 자체가 안 보인다**",
+    anonCount(`select count(*) from public.vendors where id = '${PENDING_VENDOR}';`) === "0",
+  );
+  // **늘 가리는 정책이 아니다** — 게시분은 실제로 보여야 화면이 성립한다.
+  check(
+    "**게시 상품·추가금·사진은 비로그인에게 보인다** (분모가 실재한다)",
+    anonCount(`select count(*) from public.products where id = '${PUBLISHED}';`) === "1" &&
+      anonCount(`select count(*) from public.product_options where price = 222222;`) === "1" &&
+      anonCount(`select count(*) from public.vendor_media where storage_path = 'probe/${PUBLISHED}.jpg';`) === "1",
+  );
+  // **비공개 프라이싱이 상세 경로로 새지 않는다.**
+  check(
+    "**층 2 — `price_rules` 는 비로그인에게 한 행도 안 보인다** (floor·cap 이 안 샌다)",
+    anonCount(`select count(*) from public.price_rules;`) === "0",
+  );
+  check(
+    "**`price_rules` 에는 공개 정책 자체가 없다** — 정책이 늘어나면 이 줄이 먼저 깨진다",
+    sql(`select count(*) from pg_policy p
+          where p.polrelid = 'public.price_rules'::regclass and p.polcmd = 'r'
+            and pg_get_expr(p.polqual, p.polrelid) not like '%is_vendor_member%';`) === "0",
+  );
+  // `product_options_select_public` 은 **여전히 부모 정책에 기댄다.** 지금 새지 않는
+  // 이유가 그 기댐이므로, 그 사실을 적어 둔다 — `products` 가 넓어지는 날 위 검사가 먼저 깨진다.
+  check(
+    "**`product_options_select_public` 에는 아직 소유자·상태 조건이 없다** (부모에 기댄다 — 알고 있는 상태다)",
+    !/status|published/.test(
+      sql(`select pg_get_expr(polqual, polrelid) from pg_policy
+            where polrelid = 'public.product_options'::regclass
+              and polname = 'product_options_select_public';`),
+    ),
+  );
+
+  // ── 층 1 — FIX-79 사업자번호 해시 ───────────────────────────────────────
+  //
+  // `vendors` 는 공개 카탈로그라 anon SELECT 가 열려 있는데 그것이 **표 단위**여서
+  // `biz_no_enc` 까지 나갔다. 10자리 숫자의 **소금 없는 SHA-256** 은 전수 대입으로
+  // 되돌아간다 — §7.2 가 지키려던 것이 공개 읽기 한 줄로 무효였다.
+  check(
+    "**FIX-79 — 비로그인이 `vendors.biz_no_enc` 를 못 읽는다**",
+    rejectedWith(/permission denied/, () => asAnon(`select biz_no_enc from public.vendors limit 1;`)),
+  );
+  check(
+    "**FIX-79 — 로그인 사용자도 못 읽는다** (공개 카탈로그의 칸이 아니다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `select biz_no_enc from public.vendors limit 1;`),
+    ),
+  );
+  check(
+    "**FIX-79 — 공개 칸은 그대로 읽는다** (표를 통째로 잠그지 않았다)",
+    Number(asAnon(`select count(*) from public.vendors where status = 'active';`)) > 0 &&
+      asAnon(`select count(*) from (select id, name, category, region_code, intro,
+                                           style_tags, facilities, badge_flags
+                                      from public.vendors where status = 'active') t;`) !== null,
+  );
+  check(
+    "**FIX-79 — 칸만 걷지 않고 표에서 걷었다** (§5.5 층 1 — 칸만 걷으면 무효다)",
+    sql(`select count(*) from information_schema.role_table_grants
+          where table_schema = 'public' and table_name = 'vendors'
+            and grantee in ('anon', 'authenticated') and privilege_type = 'SELECT';`) === "0",
+  );
+  check(
+    "**FIX-79 — 서버(서비스롤)는 여전히 읽는다** — 입점 심사가 이 칸을 쓴다",
+    sql(`select count(*) from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'vendors'
+            and column_name = 'biz_no_enc' and grantee = 'service_role'
+            and privilege_type = 'SELECT';`) === "1",
+  );
+
+  // ── 층 3 — 상세가 자격을 만들지 않는다 ──────────────────────────────────
+  //
+  // 이 화면은 **읽기 전용**이다. 자격의 근거가 되는 표(`vendor_members` ·
+  // `products.status`)를 상세 경로가 쓰지 않는지 본다.
+  check(
+    "**층 3 — 상품 상세 로더가 쓰기를 하지 않는다** (조회 전용이다)",
+    !/\.(insert|update|upsert|delete)\(/.test(srcOf("lib/products/detail-query.ts")),
+  );
+  check(
+    "**층 3 — 비로그인이 상품 상태를 못 바꾼다** (자격의 근거를 스스로 못 쓴다)",
+    rejectedWith(/permission denied|row-level security|0 rows/, () =>
+      asAnon(`update public.products set status = 'published' where id = '${DRAFT}';`, fixture),
+    ),
+  );
+
+  // ── 화면·API 가 같은 것을 본다 ──────────────────────────────────────────
+  check(
+    "**상세 화면과 API 가 같은 로더를 쓴다** — 두 곳이 다른 값을 말하지 않는다",
+    ["app/(consumer)/explore/[vendorId]/[productId]/page.tsx", "app/api/products/[id]/route.ts"].every(
+      (file) => /loadProductDetail/.test(srcOf(file)),
+    ),
+  );
+  check(
+    "**로더가 익명 클라이언트로 읽는다** — 서비스롤로 읽으면 게시 판정이 코드 몫이 된다",
+    /createPublicClient/.test(srcOf("lib/products/detail-query.ts")) &&
+      !/createAdminClient/.test(srcOf("lib/products/detail-query.ts")),
+  );
+  check(
+    "**추가금 요약이 업체 상세와 같은 함수다** (`summarizeAddOns`)",
+    /summarizeAddOns/.test(srcOf("lib/products/detail-query.ts")) &&
+      /summarizeAddOns/.test(srcOf("app/(consumer)/explore/[vendorId]/VendorProducts.tsx")),
+  );
+  check(
+    "**경로의 업체와 상품의 업체가 다르면 막는다** — 같은 상품이 두 주소를 갖지 않는다",
+    /vendor_id !== input\.vendorId/.test(srcOf("lib/products/detail-query.ts")),
+  );
+  check(
+    "**본문을 HTML 로 만들지 않는다** — 블록을 그린다(D-97)",
+    /descriptionBlocks/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")) &&
+      !/dangerouslySetInnerHTML/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")),
+  );
+  check(
+    "**참가격 기준이 없으면 0 이 아니라 '기준 없음' 이다**",
+    /NO_INDEX_BASELINE_NOTE/.test(srcOf("lib/products/detail-query.ts")) &&
+      /no-baseline/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")),
+  );
+  check(
+    "**상세로 들어가는 자리가 있다** — 만든 화면이 도달 불가로 남지 않는다",
+    /explore\/\$\{vendorId\}\/\$\{product\.id\}/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/VendorProducts.tsx"),
+    ),
+  );
+  check(
+    "**아직 안 만든 자리를 화면이 말한다** — 빈 칸으로 두지 않는다",
+    /PENDING_SECTION_NOTE/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")),
+  );
+
+  // ── FIX-78 — 지운 사진의 파일도 지운다 ──────────────────────────────────
+  //
+  // **공개 버킷이라 행만 지우면 주소를 아는 사람에게는 계속 열린다.**
+  // 실제로 열리는지는 `vendor:walk` 이 주소를 눌러 본다(여기서는 절차가 서 있는지만).
+  check(
+    "**FIX-78 — 업체 프로필 미디어 삭제가 Storage 객체도 지운다**",
+    /storage[\s\S]{0,80}\.remove\(/.test(srcOf("app/api/vendor/profile/route.ts")),
+  );
+  check(
+    "**FIX-78 — 지우기 전에 경로를 먼저 읽는다** (행을 지운 뒤에는 무엇을 지울지 알 수 없다)",
+    /storage_path[\s\S]{0,400}\.delete\(\)/.test(srcOf("app/api/vendor/profile/route.ts")),
+  );
+  check(
+    "**FIX-78 — 상품 사진 삭제도 같은 절차다**(C-2b) — 두 경로가 갈리지 않는다",
+    /storage[\s\S]{0,80}\.remove\(/.test(srcOf("app/api/vendor/products/[id]/media/route.ts")),
+  );
+  check(
+    "**FIX-78 — 남의 경로를 넘겨받아 지우지 않는다** (경로가 제 것인지 본다)",
+    /startsWith\(`\$\{vendorId\}\//.test(srcOf("app/api/vendor/profile/route.ts")) &&
+      /isPathOfProduct/.test(srcOf("app/api/vendor/products/[id]/media/route.ts")),
+  );
+  // **고아가 없는 것도 사실로 남긴다.** 다만 **분모가 0 이면 공짜 통과**이므로
+  // 그 사실을 값으로 함께 적는다 — 로컬 시드는 미디어를 만들지 않는다.
+  {
+    const objects = sql(`select count(*) from storage.objects where bucket_id = 'vendor-media';`);
+    const orphans = sql(`select count(*) from storage.objects o
+                          where o.bucket_id = 'vendor-media'
+                            and not exists (select 1 from public.vendor_media m
+                                             where m.storage_path = o.name);`);
+    check(
+      "**`vendor-media` 에 고아 객체가 없다** (객체 수를 함께 적는다 — 0 이면 공짜 통과다)",
+      orphans === "0",
+      `objects=${objects} orphans=${orphans}`,
+    );
+  }
+
+  // ── 층 1 — C-2c 는 표도 칸도 더하지 않았다 ──────────────────────────────
+  check(
+    "**C-2c 가 새 표를 만들지 않았다** — 0077 은 권한만 바꿨다",
+    !/create table/i.test(srcOf("supabase/migrations/20260808007700_vendor_biz_no_not_public.sql")) &&
+      !/add column/i.test(srcOf("supabase/migrations/20260808007700_vendor_biz_no_not_public.sql")),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

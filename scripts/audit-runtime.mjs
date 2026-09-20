@@ -116,6 +116,13 @@ union all select 'shareToken='||coalesce((select token from share_links order by
 union all select 'rsvpToken='||coalesce((select invite_token from guests order by created_at limit 1),'')
 union all select 'inviteToken='||coalesce((select token from vendor_invites order by created_at limit 1),'')
 union all select 'product='||coalesce((select id::text from products order by created_at limit 1),'')
+-- 상품 상세(C-2c)는 **경로의 업체와 상품의 업체가 같아야** 열린다. 아무 상품이나 넣으면
+-- 404 가 나고 그것이 '못 찾음 경로가 깨끗이 끝난다' 로 읽혀 화면이 점검되지 않는다.
+-- 그래서 vendorPublic 그 업체의 **게시 상품**을 따로 뽑는다.
+union all select 'productPublic='||coalesce((select p.id::text from products p
+   where p.status = 'published'
+     and p.vendor_id = (select id from vendors where status = 'active' order by created_at limit 1)
+   order by p.created_at limit 1),'')
 union all select 'slug='||coalesce((select slug from content_posts order by created_at limit 1),'')
 union all select 'contract='||coalesce((select id::text from contracts order by created_at limit 1),'')
 union all select 'priceRegion='||coalesce((select region_code from price_index order by created_at limit 1),'')
@@ -174,6 +181,8 @@ function segmentValue(name, routeHint) {
     key: FIX.flagKey ?? "missing.flag",
     userId: FIX.memberUser ?? MISSING_UUID,
     optionId: FIX.option ?? MISSING_UUID,
+    // 상품 상세(C-2c). **`vendorId` 와 짝이 맞는 게시 상품**이라야 화면이 실제로 열린다.
+    productId: FIX.productPublic ?? MISSING_UUID,
   };
   if (byName[name] !== undefined) return byName[name];
 
