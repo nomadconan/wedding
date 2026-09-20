@@ -103,13 +103,21 @@ describe("경로의 업체와 상품의 업체", () => {
 });
 
 describe("아직 열지 않은 자리", () => {
-  it("하나 남았다 — 빈 목록이 아니다", () => {
-    // 채운 자리는 뺀다(C-2d: styleTags · C-2e: reviews). 남겨 두면 화면이
-    // "준비 중" 이라 적으면서 바로 위에 그 값을 보여 준다.
-    expect([...PENDING_SECTIONS]).toEqual(["leadTime"]);
+  it("**다 채웠다** — 셋으로 열었고 셋 다 비었다", () => {
+    // C-2c 가 셋으로 열었고 C-2d(styleTags) · C-2e(reviews) · C-4b(leadTime) 가
+    // 차례로 채웠다. **채운 자리를 남겨 두면** 화면이 "준비 중" 이라 적으면서
+    // 바로 위에 그 값을 보여 준다.
+    expect([...PENDING_SECTIONS]).toEqual([]);
   });
 
-  it("모든 자리에 문구가 있다 — 조용히 빠지는 자리가 없다", () => {
+  it("**비면 문구도 없다** — 목록과 문구가 어긋나지 않는다", () => {
+    // 한쪽만 비면 화면이 없는 자리의 문장을 그린다.
+    expect(Object.keys(PENDING_SECTION_NOTE)).toEqual([...PENDING_SECTIONS]);
+  });
+
+  it("자리를 다시 열면 문구가 따라온다 — 조용히 빠지는 자리가 없다", () => {
+    // 지금은 목록이 비어 이 루프가 0바퀴다. **그 사실을 위 검사가 먼저 말하므로**
+    // 여기서 0바퀴로 통과하는 것이 헛도는 것이 아니다(운영 규칙 §7.0b).
     for (const section of PENDING_SECTIONS) {
       expect(PENDING_SECTION_NOTE[section]?.length ?? 0).toBeGreaterThan(10);
     }

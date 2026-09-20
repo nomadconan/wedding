@@ -15357,10 +15357,14 @@ if (!vendorStaff || !adminUser) {
     ),
   );
   check(
-    "**그래도 목록이 비지 않았다** — 남은 자리는 계속 말한다",
-    /"leadTime"/.test(
-      (srcOf("lib/core/product/detail.ts").match(/PENDING_SECTIONS = \[[^\]]*\]/) ?? [""])[0],
-    ),
+    // C-2e 때는 여기가 *"목록이 비지 않았다"* 였다 — 남은 자리(주문 기한)를 계속
+    // 말하는지 보는 검사였고, **C-4b 가 그 자리를 채우며 실제로 떨어졌다.**
+    // 이제 목록이 비는 것이 옳은 상태이므로 **화면이 빈 카드를 그리지 않는지**로 옮긴다.
+    "**목록이 비면 카드를 그리지 않는다** — 빈 카드는 '뭔가 있어야 하는데' 로 읽힌다",
+    /PENDING_SECTIONS = \[\] as const/.test(srcOf("lib/core/product/detail.ts")) &&
+      /Object\.keys\(PENDING_SECTION_NOTE\)\.length > 0/.test(
+        srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+      ),
   );
   check(
     "**상품 상세가 후기 자리를 잇는다** — 만든 화면이 도달 불가로 남지 않는다",
@@ -15956,6 +15960,322 @@ if (!vendorStaff || !adminUser) {
       );
     }
   }
+}
+
+// =============================================================================
+// C-4b — 상품 리드타임 (주문 기한)
+// =============================================================================
+/**
+ * **칸 하나를 더하는 일인데 층 1 이 가장 중요하다.** `products` 는 표 단위 UPDATE 라
+ * 새 칸이 **자동으로** 업체 대표에게 열린다(`reviews` 의 칸 목록 방식과 정반대 ·
+ * C-2e 가 지적하고 C-4a 가 다시 짚은 자리). 이번엔 **그대로 두기로 판단했고**
+ * (리드타임은 업체 자신의 사실 진술이다 · D-224) 대신 세 층으로 누른다:
+ * 운영 상한 · 근거 필수 · 감사 기록. **그 판단이 실제로 서 있는지**를 여기서 본다.
+ */
+{
+  const owner = idOf("vendor@local.test");
+  const staff = idOf("staff@local.test");
+  const productId = sqlOrNull(`select id from public.products order by created_at limit 1;`);
+
+  check(
+    "**상품·업체 픽스처가 있다** — 없으면 아래가 통째로 헛돈다",
+    Boolean(owner) && Boolean(staff) && Boolean(productId),
+    `owner=${owner ? "있음" : "없음"} staff=${staff ? "있음" : "없음"} product=${productId ?? "없음"}`,
+  );
+
+  // ── 층 1 — CHECK · 표 단위 권한 ──────────────────────────────────────────
+  if (productId) {
+    check(
+      "**층1 — 값만 있고 근거가 없으면 거절한다**(D-224)",
+      rejectedWith(/products_lead_time_pair_chk/, () =>
+        sql(`begin; update public.products set lead_time_days = 30 where id = '${productId}'; rollback;`),
+      ),
+    );
+    check(
+      "**층1 — 근거만 있어도 거절한다** — 한쪽만 남은 기한을 만들지 않는다",
+      rejectedWith(/products_lead_time_pair_chk/, () =>
+        sql(`begin; update public.products set lead_time_note = '제작 4주' where id = '${productId}'; rollback;`),
+      ),
+    );
+    check(
+      "**층1 — 둘 다 있으면 통과한다** (늘 거절하는 CHECK 이 아니다)",
+      sqlOrNull(
+        `begin; update public.products set lead_time_days = 30, lead_time_note = '제작 4주'
+                 where id = '${productId}';
+         select lead_time_days from public.products where id = '${productId}'; rollback;`,
+      ) === "30",
+    );
+    check(
+      "**층1 — 0 도 값이다** — '따로 기한 없음' 이라는 진술을 막지 않는다",
+      sqlOrNull(
+        `begin; update public.products set lead_time_days = 0, lead_time_note = '재고 상품이에요'
+                 where id = '${productId}';
+         select lead_time_days from public.products where id = '${productId}'; rollback;`,
+      ) === "0",
+    );
+    check(
+      "**층1 — 둘 다 비우는 것은 된다** — 지울 길을 막지 않는다",
+      sqlOrNull(
+        `begin; update public.products set lead_time_days = null, lead_time_note = null
+                 where id = '${productId}';
+         select count(*) from public.products
+          where id = '${productId}' and lead_time_days is null; rollback;`,
+      ) === "1",
+    );
+    check(
+      "**층1 — 상식 범위를 벗어나면 막는다** — 10년 뒤 기한을 만들지 않는다",
+      rejectedWith(/products_lead_time_range_chk/, () =>
+        sql(`begin; update public.products set lead_time_days = 99999, lead_time_note = 'x'
+                    where id = '${productId}'; rollback;`),
+      ) &&
+        rejectedWith(/products_lead_time_range_chk/, () =>
+          sql(`begin; update public.products set lead_time_days = -1, lead_time_note = 'x'
+                      where id = '${productId}'; rollback;`),
+        ),
+    );
+  }
+
+  check(
+    "**층1 — 파는 축 본체 CHECK 이 살아 있다**(FIX-75) — 새 칸을 더하며 지우지 않았다",
+    sqlOrNull(
+      `select count(*) from pg_constraint
+        where conrelid = 'public.products'::regclass and conname = 'products_category_vocab_chk';`,
+    ) === "1",
+  );
+  check(
+    "**층1 — `products` 는 여전히 표 단위 UPDATE 다** — 그 사실 자체를 기록으로 남긴다",
+    sqlOrNull(
+      `select count(*) from information_schema.table_privileges
+        where grantee = 'authenticated' and table_name = 'products' and privilege_type = 'UPDATE';`,
+    ) === "1",
+  );
+  check(
+    "**층1 — 그래서 새 칸도 자동으로 열렸다** — 좁히지 않기로 한 판단이 실제 상태다(D-224)",
+    sqlOrNull(
+      `select count(*) from information_schema.column_privileges
+        where grantee = 'authenticated' and table_name = 'products'
+          and privilege_type = 'UPDATE' and column_name in ('lead_time_days', 'lead_time_note');`,
+    ) === "2",
+  );
+
+  // ── 층 2 — 부모를 타는 정책 ──────────────────────────────────────────────
+  //
+  // `product_options_select_public` 이 `products` 의 정책에 **그대로 기댄다**
+  // (C-2c 가 고정했다). 새 칸이 생겨도 그 기댐의 모양은 변하지 않아야 한다.
+  check(
+    "**층2 — 옵션 공개 정책이 여전히 products 에 기댄다** (스스로 status 를 보지 않는다)",
+    // **저장된 정책 문구는 대문자다**(`FROM products p`) — 소문자로만 찾다가 떨어졌다.
+    /from\s+products\s+p/i.test(
+      sqlOrNull(
+        `select qual from pg_policies
+          where tablename = 'product_options' and policyname = 'product_options_select_public';`,
+      ) ?? "",
+    ),
+  );
+
+  // ── 층 3 — 자격의 근거 ───────────────────────────────────────────────────
+  //
+  // 리드타임의 근거 표는 **운영 파라미터**다. 업체가 그 상한을 스스로 올릴 수 있으면
+  // 상한이 있으나 마나다 — `app_settings` 는 운영자 전용이며 여기서 눌러 본다.
+  if (owner) {
+    check(
+      "**층3 — 업체가 리드타임 상한을 못 올린다** — 자기 제한을 자기가 못 푼다",
+      rejectedWith(/permission denied|row-level security|0 rows/, () =>
+        asUser(
+          owner,
+          `update public.app_settings set value_json = '{"value": 9999}'::jsonb
+            where key = 'products.max_lead_time_days';`,
+        ),
+      ) ||
+        asUser(
+          owner,
+          `with u as (update public.app_settings set value_json = '{"value": 9999}'::jsonb
+                       where key = 'products.max_lead_time_days' returning 1)
+           select count(*) from u;`,
+        ) === "0",
+    );
+  }
+
+  if (owner && staff && productId) {
+    check(
+      "**층3 — 담당자는 리드타임을 못 쓴다** — 가격 칸과 같은 대표 전용이다",
+      asUser(
+        staff,
+        `with u as (update public.products set lead_time_days = 99, lead_time_note = '담당자'
+                     where id = '${productId}' returning 1)
+         select count(*) from u;`,
+      ) === "0",
+    );
+    check(
+      "**층3 — 대표는 쓸 수 있다** — 통째로 잠근 것이 아니다",
+      asUser(
+        owner,
+        `with u as (update public.products set lead_time_days = 21, lead_time_note = '대표가 적었다'
+                     where id in (select id from public.products
+                                   where vendor_id in (select vendor_id from public.vendor_members
+                                                        where user_id = auth.uid()))
+                     returning 1)
+         select count(*) from u;`,
+      ) !== "0",
+    );
+  }
+
+  // ── 상한 파라미터 ────────────────────────────────────────────────────────
+  check(
+    "**상한 키가 있다** — 없으면 저장이 영영 막힌다",
+    sqlOrNull(`select count(*) from public.app_settings where key = 'products.max_lead_time_days';`) ===
+      "1",
+  );
+  check(
+    "**마이그레이션이 값을 지어내지 않았다** — 로컬 값은 seed:accounts 가 넣는다",
+    !/products\.max_lead_time_days[\s\S]{0,400}"value": *\d/.test(
+      readFileSync("supabase/migrations/20260808008200_product_lead_time.sql", "utf8"),
+    ),
+  );
+  check(
+    "**로컬에는 값이 들어와 있다** — 그래야 업체 화면이 실제로 저장한다",
+    Number(
+      sqlOrNull(
+        `select value_json->>'value' from public.app_settings
+          where key = 'products.max_lead_time_days';`,
+      ),
+    ) > 0,
+  );
+  check(
+    "**코드가 값 없음을 0 으로 읽지 않는다** — 상한이 비면 저장을 막는다",
+    /LEAD_TIME_CAP_UNSET/.test(srcOf("lib/core/product/lead-time.ts")) &&
+      /maxDays === null/.test(srcOf("lib/core/product/lead-time.ts")),
+  );
+  check(
+    // **이름이 보이는지가 아니라 부르는지를 본다.** 처음엔 `/leadTimeProblems/` 였는데,
+    // 등록 경로에서 호출을 지워도 `ReturnType<typeof leadTimeProblems>` 라는 **타입
+    // 선언**에 걸려 통과했다(지시가 경고한 그 함정 그대로다).
+    "**등록·수정 양쪽이 같은 검사를 지난다** — 한쪽만 막으면 다른 쪽으로 넘어간다",
+    /leadTimeProblems\(\{/.test(srcOf("app/api/vendor/products/route.ts")) &&
+      /leadTimeProblems\(\{/.test(srcOf("app/api/vendor/products/[id]/route.ts")) &&
+      /VENDOR_LEAD_TIME_REJECTED/.test(srcOf("app/api/vendor/products/route.ts")) &&
+      /VENDOR_LEAD_TIME_REJECTED/.test(srcOf("app/api/vendor/products/[id]/route.ts")),
+  );
+  check(
+    "**리드타임 변경이 기록에 남는다** — 막지 않기로 한 대신 남긴다(D-224)",
+    /product_lead_time_changed/.test(srcOf("app/api/vendor/products/[id]/route.ts")) &&
+      /lead_time_days: before\.lead_time_days/.test(
+        srcOf("app/api/vendor/products/[id]/route.ts"),
+      ),
+  );
+
+  // ── 비로그인이 무엇을 가져가는가 ─────────────────────────────────────────
+  //
+  // **화면에 안 그리는 것만으로는 부족하다.** 이 값은 상품 상세가 익명 클라이언트로
+  // 읽으므로 새면 응답 본문에 그대로 실린다.
+  {
+    const DRAFT = "00000000-0000-0000-0000-0000000004b1";
+    const PENDING_VENDOR = "00000000-0000-0000-0000-0000000004b2";
+    const anyVendor = sqlOrNull(`select id from public.vendors where status = 'active' limit 1;`);
+
+    const fixture = anyVendor
+      ? `insert into public.vendors (id, name, category, region_code, status)
+           values ('${PENDING_VENDOR}', 'C-4b 심사중', 'hall', 'seoul-gangnam', 'pending')
+           on conflict (id) do nothing;
+         insert into public.products
+           (id, vendor_id, category, name, base_price_total, status,
+            included_items_json, add_ons_declared_at, lead_time_days, lead_time_note)
+         values ('${DRAFT}', '${anyVendor}', 'hall', 'C-4b 초안', 12345678, 'draft',
+                 '[]'::jsonb, null, 777, '초안 근거'),
+                -- **게시 조건을 채워서 넣는다.** 안 채우면 \`products_publish_requirements_chk\` 가
+                -- 거절하고, 그러면 "심사 중 업체의 게시 상품" 이라는 **검사의 전제 자체가**
+                -- 만들어지지 않는다(픽스처가 못 서면 아래는 0건으로 조용히 통과한다).
+                ('00000000-0000-0000-0000-0000000004b3', '${PENDING_VENDOR}', 'hall',
+                 'C-4b 심사중 상품', 12345679, 'published',
+                 '[{"label": "기본 구성", "note": null}]'::jsonb, now(), 778, '심사중 근거')
+           on conflict (id) do nothing;`
+      : "";
+
+    check("**비로그인 검사의 픽스처가 섰다**", Boolean(anyVendor));
+
+    if (anyVendor) {
+      // **픽스처가 실제로 들어갔는지 먼저 본다.** 안 들어가면 아래 "안 보인다" 가
+      // 전부 0건으로 조용히 통과한다(운영 규칙 §7.0b).
+      check(
+        "**숨겨야 할 값이 DB 에 실재한다** — 없으면 아래가 빈 표를 세고 통과한다",
+        sqlOrNull(
+          `begin; ${fixture}
+           select count(*) from public.products where lead_time_days in (777, 778); rollback;`,
+        ) === "2",
+      );
+      check(
+        "**비로그인은 초안 상품의 리드타임을 못 본다**",
+        asAnon(
+          `select count(*) from public.products where lead_time_days = 777;`,
+          fixture,
+        ) === "0",
+      );
+      check(
+        "**심사 중 업체의 '게시' 상품도 리드타임이 안 새어 나간다**",
+        asAnon(
+          `select count(*) from public.products where lead_time_days = 778;`,
+          fixture,
+        ) === "0",
+      );
+      check(
+        "**공개 상품의 리드타임은 보인다** — 늘 0 을 돌려주는 검사가 아니다",
+        asAnon(
+          `select count(*) from public.products where lead_time_days = 779;`,
+          `${fixture}
+           update public.products set lead_time_days = 779, lead_time_note = '공개 근거'
+            where status = 'published' and vendor_id = '${anyVendor}';`,
+        ) !== "0",
+      );
+    }
+  }
+
+  // ── 화면·계산 ────────────────────────────────────────────────────────────
+  check(
+    "**「아직 준비 중」 목록이 비었다** — 셋으로 열었고 셋 다 채웠다",
+    /PENDING_SECTIONS = \[\] as const/.test(srcOf("lib/core/product/detail.ts")),
+  );
+  check(
+    "**비면 카드를 그리지 않는다** — 빈 카드는 '뭔가 있어야 하는데' 로 읽힌다",
+    /Object\.keys\(PENDING_SECTION_NOTE\)\.length > 0/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+    ),
+  );
+  check(
+    "**상품 상세가 주문 기한을 그린다** — 만든 자리가 도달 불가로 남지 않는다",
+    /<ProductOrderDeadline/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+    ),
+  );
+  check(
+    "**업체 폼이 값과 근거를 함께 받는다**",
+    /leadTimeDays/.test(srcOf("app/(vendor)/vendor/products/ProductForm.tsx")) &&
+      /leadTimeNote/.test(srcOf("app/(vendor)/vendor/products/ProductForm.tsx")),
+  );
+  check(
+    "**역산이 저장되지 않는다** — 주문 기한 칸이 DB 에 없다(계산 가능한 값)",
+    sqlOrNull(
+      `select count(*) from information_schema.columns
+        where table_name = 'products' and column_name in ('order_deadline', 'order_deadline_at');`,
+    ) === "0",
+  );
+  check(
+    // **언급이 아니라 타입에 실제로 있는지를 본다.** 처음엔 파일 어디든 그 문자열이
+    // 있으면 통과했는데, 유니온에서 갈래를 지워도 함수 본문에 남은 리터럴이 통과시켰다.
+    "**C-4d 가 읽을 모양이 네 갈래다** — '안 정했다'·'기한 없음'·'예식일 없음' 을 뭉치지 않는다",
+    (() => {
+      const union = (srcOf("lib/core/product/lead-time.ts").match(
+        // **`;` 하나로 끊으면 안 된다** — 첫 갈래 안의 `date: string;` 에서 멈춘다.
+        /export type OrderDeadline =[\s\S]*?\};/,
+      ) ?? [""])[0];
+
+      // 분모를 먼저 본다 — 못 읽으면 아래 every 가 0개를 견주고 통과한다.
+      if (union.length < 40) return false;
+
+      return ["not_declared", "no_deadline", "no_wedding_date", "deadline"].every((kind) =>
+        union.includes(`kind: "${kind}"`),
+      );
+    })(),
+  );
 }
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);

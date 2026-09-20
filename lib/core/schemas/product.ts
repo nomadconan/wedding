@@ -8,6 +8,7 @@
 // 금액은 원 단위 정수만 다룬다. 요율·정산 계산은 `lib/core/pricing` 의 몫이고
 // 이 파일에는 **요율 숫자가 없다**(O-02).
 
+import { LEAD_TIME_NOTE_MAX, LEAD_TIME_SANITY_MAX_DAYS } from "../product/lead-time";
 import { z } from "zod";
 
 import { STYLE_TAGS } from "./onboarding";
@@ -113,7 +114,45 @@ export const ProductInputFieldsSchema = z.object({
      * 태그를 안 적은 기존 상품이 컨셉 필터에서 사라지지 않는다.
      */
     styleTags: z.array(z.enum(STYLE_TAGS)).max(STYLE_TAGS.length).default([]),
+    /**
+     * 주문 기한(C-4b · F-V-03 확장).
+     *
+     * **절대 날짜가 아니라 상대 일수**다 — 상품 하나를 여러 커플이 사고 예식일이
+     * 제각각이라, 날짜로 받으면 첫 커플에게만 맞는다(B-1 권고).
+     *
+     * **`null` 은 "아직 안 정했다", `0` 은 "따로 기한이 없다" 는 진술이다.**
+     * 상한은 여기 없다 — 운영 파라미터(`products.max_lead_time_days`)를 봐야 하고,
+     * 스키마는 DB 와 같은 **상식 범위**만 본다. 값이 없으면 라우트가 막는다.
+     */
+    leadTimeDays: z
+      .number()
+      .int("주문 기한은 일 단위 정수로 입력해 주세요.")
+      .min(0, "주문 기한은 0 이상의 일수로 적어 주세요.")
+      .max(LEAD_TIME_SANITY_MAX_DAYS)
+      .nullable()
+      .default(null),
+    /** 왜 그만큼 걸리는가. **값과 함께 온다**(D-224) — 아래 refine 이 짝을 본다. */
+    leadTimeNote: z.string().trim().max(LEAD_TIME_NOTE_MAX).nullable().default(null),
 });
+
+/**
+ * 리드타임은 **값과 근거가 함께** 온다.
+ *
+ * 한쪽만 오면 화면이 "30일" 만 보여 주거나 근거만 떠 있는 자리가 생긴다.
+ * 근거를 필수로 받는 것이 **값이 부푸는 것을 누르는 장치**이기도 하다(D-224).
+ * PATCH 는 일부 필드만 보내므로 **둘 다 undefined 인 경우는 건드리지 않은 것**이다.
+ */
+export const leadTimePairIsValid = (input: {
+  leadTimeDays?: number | null;
+  leadTimeNote?: string | null;
+}): boolean => {
+  if (input.leadTimeDays === undefined && input.leadTimeNote === undefined) return true;
+
+  const days = input.leadTimeDays ?? null;
+  const note = (input.leadTimeNote ?? null)?.trim() ?? null;
+
+  return (days === null && (note === null || note === "")) || (days !== null && note !== null && note !== "");
+};
 
 /** 수용 인원 하한 <= 상한. 두 값이 다 있을 때만 본다(부분 수정에서도 같은 규칙). */
 export const capacityRangeIsValid = (input: {
@@ -129,6 +168,9 @@ export const capacityRangeIsValid = (input: {
 export const ProductInputSchema = ProductInputFieldsSchema.refine(capacityRangeIsValid, {
   message: "수용 인원 하한이 상한보다 큽니다.",
   path: ["capacityMax"],
+}).refine(leadTimePairIsValid, {
+  message: "주문 기한은 일수와 근거를 함께 적어 주세요.",
+  path: ["leadTimeNote"],
 });
 
 export type ProductInput = z.input<typeof ProductInputSchema>;

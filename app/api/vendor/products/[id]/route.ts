@@ -10,10 +10,16 @@ import {
   toProductDescription,
 } from "@/lib/core/product/content";
 import {
+  LEAD_TIME_MAX_SETTING_KEY,
+  leadTimeProblems,
+} from "@/lib/core/product/lead-time";
+import {
   ProductInputFieldsSchema,
   ProductStatusSchema,
   capacityRangeIsValid,
+  leadTimePairIsValid,
 } from "@/lib/core/schemas/product";
+import { readIntSetting } from "@/lib/app-settings";
 import { needsRedeclaration } from "@/lib/core/schemas/product-option";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -46,6 +52,10 @@ const PatchSchema = ProductInputFieldsSchema.partial()
   .refine(capacityRangeIsValid, {
     message: "수용 인원 하한이 상한보다 큽니다.",
     path: ["capacityMax"],
+  })
+  .refine(leadTimePairIsValid, {
+    message: "주문 기한은 일수와 근거를 함께 적어 주세요.",
+    path: ["leadTimeNote"],
   });
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -128,6 +138,34 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     }
   }
 
+  /**
+   * 리드타임(C-4b). **합친 뒤에 본다** — PATCH 는 한쪽만 보낼 수 있고, 실제로
+   * 저장되는 것은 기존 값과 합쳐진 결과다(본문 판정과 같은 이유).
+   *
+   * **상한이 비어 있으면 저장을 막는다**(§7.4 · D-49). 업체가 며칠까지 주장할 수
+   * 있는지는 운영 정책 결정이고, 통과시키면 코드가 "상한 없음" 을 대신 답한 셈이다.
+   * 지우는 요청은 상한과 무관하므로 `leadTimeProblems` 가 통과시킨다.
+   */
+  const leadTimeTouched =
+    input.leadTimeDays !== undefined || input.leadTimeNote !== undefined;
+
+  const mergedLeadDays =
+    input.leadTimeDays === undefined ? (before.lead_time_days ?? null) : input.leadTimeDays;
+  const mergedLeadNote =
+    input.leadTimeNote === undefined ? (before.lead_time_note ?? null) : input.leadTimeNote;
+
+  if (leadTimeTouched) {
+    const leadProblems = leadTimeProblems({
+      days: mergedLeadDays,
+      note: mergedLeadNote,
+      maxDays: await readIntSetting(LEAD_TIME_MAX_SETTING_KEY, "value"),
+    });
+
+    if (leadProblems.length > 0) {
+      return fail(422, "VENDOR_LEAD_TIME_REJECTED", leadProblems[0]!.message, leadProblems);
+    }
+  }
+
   const patch: TablesUpdate<"products"> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.category !== undefined) patch.category = input.category;
@@ -136,6 +174,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (input.capacityMin !== undefined) patch.capacity_min = input.capacityMin;
   if (input.capacityMax !== undefined) patch.capacity_max = input.capacityMax;
   if (input.styleTags !== undefined) patch.style_tags = input.styleTags;
+  if (leadTimeTouched) {
+    // **둘을 함께 쓴다.** DB CHECK 이 짝을 요구하므로 한쪽만 넣으면 거절된다.
+    patch.lead_time_days = mergedLeadDays;
+    patch.lead_time_note =
+      mergedLeadNote === null || mergedLeadNote.trim() === "" ? null : mergedLeadNote.trim();
+  }
   if (input.summary !== undefined) {
     // 빈 문자열은 **지운다**는 뜻이다. DB CHECK 이 빈 문자열을 받지 않는다(0076).
     patch.summary = input.summary && input.summary.length > 0 ? input.summary : null;
@@ -183,15 +227,44 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   // 가격 변경은 정산과 직결되므로 값까지 남긴다(§7.2).
   const priceChanged = before.base_price_total !== updated.base_price_total;
 
+  /**
+   * **리드타임 변경도 값까지 남긴다**(C-4b · D-224).
+   *
+   * 길게 적을수록 알림이 일찍 가고 고객이 먼저 움직이므로 값이 부풀 유인이 있다.
+   * 막지 않기로 한 대신(업체 자신의 사실 진술이다) **언제 얼마로 바꿨는지가 남는다** —
+   * 근거 문구와 함께 읽으면 운영자가 판단할 재료가 된다.
+   */
+  const leadTimeChanged = before.lead_time_days !== updated.lead_time_days;
+
   await recordAudit({
     actorId: user.id,
     actorRole: user.role,
     action: priceChanged ? "vendor_product_price_update" : "vendor_product_update",
     targetType: "product",
     targetId: id,
-    before: { base_price_total: before.base_price_total, status: before.status },
-    after: { base_price_total: updated.base_price_total, status: updated.status },
+    before: {
+      base_price_total: before.base_price_total,
+      status: before.status,
+      lead_time_days: before.lead_time_days,
+    },
+    after: {
+      base_price_total: updated.base_price_total,
+      status: updated.status,
+      lead_time_days: updated.lead_time_days,
+    },
   });
+
+  if (leadTimeChanged) {
+    await recordEvent({
+      entityType: "product",
+      entityId: id,
+      eventType: "product_lead_time_changed",
+      // **셀 수 있는 값만 남긴다**(§7.3) — 근거 문구는 본문이라 여기 넣지 않는다.
+      beforeState: before.lead_time_days === null ? "none" : String(before.lead_time_days),
+      afterState: updated.lead_time_days === null ? "none" : String(updated.lead_time_days),
+      actor: { id: user.id, role: user.role },
+    });
+  }
 
   const vendor = await findMemberVendor(user.id);
   const rate = vendor

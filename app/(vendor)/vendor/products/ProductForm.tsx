@@ -68,6 +68,8 @@ export type ProductFormProps = {
     descriptionSource: string | null;
     /** 상품 컨셉(C-2d). 비우면 업체 태그를 상속한다. */
     styleTags: StyleTag[];
+    leadTimeDays: number | null;
+    leadTimeNote: string | null;
   };
   /** 업체가 프로필에 적은 컨셉. 상품이 비었을 때 **상속되는 값**이라 화면이 보여 준다. */
   vendorStyleTags?: StyleTag[];
@@ -113,6 +115,12 @@ export function ProductForm({
   );
   const [styleTags, setStyleTags] = useState<StyleTag[]>(product?.styleTags ?? []);
   const [summary, setSummary] = useState(product?.summary ?? "");
+  const [leadTimeDays, setLeadTimeDays] = useState(
+    product?.leadTimeDays === null || product?.leadTimeDays === undefined
+      ? ""
+      : String(product.leadTimeDays),
+  );
+  const [leadTimeNote, setLeadTimeNote] = useState(product?.leadTimeNote ?? "");
   const [description, setDescription] = useState(product?.descriptionSource ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +169,10 @@ export function ProductForm({
       capacityMax: capacityMax.trim() === "" ? null : Number(capacityMax),
       // 빈 칸은 **지운다**는 뜻으로 보낸다(null). 안 보내면 기존 값이 남는다.
       styleTags,
+      // **값과 근거는 함께 보낸다**(D-224). 한쪽만 채우면 서버가 422 로 되돌린다 —
+      // 숫자만 남은 기한은 고객이 확인할 방법이 없다.
+      leadTimeDays: leadTimeDays.trim() === "" ? null : Number(leadTimeDays),
+      leadTimeNote: leadTimeNote.trim() === "" ? null : leadTimeNote.trim(),
       summary: summary.trim() === "" ? null : summary.trim(),
       description: description.trim() === "" ? null : description.trim(),
     };
@@ -286,6 +298,47 @@ export function ProductForm({
               ) : null}
             </div>
           </div>
+        </div>
+
+        {/* ── 주문 기한 (C-4b) ──────────────────────────────────────────
+            **날짜가 아니라 일수다.** 상품 하나를 여러 커플이 사고 예식일이 제각각이라
+            날짜로 받으면 첫 커플에게만 맞는다. 고객 화면은 자기 예식일에서 역산한
+            **날짜**를 본다.
+            **근거를 함께 받는다** — 고객이 그 문장을 숫자와 같이 읽는다. */}
+        <div className="space-y-2" data-testid="product-lead-time">
+          <Label htmlFor="leadTimeDays">주문 기한 (선택)</Label>
+          <p className="text-caption text-muted-foreground">
+            예식일 며칠 전까지 주문해야 하는지 적어 주세요. <strong>0</strong> 은 “따로 기한이
+            없다”는 뜻입니다. 비워 두면 고객 화면에 “업체가 아직 등록하지 않았다”고 적힙니다.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Input
+                id="leadTimeDays"
+                inputMode="numeric"
+                placeholder="예: 30"
+                value={leadTimeDays}
+                onChange={(event) => setLeadTimeDays(event.target.value)}
+              />
+              {fieldErrors.leadTimeDays ? (
+                <p className="text-caption text-danger">{fieldErrors.leadTimeDays}</p>
+              ) : null}
+            </div>
+            <div className="space-y-1.5">
+              <Input
+                id="leadTimeNote"
+                placeholder="근거 (예: 제작에 4주)"
+                value={leadTimeNote}
+                onChange={(event) => setLeadTimeNote(event.target.value)}
+              />
+              {fieldErrors.leadTimeNote ? (
+                <p className="text-caption text-danger">{fieldErrors.leadTimeNote}</p>
+              ) : null}
+            </div>
+          </div>
+          <p className="text-caption text-muted-foreground">
+            고객에게는 <strong>일수와 근거가 함께</strong> 보입니다.
+          </p>
         </div>
 
         {/* ── 컨셉 태그 (C-2d) ──────────────────────────────────────────
