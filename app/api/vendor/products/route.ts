@@ -10,7 +10,10 @@ import {
 import {
   ProductInputFieldsSchema,
   capacityRangeIsValid,
+  leadTimePairIsValid,
 } from "@/lib/core/schemas/product";
+import { LEAD_TIME_MAX_SETTING_KEY, leadTimeProblems } from "@/lib/core/product/lead-time";
+import { readIntSetting } from "@/lib/app-settings";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -54,10 +57,15 @@ export async function GET() {
  * `ProductInputSchema` 를 쓰지 않는 이유: 그것은 이미 `refine` 이 붙은 ZodEffects 라
  * `extend` 할 수 없다. 필드 객체에 본문을 얹고 같은 `refine` 을 다시 건다.
  */
-const CreateSchema = ProductInputFieldsSchema.extend(ProductContentInputSchema.shape).refine(
-  capacityRangeIsValid,
-  { message: "수용 인원 하한이 상한보다 큽니다.", path: ["capacityMax"] },
-);
+const CreateSchema = ProductInputFieldsSchema.extend(ProductContentInputSchema.shape)
+  .refine(capacityRangeIsValid, {
+    message: "수용 인원 하한이 상한보다 큽니다.",
+    path: ["capacityMax"],
+  })
+  .refine(leadTimePairIsValid, {
+    message: "주문 기한은 일수와 근거를 함께 적어 주세요.",
+    path: ["leadTimeNote"],
+  });
 
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
@@ -85,6 +93,20 @@ export async function POST(request: NextRequest) {
     return fail(422, "VENDOR_PRODUCT_CONTENT_REJECTED", contentProblems[0]!.message, contentProblems);
   }
 
+  /**
+   * 리드타임(C-4b). **등록에서도 같은 함수로 본다** — 수정에서만 막으면 등록 경로로
+   * 상한을 넘겨 넣을 수 있다. 상한이 비어 있으면 저장하지 않는다(§7.4 · D-49).
+   */
+  const leadProblems = leadTimeProblems({
+    days: input.leadTimeDays ?? null,
+    note: input.leadTimeNote ?? null,
+    maxDays: await readIntSetting(LEAD_TIME_MAX_SETTING_KEY, "value"),
+  });
+
+  if (leadProblems.length > 0) {
+    return fail(422, "VENDOR_LEAD_TIME_REJECTED", leadProblems[0]!.message, leadProblems);
+  }
+
   const vendor = await findMemberVendor(user.id);
   if (!vendor) return fail(404, "VENDOR_NOT_FOUND", "등록된 업체가 없습니다.");
 
@@ -101,6 +123,9 @@ export async function POST(request: NextRequest) {
       capacity_min: input.capacityMin,
       capacity_max: input.capacityMax,
       style_tags: input.styleTags,
+      lead_time_days: input.leadTimeDays ?? null,
+      lead_time_note:
+        input.leadTimeNote && input.leadTimeNote.trim() !== "" ? input.leadTimeNote.trim() : null,
       summary: input.summary && input.summary.length > 0 ? input.summary : null,
       description_json: toProductDescription(input.description ?? null),
       // 새 상품은 항상 작성 중으로 시작한다. 게시는 체크리스트를 통과해야 한다.

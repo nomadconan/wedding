@@ -3981,6 +3981,8 @@ export type Database = {
           description_json: Json | null
           id: string
           included_items_json: Json
+          lead_time_days: number | null
+          lead_time_note: string | null
           name: string
           price_includes_vat: boolean
           published_at: string | null
@@ -4000,6 +4002,8 @@ export type Database = {
           description_json?: Json | null
           id?: string
           included_items_json?: Json
+          lead_time_days?: number | null
+          lead_time_note?: string | null
           name: string
           price_includes_vat?: boolean
           published_at?: string | null
@@ -4019,6 +4023,8 @@ export type Database = {
           description_json?: Json | null
           id?: string
           included_items_json?: Json
+          lead_time_days?: number | null
+          lead_time_note?: string | null
           name?: string
           price_includes_vat?: boolean
           published_at?: string | null

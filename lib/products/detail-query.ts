@@ -1,3 +1,4 @@
+import { leadTimeOf, type LeadTime } from "@/lib/core/product/lead-time";
 import { NO_INDEX_BASELINE_NOTE, priceGapBp } from "@/lib/core/pricing/price-index";
 import { effectiveStyleTags, type EffectiveStyleTags } from "@/lib/core/product/concept";
 import { descriptionSource } from "@/lib/core/product/content";
@@ -34,7 +35,8 @@ import { MEDIA_BUCKET, publicMediaUrl } from "@/lib/vendor/product-media";
 /** 화면·API 가 함께 읽는 컬럼. 한 곳에서 관리해야 응답 모양이 갈라지지 않는다. */
 const PRODUCT_COLUMNS =
   "id, vendor_id, category, name, base_price_total, price_includes_vat, included_items_json, " +
-  "capacity_min, capacity_max, add_ons_declared_at, summary, description_json, style_tags, published_at";
+  "capacity_min, capacity_max, add_ons_declared_at, summary, description_json, style_tags, " +
+  "lead_time_days, lead_time_note, published_at";
 
 export type ProductDetail = {
   id: string;
@@ -51,6 +53,12 @@ export type ProductDetail = {
   priceIncludesVat: boolean;
   includedItems: { label?: string; name?: string; note?: string | null }[];
   capacityMin: number | null;
+  /**
+   * 주문 기한(C-4b). **값과 근거가 한 덩어리**이며 한쪽만 있으면 `null` 이다.
+   * 날짜로 바꾸는 일은 여기서 하지 않는다 — 예식일은 **보는 커플마다 다르고**,
+   * 이 로더는 비로그인도 쓴다(`orderDeadline` 이 세션 있는 조각에서 계산한다).
+   */
+  leadTime: LeadTime | null;
   capacityMax: number | null;
   /** 추가금 사전표. **업체 상세와 같은 함수**(`summarizeAddOns`)가 만든다. */
   addOns: AddOnSummary;
@@ -78,6 +86,8 @@ type ProductRow = {
   summary: string | null;
   description_json: unknown;
   style_tags: string[] | null;
+  lead_time_days: number | null;
+  lead_time_note: string | null;
   published_at: string | null;
 };
 
@@ -184,6 +194,7 @@ export async function loadProductDetail(input: {
       : [],
     capacityMin: product.capacity_min,
     capacityMax: product.capacity_max,
+    leadTime: leadTimeOf({ days: product.lead_time_days, note: product.lead_time_note }),
     // **업체 상세와 같은 호출**이다(`VendorProducts` 와 인자가 같다) — 두 화면이
     // 추가금을 다르게 요약하면 같은 상품이 두 값을 말한다.
     addOns: summarizeAddOns(product.add_ons_declared_at, options),

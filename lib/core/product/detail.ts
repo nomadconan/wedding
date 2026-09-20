@@ -24,7 +24,18 @@ import { descriptionSource } from "./content";
 // 적으면서 바로 위에 그 값을 보여 준다.
 //   · `styleTags` — C-2d 가 채웠다
 //   · `reviews`  — C-2e 가 채웠다
-export const PENDING_SECTIONS = ["leadTime"] as const;
+/**
+ * 아직 열지 않은 자리.
+ *
+ * **비었다.** C-2c 가 셋(컨셉 태그·상품 후기·주문 기한)으로 열었고 C-2d·C-2e·C-4b 가
+ * 차례로 채웠다. **목록이 비면 화면은 이 카드를 그리지 않는다** — 빈 카드를 남기면
+ * "여기 뭔가 있어야 하는데" 로 읽힌다.
+ *
+ * **자리를 지우지 않고 빈 배열로 둔다.** 타입과 화면 분기가 남아 있어야 다음에
+ * 못 만든 자리가 생겼을 때 **한 줄로** 다시 열 수 있다(그때 빈 칸으로 두지 않는다는
+ * 규칙 · D-212 도 함께 살아 있다).
+ */
+export const PENDING_SECTIONS = [] as const;
 
 export type PendingSection = (typeof PENDING_SECTIONS)[number];
 
@@ -35,9 +46,15 @@ export type PendingSection = (typeof PENDING_SECTIONS)[number];
  * 고객이 "이 상품은 후기가 나쁜가?" 로 읽지 않는다. 담당 태스크 번호는 내부
  * 어휘라 화면에 쓰지 않는다.
  */
-export const PENDING_SECTION_NOTE: Record<PendingSection, string> = {
-  leadTime: "언제까지 주문해야 하는지는 업체에 문의해 주세요. 상품별 주문 기한은 준비 중이에요.",
-};
+/**
+ * 자리마다의 안내 문구.
+ *
+ * **키 타입이 `string` 이다.** 목록이 비어 `PendingSection` 이 `never` 가 됐고,
+ * `Record<never, string>` 은 값 타입을 `unknown` 으로 만들어 화면의 `Object.entries`
+ * 가 컴파일되지 않는다. 자리를 다시 열 때 `PENDING_SECTIONS` 에 코드를 넣으면
+ * 타입이 좁아지는 것이 아니라 **아래 검사와 단위 테스트가** 짝을 본다.
+ */
+export const PENDING_SECTION_NOTE: Record<string, string> = {};
 
 // =============================================================================
 // 화면이 그릴 조각들

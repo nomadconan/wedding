@@ -25,6 +25,7 @@ import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/v
 import { loadProductDetail } from "@/lib/products/detail-query";
 
 import { ProductCartActions } from "./ProductCartActions";
+import { ProductOrderDeadline } from "./ProductOrderDeadline";
 import { ProductReviews } from "./ProductReviews";
 
 export const metadata: Metadata = {
@@ -281,26 +282,38 @@ export default async function ProductDetailPage(props: {
           </Link>
         </Button>
 
+        {/* ── 주문 기한 (C-4b) ─────────────────────────────────────────────
+            **예식일은 보는 커플마다 다르다.** 세션이 필요해 떼어 냈다 —
+            페이지 본체에 두면 상품 상세가 통째로 동적이 된다. */}
+        <Suspense
+          fallback={<LoadingState label="주문 기한을 계산하는 중" rows={1} variant="block" />}
+        >
+          <ProductOrderDeadline leadTime={product.leadTime} />
+        </Suspense>
+
         {/* ── 아직 열지 않은 자리 ──────────────────────────────────────────
             **빈 칸으로 두지 않는다.** 빈 칸은 *이 상품에는 해당이 없다* 로도 읽힌다.
-            컨셉 태그·상품 후기·주문 기한은 다른 태스크가 채운다. */}
-        <Card data-testid="pending-sections">
-          <CardHeader>
-            <CardTitle className="text-base">아직 준비 중인 것</CardTitle>
-            <CardDescription>
-              이 상품에 없는 것이 아니라, 아직 우리가 만들지 못한 자리예요.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-1.5">
-              {Object.entries(PENDING_SECTION_NOTE).map(([key, note]) => (
-                <li key={key} className="text-sm text-muted-foreground">
-                  {note}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+            셋으로 열었던 목록을 C-2d·C-2e·C-4b 가 차례로 비웠다 — **비면 카드를
+            그리지 않는다**(빈 카드는 "여기 뭔가 있어야 하는데" 로 읽힌다). */}
+        {Object.keys(PENDING_SECTION_NOTE).length > 0 ? (
+          <Card data-testid="pending-sections">
+            <CardHeader>
+              <CardTitle className="text-base">아직 준비 중인 것</CardTitle>
+              <CardDescription>
+                이 상품에 없는 것이 아니라, 아직 우리가 만들지 못한 자리예요.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-1.5">
+                {Object.entries(PENDING_SECTION_NOTE).map(([key, note]) => (
+                  <li key={key} className="text-sm text-muted-foreground">
+                    {note}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* 거래로 이어지는 화면이므로 중개자 지위를 고지한다(D-24 · §6). */}
         <BrokerNotice variant="inline" />

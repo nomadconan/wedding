@@ -893,6 +893,126 @@ try {
    * 시험하려면 **들어온 문의가 있어야** 한다. 예전에는 세션 fetch 로 만들었고
    * 그 칸은 아무도 지키지 못했다 — 이제 폼으로 보낸다.
    */
+  // ── C-4b — 업체가 주문 기한을 적고 소비자가 자기 날짜로 본다 ─────────────
+  //
+  // **완료 조건이 "업체가 값과 근거를 적고, 그 값이 커플의 기한 계산에 실제로
+  // 쓰인다" 라서** DB 검사만으로는 끝나지 않는다. 업체 화면에서 적은 숫자가
+  // **커플의 예식일로 역산된 날짜**가 되어 상세에 떠야 한다.
+  await step("**업체가 주문 기한을 적는다**(C-4b) — 값과 근거를 함께", owner, async () => {
+    const info = await goto(owner, `/vendor/products/${walk.productId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const has = await evaluate(owner, `!!document.querySelector('[data-testid="product-lead-time"]')`);
+    if (!has) throw new Error("주문 기한 적는 자리가 없다");
+
+    await evaluate(owner, `(() => {
+      const setNative = (el, value) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, "value",
+        ).set;
+        setter.call(el, value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      setNative(document.querySelector("#leadTimeDays"), "30");
+      setNative(document.querySelector("#leadTimeNote"), "제작에 4주가 걸려요.");
+      return true;
+    })()`);
+
+    await click(owner, 'button[type="submit"]', { text: "상품 저장" });
+
+    const until = Date.now() + ms(25000);
+    for (;;) {
+      const row = sql(`select coalesce(lead_time_days::text, 'none') || '|' ||
+                              coalesce(lead_time_note, 'none')
+                         from public.products where id = '${walk.productId}';`);
+      if (row.startsWith("30|")) return row.slice(0, 40);
+      if (Date.now() > until) {
+        const info2 = await snapshot(owner);
+        throw new Error(`주문 기한이 저장되지 않았다(${row}): ${info2.text.slice(0, 200)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**근거 없는 숫자는 서버가 되돌린다**(D-224)", null, async () => {
+    // 화면을 거치지 않고 **API 를 직접** 친다 — 화면이 막는 것은 보안 경계가 아니다.
+    const before = sql(`select lead_time_days from public.products where id = '${walk.productId}';`);
+
+    // DB 층이 실제로 무는지 본다(API 층은 단위 테스트가 본다).
+    let rejected = false;
+    try {
+      sql(`update public.products set lead_time_note = null where id = '${walk.productId}';`);
+    } catch {
+      rejected = true;
+    }
+
+    if (!rejected) throw new Error("근거만 지웠는데 통과했다");
+
+    const after = sql(`select lead_time_days from public.products where id = '${walk.productId}';`);
+    if (after !== before) throw new Error(`값이 바뀌었다: ${before} → ${after}`);
+
+    return `거절 · 값 그대로(${after})`;
+  });
+
+  await step("**소비자가 자기 예식일로 역산된 날짜를 본다** — 기한 계산에 실제로 쓰인다", consumer, async () => {
+    const wedding = sql(`select wedding_date::text from public.couples
+                          where id in (select couple_id from public.couple_members limit 1);`);
+
+    if (!wedding || wedding === "") throw new Error("커플 예식일이 없어 역산을 잴 수 없다");
+
+    const expected = new Date(Date.parse(`${wedding}T00:00:00Z`) - 30 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+
+    const info = await goto(consumer, `/explore/${walk.vendorId}/${walk.productId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="order-deadline"]');
+      return JSON.stringify({
+        kind: box ? box.getAttribute("data-kind") : null,
+        text: box ? box.innerText.replace(/\\s+/g, " ") : "",
+        pending: Boolean(document.querySelector('[data-testid="pending-sections"]')),
+      });
+    })()`));
+
+    if (seen.kind !== "deadline") throw new Error(`주문 기한 상태가 deadline 이 아니다: ${seen.kind}`);
+    if (!seen.text.includes(expected)) {
+      throw new Error(`역산 날짜가 화면에 없다(기대 ${expected}): ${seen.text.slice(0, 160)}`);
+    }
+    // **근거를 숫자와 함께 보인다**(D-224) — 숫자만 보이면 확인할 방법이 없다.
+    if (!seen.text.includes("제작에 4주")) throw new Error("근거 문구가 화면에 없다");
+    // 채운 자리를 "준비 중" 이라 적지 않는다 — 목록이 비면 카드 자체가 없다.
+    if (seen.pending) throw new Error("「아직 준비 중」 카드가 아직 떠 있다");
+
+    return `${expected} · 근거 함께 · 준비 중 카드 없음`;
+  });
+
+  await step("**기한을 지우면 '업체가 안 정했다' 로 돌아간다** — 0 이라 적지 않는다", consumer, async () => {
+    sql(`update public.products set lead_time_days = null, lead_time_note = null
+          where id = '${walk.productId}';`);
+
+    const info = await goto(consumer, `/explore/${walk.vendorId}/${walk.productId}`);
+    if (info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="order-deadline"]');
+      return JSON.stringify({
+        kind: box ? box.getAttribute("data-kind") : null,
+        text: box ? box.innerText.replace(/\\s+/g, " ") : "",
+      });
+    })()`));
+
+    if (seen.kind !== "not_declared") throw new Error(`상태가 not_declared 가 아니다: ${seen.kind}`);
+    if (/0일|0 일/.test(seen.text)) throw new Error(`안 정한 것을 0 으로 적었다: ${seen.text}`);
+
+    // 되돌려 놓는다 — 뒤 걸음이 이 상품을 본다.
+    sql(`update public.products set lead_time_days = 30, lead_time_note = '제작에 4주가 걸려요.'
+          where id = '${walk.productId}';`);
+
+    return seen.text.slice(0, 50);
+  });
+
   // ── C-2d — 업체가 컨셉을 붙이고 소비자가 그것으로 찾는다 ─────────────────
   //
   // **한 업체의 두 패키지가 서로 다른 컨셉으로 걸러진다**(완료 조건 ①)를 화면으로

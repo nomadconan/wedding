@@ -391,6 +391,11 @@ async function seedDemoAiLimits() {
     // LOCAL DEMO ONLY - not an operating decision.
     ["ai.free_daily_turns", 20, "turns"],
     ["ai.session_token_cap", 120000, "tokens"],
+    // C-4b. Same split: 0082 owns the key (value null), this owns the local
+    // number. Without it `PATCH /api/vendor/products/[id]` refuses to store a
+    // lead time at all - an unset cap read as "no cap" would let the value
+    // inflate with nothing to catch it (D-49 shape).
+    ["products.max_lead_time_days", 365, "days"],
   ];
 
   let touched = 0;

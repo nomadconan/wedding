@@ -258,6 +258,8 @@ export default async function ProductDetailPage({
                 summary: product.summary,
                 descriptionSource: descriptionSource(product.description_json),
                 styleTags: (product.style_tags ?? []) as StyleTag[],
+                leadTimeDays: product.lead_time_days,
+                leadTimeNote: product.lead_time_note,
               }}
               rate={rate}
               addOns={addOns}
