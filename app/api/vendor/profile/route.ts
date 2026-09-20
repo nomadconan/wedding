@@ -154,6 +154,14 @@ export async function PUT(request: NextRequest) {
   }
 
   if (media.remove.length > 0) {
+    // **경로를 먼저 읽는다**(FIX-78). 행을 지운 뒤에는 어떤 객체를 지워야 하는지
+    // 알 수 없다 — 경로가 행에만 있기 때문이다.
+    const { data: removingRows } = await supabase
+      .from("vendor_media")
+      .select("id, storage_path")
+      .eq("vendor_id", vendorId)
+      .in("id", media.remove);
+
     const { error } = await supabase
       .from("vendor_media")
       .delete()
@@ -161,6 +169,20 @@ export async function PUT(request: NextRequest) {
       .in("id", media.remove);
 
     if (error) return fail(500, "VENDOR_MEDIA_SAVE_FAILED", "미디어를 삭제하지 못했습니다.");
+
+    // **파일도 지운다**(FIX-78). `vendor-media` 는 **공개 버킷**이라 행만 지우면
+    // 그 주소를 아는 사람에게는 사진이 계속 열린다 — 업체는 내렸다고 생각하는데
+    // 안 내려간 것이다. C-2b 의 상품 사진 삭제가 이미 같은 절차를 쓴다.
+    //
+    // 지우기 전에 **그 경로가 이 업체 아래인지** 확인한다(남의 경로를 넘겨받아
+    // 지우지 않게). 업체 미디어 경로는 `<vendorId>/...` 로 시작한다.
+    const paths = (removingRows ?? [])
+      .map((row) => (row as { storage_path: string }).storage_path)
+      .filter((path) => path.startsWith(`${vendorId}/`));
+
+    if (paths.length > 0) {
+      await createAdminClient().storage.from(MEDIA_BUCKET).remove(paths);
+    }
   }
 
   for (const item of media.updateAlt) {

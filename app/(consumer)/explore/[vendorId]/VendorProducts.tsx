@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { CartActions } from "@/components/domain/CartActions";
 import { PriceDisplay, formatKrw } from "@/components/domain/PriceDisplay";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -89,7 +91,18 @@ export async function VendorProducts({ vendorId }: { vendorId: string }) {
         return (
           <Card key={product.id} data-testid="vendor-product">
             <CardHeader>
-              <CardTitle className="text-base">{product.name}</CardTitle>
+              {/* 상품 상세로 가는 자리(C-2c). **제목이 곧 진입점**이다 — 카드 아래에
+                  버튼을 하나 더 두면 담기·찜과 경쟁하고, 하단 탭은 다섯 칸이 상한이라
+                  거기로 뺄 수도 없다. */}
+              <CardTitle className="text-base">
+                <Link
+                  href={`/explore/${vendorId}/${product.id}`}
+                  className="underline-offset-2 hover:underline"
+                  data-testid="product-detail-link"
+                >
+                  {product.name}
+                </Link>
+              </CardTitle>
               {/* 한 줄 소개(C-2b). 본문·사진 전체를 보여 주는 자리는 상품 상세(C-2c)이며
                   여기서는 업체가 적은 한 줄이 실제로 고객에게 닿는지를 잇는다. */}
               {product.summary ? (

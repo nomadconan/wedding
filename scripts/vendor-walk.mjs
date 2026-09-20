@@ -762,6 +762,66 @@ try {
     return `403 · ${JSON.parse(result.body).error?.code ?? "?"}`;
   });
 
+  // ── FIX-78 — 지운 사진의 주소가 더 이상 열리지 않는다 (C-2c 가 닫았다) ────
+  //
+  // **행만 지우면 공개 버킷의 그 주소는 계속 열린다.** 업체는 내렸다고 생각하는데
+  // 안 내려간 것이다. 소스 검사(`db:rls`)는 "지우는 코드가 있는가" 까지만 보므로
+  // **주소를 실제로 눌러 본다** — C-2b 가 "되돌림 검사 자리가 함께 필요하다" 고
+  // 적어 둔 자리가 여기다.
+  await step("**FIX-78 — 지운 사진의 주소가 더 이상 열리지 않는다**", owner, async () => {
+    const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+    if (!supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL 이 없다");
+
+    const raw = await evaluate(owner, `(async () => {
+      const headers = { "Content-Type": "application/json" };
+      const current = await fetch("/api/vendor/profile").then((r) => r.json());
+      const v = current.data.vendor;
+      const profile = {
+        regionCode: v.region_code || "서울 강남",
+        address: v.address, addressDetail: v.address_detail,
+        capacityMin: v.capacity_min, capacityMax: v.capacity_max,
+        facilities: v.facilities || [], styleTags: v.style_tags || [], intro: v.intro,
+      };
+      const empty = { add: [], remove: [], order: [], updateAlt: [] };
+
+      const added = await fetch("/api/vendor/profile", {
+        method: "PUT", headers,
+        body: JSON.stringify({ profile, media: Object.assign({}, empty, {
+          add: [{ type: "photo", fileName: "fix78.png", altText: "probe" }] }) }),
+      }).then((r) => r.json());
+
+      const upload = added && added.data && added.data.uploads && added.data.uploads[0];
+      if (!upload) return JSON.stringify({ stage: "add", body: JSON.stringify(added).slice(0, 200) });
+
+      // 서명 주소로 실제 바이트를 올린다(PNG 매직 8바이트).
+      const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+      const put = await fetch(upload.signedUrl, {
+        method: "PUT", headers: { "Content-Type": "image/png" }, body: bytes,
+      });
+
+      const publicUrl = "${supabaseUrl}/storage/v1/object/public/vendor-media/" + upload.path;
+      const before = await fetch(publicUrl, { cache: "no-store" }).then((r) => r.status);
+
+      await fetch("/api/vendor/profile", {
+        method: "PUT", headers,
+        body: JSON.stringify({ profile, media: Object.assign({}, empty, { remove: [upload.id] }) }),
+      });
+
+      const after = await fetch(publicUrl, { cache: "no-store" }).then((r) => r.status);
+
+      return JSON.stringify({ stage: "done", putOk: put.ok, before, after });
+    })()`);
+
+    const outcome = JSON.parse(raw);
+    if (outcome.stage !== "done") throw new Error(`미디어 추가 실패: ${outcome.body}`);
+    if (!outcome.putOk) throw new Error("서명 주소 업로드가 실패했다");
+    // **올린 직후에는 열려야 한다** — 안 열리면 아래 404 판정이 공짜로 통과한다.
+    if (outcome.before !== 200) throw new Error(`올린 사진이 안 열린다(${outcome.before}) — 분모가 없다`);
+    if (outcome.after === 200) throw new Error("지웠는데 주소가 그대로 열린다 — FIX-78 이 되살아났다");
+
+    return `올린 뒤 ${outcome.before} · 지운 뒤 ${outcome.after}`;
+  });
+
   // ── 3. 템플릿 — 저장하고 꺼내 쓴다 (C-3) ──────────────────────────────────
   await step("**빠른 답변을 저장한다** — 설정 화면", owner, async () => {
     const info = await goto(owner, "/vendor/settings");
