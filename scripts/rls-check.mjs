@@ -15087,5 +15087,284 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 상품 단위 후기 (C-2e · D-216 · D-217) — 끌어오기 · FIX-39 · 합산 · 막힌 정렬
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  // ── 끌어오는 장치 — 예약이 상품을 정한다 ───────────────────────────────
+  //
+  // **분모부터 센다.** 후기가 0건이면 아래 검사들이 공짜로 통과한다.
+  {
+    const total = sql(`select count(*) from public.reviews;`);
+    const withProduct = sql(`select count(*) from public.reviews where product_id is not null;`);
+
+    check(
+      "**후기가 실재한다** — 아래 검사의 분모다",
+      Number(total) > 0,
+      `reviews=${total} with_product=${withProduct}`,
+    );
+    check(
+      "**상품을 아는 후기가 실재한다** (0 으로 공짜 통과하지 않는다)",
+      Number(withProduct) > 0,
+      `with_product=${withProduct}`,
+    );
+  }
+  check(
+    "**모든 후기의 상품이 그 예약의 상품과 같다** — 지어낸 값이 없다",
+    sql(`select count(*) from public.reviews r
+          join public.bookings b on b.id = r.booking_id
+         where r.product_id is distinct from b.product_id;`) === "0",
+  );
+  check(
+    "**끌어오는 트리거가 서 있다**",
+    sql(`select count(*) from pg_trigger
+          where tgrelid = 'public.reviews'::regclass
+            and tgname = 'trg_reviews_set_product' and not tgisinternal;`) === "1",
+  );
+
+  // **작성자가 보낸 값을 트리거가 덮어쓴다.** 고르게 하면 안 산 상품에 후기가 붙는다.
+  {
+    const probe = `
+      insert into public.bookings (id, couple_id, vendor_id, product_id, status, total_amount,
+                                   applied_fee_rate_bp, applied_planner_fee_rate_bp)
+      select '00000000-0000-0000-0000-0000000e2e01', b.couple_id, b.vendor_id, b.product_id,
+             'confirmed', 1000000, 500, 0
+        from public.bookings b
+       where b.product_id is not null and not exists (select 1 from public.reviews r where r.booking_id = b.id)
+       limit 1;
+    `;
+    const other = sql(`select id::text from public.products
+                        where vendor_id <> (select vendor_id from public.bookings
+                                             where id = '00000000-0000-0000-0000-0000000e2e01')
+                        limit 1;`) ||
+      sql(`select id::text from public.products order by id limit 1;`);
+
+    check(
+      "**작성자가 남의 상품을 보내도 예약의 상품으로 덮인다** (트리거가 정한다)",
+      sql(`begin;
+           ${probe}
+           insert into public.reviews (booking_id, couple_id, vendor_id, product_id, score_price)
+           select b.id, b.couple_id, b.vendor_id, '${other}', 5
+             from public.bookings b where b.id = '00000000-0000-0000-0000-0000000e2e01';
+           select count(*)
+             from public.reviews r join public.bookings b on b.id = r.booking_id
+            where r.booking_id = '00000000-0000-0000-0000-0000000e2e01'
+              and r.product_id = b.product_id
+              and r.product_id is distinct from '${other}';
+           rollback;`).trim() === "1",
+    );
+  }
+
+  // ── FIX-39 의 모양이 늘지 않았다 ────────────────────────────────────────
+  //
+  // S8-11 이 찾은 구멍은 *"작성자가 `vendor_id` 를 남의 업체로 고친다"* 였고
+  // 0058 이 **UPDATE 를 칸 목록으로** 좁혀 닫았다. 새 칸이 그 좁힘을 우회하면 안 된다.
+  check(
+    "**FIX-39 — `reviews` 에 표 단위 UPDATE 가 없다** (있으면 칸 목록이 무효다)",
+    sql(`select count(*) from information_schema.role_table_grants
+          where table_schema = 'public' and table_name = 'reviews'
+            and grantee in ('anon', 'authenticated') and privilege_type = 'UPDATE';`) === "0",
+  );
+  check(
+    "**FIX-39 — `product_id` 가 작성자의 UPDATE 목록에 없다**",
+    sql(`select count(*) from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'reviews'
+            and grantee = 'authenticated' and privilege_type = 'UPDATE'
+            and column_name = 'product_id';`) === "0",
+  );
+  check(
+    "**FIX-39 — `vendor_id`·`booking_id`·`status` 도 여전히 목록에 없다** (기존 좁힘이 살아 있다)",
+    sql(`select count(*) from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'reviews'
+            and grantee = 'authenticated' and privilege_type = 'UPDATE'
+            and column_name in ('vendor_id', 'booking_id', 'status');`) === "0",
+  );
+  check(
+    "**FIX-39 — 작성자가 실제로 상품을 못 바꾼다** (눌러서 확인한다)",
+    rejectedWith(/permission denied/, () =>
+      asUser(owner, `update public.reviews set product_id = null;`),
+    ),
+  );
+  check(
+    "**작성자가 고칠 수 있는 것은 여전히 고친다** (권한을 통째로 잠그지 않았다)",
+    sql(`select count(*) from information_schema.column_privileges
+          where table_schema = 'public' and table_name = 'reviews'
+            and grantee = 'authenticated' and privilege_type = 'UPDATE'
+            and column_name in ('body', 'score_price');`) === "2",
+  );
+
+  // ── 층 2 — 남의 업체 상품을 가리킬 수 있는가 ───────────────────────────
+  check(
+    "**층 2 — 복합 FK 가 남의 업체 상품을 막는다**",
+    sql(`select count(*) from pg_constraint
+          where conrelid = 'public.reviews'::regclass
+            and conname = 'reviews_product_same_vendor_fk' and contype = 'f';`) === "1",
+  );
+  check(
+    "**층 2 — 실제로 막힌다** (업체가 다른 상품을 직접 꽂아 본다)",
+    rejectedWith(/reviews_product_same_vendor_fk|foreign key/, () =>
+      sql(`update public.reviews
+              set product_id = (select p.id from public.products p
+                                 where p.vendor_id <> reviews.vendor_id limit 1)
+            where id = (select id from public.reviews limit 1);`),
+    ),
+  );
+  check(
+    "**층 2 — 같은 업체 상품이면 통과한다** (늘 거절하는 FK 가 아니다)",
+    sqlOrNull(`begin;
+      update public.reviews r
+         set product_id = (select p.id from public.products p
+                            where p.vendor_id = r.vendor_id limit 1)
+       where r.id = (select id from public.reviews limit 1);
+      rollback;`) !== null,
+  );
+
+  // ── 층 3 — 자격의 근거를 자격 대상이 쓸 수 있는가 (FIX-44 의 경계) ──────
+  check(
+    "**층 3 — 작성 자격은 여전히 예약이 정한다** (정책이 `bookings` 를 본다)",
+    /bookings/.test(
+      sql(`select pg_get_expr(polwithcheck, polrelid) from pg_policy
+            where polrelid = 'public.reviews'::regclass and polname = 'reviews_insert';`),
+    ),
+  );
+  check(
+    "**층 3 — 정책이 상품 조건도 함께 본다** (앱 관행이 아니라 DB 조건이다)",
+    /product_id/.test(
+      sql(`select pg_get_expr(polwithcheck, polrelid) from pg_policy
+            where polrelid = 'public.reviews'::regclass and polname = 'reviews_insert';`),
+    ),
+  );
+  check(
+    "**층 3 — 커플이 `bookings` 를 직접 못 쓴다**(FIX-44 의 경계가 살아 있다)",
+    sql(`select count(*) from pg_policy
+          where polrelid = 'public.bookings'::regclass and polcmd in ('a', 'w')
+            and pg_get_expr(coalesce(polwithcheck, polqual), polrelid) like '%is_couple_member%';`) === "0",
+  );
+
+  // ── 비로그인이 보는 것 ──────────────────────────────────────────────────
+  check(
+    "**비로그인에게 작성자 신원이 나가지 않는다** (공개 컬럼 목록에 없다)",
+    !/couple_id|booking_id/.test(srcOf("lib/reviews/read.ts").match(
+      /PUBLIC_REVIEW_COLUMNS =\s*"([^"]*)"/,
+    )?.[1] ?? "couple_id"),
+  );
+  check(
+    "**비공개·철회된 후기는 비로그인에게 안 보인다**",
+    asAnon(
+      `select count(*) from public.reviews where status = 'hidden' or retracted_at is not null;`,
+      // 비공개는 사유·처리자·시각이 모두 있어야 한다(`reviews_hidden_chk`) —
+      // 셋 중 하나라도 빠지면 CHECK 이 막는다. 검사가 그 모양을 지켜서 만든다.
+      `update public.reviews
+          set status = 'hidden', hidden_at = now(), hidden_reason = 'rls probe',
+              hidden_by = (select id from auth.users limit 1)
+        where id = (select id from public.reviews limit 1);`,
+    ) === "0",
+  );
+  check(
+    "**공개 후기는 보인다** (늘 가리는 정책이 아니다 · 분모가 실재한다)",
+    Number(asAnon(`select count(*) from public.reviews;`)) > 0,
+  );
+  check(
+    "**상품 후기 조회가 익명 클라이언트를 쓴다** — 서비스롤로 읽으면 공개 조건이 코드 몫이 된다",
+    /createPublicClient/.test(srcOf("lib/reviews/read.ts")),
+  );
+
+  // ── 합산 규칙 — 캐시 칸을 만들지 않았다 ────────────────────────────────
+  check(
+    "**평점 캐시 칸이 없다** — 저장하면 두 곳이 갈리고 어느 쪽이 맞는지 화면으로는 모른다",
+    sql(`select count(*) from information_schema.columns
+          where table_schema = 'public' and table_name in ('products', 'vendors')
+            and column_name in ('rating_avg', 'review_count', 'rating_count', 'score_avg');`) === "0",
+  );
+  check(
+    "**업체 평점을 상품 평점의 평균으로 내지 않는다** — 규칙이 코드에 있다",
+    /RATING_COMPOSITION/.test(srcOf("lib/core/review/rating.ts")) &&
+      /다시 평균 내지 않습니다/.test(srcOf("lib/core/review/rating.ts")),
+  );
+  check(
+    "**상품 평점도 같은 함수를 쓴다** — 분모만 다르다",
+    /rateVendor/.test(srcOf("lib/reviews/read.ts")) &&
+      /loadProductRating/.test(srcOf("lib/reviews/read.ts")),
+  );
+  // **문구를 화면이 손으로 적지 않는다.** 로더가 함수에서 받아 넘기고 화면은 그대로
+  // 그린다 — 화면과 API 가 **같은 문구**를 쓰게 하려고 C-2e 가 로더로 옮겼다.
+  // 양쪽을 다 본다: 함수를 부르는 자리와, 그 값을 그리는 자리.
+  check(
+    "**평균이 건수 없이 나가지 않는다** — 로더가 문구를 함수에서 받는다",
+    /productRatingCaption\(rating\)/.test(srcOf("lib/products/detail-query.ts")),
+  );
+  check(
+    "**화면은 그 문구를 그대로 그린다** — 손으로 적은 문자열이 아니다",
+    /\{caption\}/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/[productId]/ProductReviews.tsx"),
+    ),
+  );
+  check(
+    "**화면과 API 가 같은 후기를 본다** — 화면이 자기 조회를 따로 하지 않는다",
+    /product\.reviews\.items/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+    ) &&
+      !/loadProductReviews/.test(
+        srcOf("app/(consumer)/explore/[vendorId]/[productId]/ProductReviews.tsx"),
+      ),
+  );
+
+  // ── 막힌 정렬 셋 — 여는 조건을 화면이 적는가 ───────────────────────────
+  {
+    const src = srcOf("lib/core/schemas/explore.ts");
+    const block = (src.match(/EXPLORE_SORT_PENDING[\s\S]*?\n\];/) ?? ["", ""])[0];
+    const codes = [...block.matchAll(/code: "([a-z_]+)"/g)].map((m) => m[1]);
+    // **타입 선언(`unlock: string;`)에 걸리지 않게** 문자열이 붙은 자리만 센다.
+    // 처음엔 `/unlock:/g` 로 세어 **4** 가 나왔다(항목 셋 + 타입 한 줄) — 지시가
+    // 경고한 "includes() 가 타입 선언에도 걸린다" 가 바로 이것이다.
+    const unlocks = [...block.matchAll(/unlock:\s*$|unlock:\s*"/gm)].length;
+
+    check(
+      "**막힌 정렬 목록을 실제로 읽었다** (빈 목록으로 통과하지 않는다)",
+      codes.length === 3,
+      `codes=${codes.join(",")}`,
+    );
+    check(
+      "**셋 다 여는 조건을 갖는다** — 이유만 적으면 '언젠가는 되겠지' 로 읽힌다",
+      unlocks === 3,
+      `unlock=${unlocks}`,
+    );
+    check(
+      "**`review_score` 의 이유가 정정됐다** — 후기 데이터는 이제 있다",
+      !/후기 데이터가 아직 없습니다/.test(block),
+    );
+    check(
+      "**셋 다 아직 열지 않았다** — 열 수 있는 것만 연다",
+      sql(`select 1;`) === "1" &&
+        !/EXPLORE_SORTS = \[[^\]]*review_score/.test(src) &&
+        !/EXPLORE_SORTS = \[[^\]]*available_date/.test(src) &&
+        !/EXPLORE_SORTS = \[[^\]]*response_speed/.test(src),
+    );
+  }
+  check(
+    "**여는 조건이 화면에 그려진다** (import 가 아니라 그려지는 자리를 본다)",
+    /\{item\.unlock\}/.test(srcOf("app/(consumer)/explore/ExploreFilters.tsx")),
+  );
+
+  // ── 상세 화면이 채운 자리를 '준비 중' 으로 적지 않는다 ─────────────────
+  check(
+    "**상품 후기가 「아직 준비 중」 목록에서 빠졌다** — 채운 자리를 준비 중이라 적지 않는다",
+    !/"reviews"/.test(
+      (srcOf("lib/core/product/detail.ts").match(/PENDING_SECTIONS = \[[^\]]*\]/) ?? [""])[0],
+    ),
+  );
+  check(
+    "**그래도 목록이 비지 않았다** — 남은 자리는 계속 말한다",
+    /"leadTime"/.test(
+      (srcOf("lib/core/product/detail.ts").match(/PENDING_SECTIONS = \[[^\]]*\]/) ?? [""])[0],
+    ),
+  );
+  check(
+    "**상품 상세가 후기 자리를 잇는다** — 만든 화면이 도달 불가로 남지 않는다",
+    /<ProductReviews/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

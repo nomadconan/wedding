@@ -48,17 +48,40 @@ export const DEFAULT_EXPLORE_SORT: ExploreSort = "price_asc";
  * 목록에서 조용히 빼면 "그런 정렬은 없다"로 읽힌다. 데이터가 없어서 못 하는 것과
  * 하지 않기로 한 것은 다르므로 화면에 이유를 밝힌다(S2-08 에서 세운 원칙과 같다).
  */
-export const EXPLORE_SORT_PENDING: { code: string; label: string; reason: string; task: string }[] = [
+/**
+ * **여는 조건을 함께 적는다**(C-2e · 완료 조건 ③).
+ *
+ * 이유만 적으면 "언젠가는 되겠지" 로 읽히고, 무엇이 채워져야 열리는지 아무도 모른다.
+ * **셋 다 같은 모양의 문제**다 — 값이 없는 쪽을 목록에서 빼면 노출 비대칭이 생기고,
+ * 그대로 두면 순서가 뒤집힌다. `price_index_gap` 은 그 답을 이미 냈다:
+ * **맨 뒤에 두고 '비교 기준 없음' 이라고 적는다.** 그 처리를 각 축에서 정하는 것이
+ * 여는 조건이다.
+ */
+export const EXPLORE_SORT_PENDING: {
+  code: string;
+  label: string;
+  reason: string;
+  /** 무엇이 채워지면 여는가. **"언젠가" 가 아니라 조건을 적는다.** */
+  unlock: string;
+  task: string;
+}[] = [
   {
     code: "review_score",
     label: "후기 점수 순",
-    reason: "후기 데이터가 아직 없습니다.",
-    task: "S8-02",
+    // **C-2e 정정.** 그전 문구는 "후기 데이터가 아직 없습니다" 였는데 그것은 이제
+    // 사실이 아니다 — 후기 표도 있고 상품 단위 후기도 있다(C-2e). 이유가
+    // "데이터가 없다" 에서 "표본이 일부다" 로 바뀌었다(`response_speed` 와 같은 경로).
+    reason:
+      "후기가 쌓인 업체가 아직 일부라, 지금 정렬하면 후기를 받아 본 적이 있는지가 순서를 정하게 됩니다.",
+    unlock:
+      "후기가 없는 업체를 어디에 둘지 정하면 엽니다 — 참가격 정렬은 '맨 뒤 + 비교 기준 없음' 으로 그 답을 냈습니다.",
+    task: "C-2e",
   },
   {
     code: "available_date",
     label: "예약 가능일 순",
     reason: "재고 캘린더를 등록한 업체가 일부라, 지금 정렬하면 등록 여부가 순서를 정하게 됩니다.",
+    unlock: "캘린더를 등록하지 않은 업체를 어디에 둘지 정하면 엽니다.",
     task: "S2-05",
   },
   // S4-12 가 **기록할 자리를 만들었다**(`inquiry_targets.created_at → responded_at`).
@@ -71,6 +94,7 @@ export const EXPLORE_SORT_PENDING: { code: string; label: string; reason: string
     label: "응답 속도 순",
     reason:
       "응답 기록이 쌓인 업체가 아직 일부라, 지금 정렬하면 문의를 받아 본 적이 있는지가 순서를 정하게 됩니다.",
+    unlock: "응답 기록이 없는 업체를 어디에 둘지 정하면 엽니다.",
     task: "S4-12",
   },
 ];

@@ -5,6 +5,7 @@ import {
 } from "@/lib/core/review/rating";
 import { REVIEWABLE_BOOKING_STATUSES, type ReviewBlockReason } from "@/lib/core/review/write";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createPublicClient } from "@/lib/explore/query";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -87,6 +88,61 @@ export async function loadVendorReviews(vendorId: string, limit = 50): Promise<P
   if (error) throw new Error("REVIEW_LOAD_FAILED");
 
   return ((data ?? []) as PublicRow[]).map(toPublic);
+}
+
+/**
+ * 상품 상세에 실리는 공개 후기 (C-2e).
+ *
+ * **익명 클라이언트로 읽는다** — 상품 상세는 비로그인이 보는 화면이고, 그 로더
+ * (`lib/products/detail-query.ts`)가 같은 클라이언트를 쓴다. 정책
+ * (`reviews_select_public`)이 비공개·철회된 후기를 막는 것은 동일하다.
+ *
+ * `product_id` 가 **null 인 후기는 여기 오지 않는다** — 상품을 모르는 후기이며
+ * 업체 단위로만 읽힌다(그 사실을 화면이 적는다).
+ */
+export async function loadProductReviews(productId: string, limit = 50): Promise<PublicReview[]> {
+  const { data, error } = await createPublicClient()
+    .from("reviews")
+    .select(PUBLIC_REVIEW_COLUMNS)
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error("REVIEW_LOAD_FAILED");
+
+  return ((data ?? []) as PublicRow[]).map(toPublic);
+}
+
+/**
+ * 상품 평점 (C-2e).
+ *
+ * **업체 평점과 같은 함수**(`rateVendor`)에 **그 상품의 후기만** 넘긴다 — 규칙도
+ * 가중도 같고 분모만 다르다. 업체 평점을 상품 평점의 평균으로 내지 않는 이유는
+ * `RATING_COMPOSITION` 에 적혀 있다.
+ *
+ * 표시 상한과 분모를 같이 쓰지 않는 것도 업체 쪽과 같다 — 점수 세 칸만 상한 없이 읽는다.
+ */
+export async function loadProductRating(productId: string): Promise<VendorRating> {
+  const { data, error } = await createPublicClient()
+    .from("reviews")
+    .select("score_price, score_response, score_fulfillment")
+    .eq("product_id", productId);
+
+  if (error) throw new Error("REVIEW_RATING_FAILED");
+
+  const rows = (data ?? []) as {
+    score_price: number | null;
+    score_response: number | null;
+    score_fulfillment: number | null;
+  }[];
+
+  return rateVendor(
+    rows.map((row) => ({
+      scorePrice: row.score_price,
+      scoreResponse: row.score_response,
+      scoreFulfillment: row.score_fulfillment,
+    })),
+  );
 }
 
 /**

@@ -257,7 +257,13 @@ export function ExploreFilters({ defaults }: ExploreFiltersProps) {
               <ul className="mt-1 space-y-1" data-testid="sort-pending">
                 {EXPLORE_SORT_PENDING.map((item) => (
                   <li key={item.code}>
-                    {item.label} — {item.reason} ({item.task})
+                    {item.label} — {item.reason}
+                    {/* **여는 조건을 함께 적는다**(C-2e). 이유만 적으면
+                        "언젠가는 되겠지" 로 읽히고 무엇이 채워져야 열리는지 모른다. */}
+                    <span className="block" data-testid="sort-unlock">
+                      여는 조건: {item.unlock}
+                    </span>
+                    ({item.task})
                   </li>
                 ))}
               </ul>

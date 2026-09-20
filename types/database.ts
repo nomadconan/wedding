@@ -4460,6 +4460,7 @@ export type Database = {
           hidden_by: string | null
           hidden_reason: string | null
           id: string
+          product_id: string | null
           retracted_at: string | null
           retracted_by: string | null
           score_fulfillment: number | null
@@ -4482,6 +4483,7 @@ export type Database = {
           hidden_by?: string | null
           hidden_reason?: string | null
           id?: string
+          product_id?: string | null
           retracted_at?: string | null
           retracted_by?: string | null
           score_fulfillment?: number | null
@@ -4504,6 +4506,7 @@ export type Database = {
           hidden_by?: string | null
           hidden_reason?: string | null
           id?: string
+          product_id?: string | null
           retracted_at?: string | null
           retracted_by?: string | null
           score_fulfillment?: number | null
@@ -4530,6 +4533,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "couples"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reviews_product_same_vendor_fk"
+            columns: ["product_id", "vendor_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id", "vendor_id"]
           },
           {
             foreignKeyName: "reviews_vendor_id_fkey"

@@ -25,6 +25,7 @@ import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/v
 import { loadProductDetail } from "@/lib/products/detail-query";
 
 import { ProductCartActions } from "./ProductCartActions";
+import { ProductReviews } from "./ProductReviews";
 
 export const metadata: Metadata = {
   title: "상품 상세 — 웨딩클리어",
@@ -260,6 +261,14 @@ export default async function ProductDetailPage(props: {
         <Suspense fallback={<LoadingState label="담기 상태를 불러오는 중" rows={1} variant="block" />}>
           <ProductCartActions vendorId={product.vendorId} productId={product.id} />
         </Suspense>
+
+        {/* 상품 단위 검증 후기(C-2e · F-C-17 확장).
+            **로더가 이미 읽었다** — 화면이 자기 조회를 따로 하면 API 와 다른 것을 본다. */}
+        <ProductReviews
+          rating={product.reviews.rating}
+          caption={product.reviews.caption}
+          reviews={product.reviews.items}
+        />
 
         {/* 견적 요청(F-C-13 · FIX-66). 업체 상세와 **같은 길**로 보낸다 —
             여기서 1:1 문의를 새로 만들면 채팅과 구분이 사라진다(S4-12 · CONTACT_PATHS). */}
