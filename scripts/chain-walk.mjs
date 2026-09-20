@@ -990,6 +990,135 @@ try {
     return `견적=예약=계약 ${Number(quote).toLocaleString("ko-KR")}원`;
   });
 
+  // ── 8b. 후기 — 거래가 끝나면 상품에 후기가 붙는다 (C-2e) ─────────────────
+  //
+  // 사슬은 결제에서 끝났는데, **후기는 그 사슬이 만든 자격 위에 선다.**
+  // 확정된 예약이 있어야 쓸 수 있고(정책), 그 예약이 가리키는 상품에 붙는다(트리거).
+  // 여기서 밟지 않으면 "검증 후기" 라는 말이 **화면으로 확인된 적 없는 말**이 된다.
+  await step("**소비자가 후기를 쓴다** — 확정된 예약이 자격이다(F-C-17)", consumer, async () => {
+    const info = await goto(consumer, `/reviews/new/${chain.bookingId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 200)}`);
+
+    const form = await evaluate(consumer, `!!document.querySelector('[data-testid="review-form"]')`);
+    if (!form) throw new Error(`후기 폼이 안 열렸다: ${info.text.slice(0, 200)}`);
+
+    // 축 셋에 각각 점수를 준다. 점수 버튼에는 testid 가 없어 fieldset 안에서 고른다.
+    await evaluate(consumer, `(() => {
+      for (const set of document.querySelectorAll("fieldset")) {
+        const five = [...set.querySelectorAll("button")].find((b) => b.textContent.trim() === "5");
+        if (five) five.click();
+      }
+      return true;
+    })()`);
+
+    await fill(consumer, '[data-testid="review-body"]', "C-2e 실주행 후기 — 견적대로 진행됐어요.");
+    await click(consumer, "button", { text: "후기 올리기" });
+
+    const until = Date.now() + ms(25000);
+    for (;;) {
+      const row = sql(`select coalesce(product_id::text, 'NULL')
+                         from public.reviews where booking_id = '${chain.bookingId}';`);
+      if (row && row !== "NULL") {
+        chain.reviewProductId = row;
+
+        return `product_id=${row.slice(0, 8)}`;
+      }
+      if (Date.now() > until) {
+        const info2 = await snapshot(consumer);
+        throw new Error(`후기가 저장되지 않았다(product=${row || "없음"}): ${info2.text.slice(0, 250)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**상품은 작성자가 고른 것이 아니라 예약이 정했다**", null, async () => {
+    const same = sql(`select count(*) from public.reviews r
+                        join public.bookings b on b.id = r.booking_id
+                       where r.booking_id = '${chain.bookingId}'
+                         and r.product_id = b.product_id;`);
+    if (same !== "1") throw new Error(`후기의 상품이 예약의 상품과 다르다(${same})`);
+
+    return "reviews.product_id = bookings.product_id";
+  });
+
+  await step("**그 후기가 상품 상세에 뜬다** — 업체 상세가 아니라 상품 한 장에", consumer, async () => {
+    const vendorId = sql(`select vendor_id::text from public.bookings where id = '${chain.bookingId}';`);
+    const info = await goto(consumer, `/explore/${vendorId}/${chain.reviewProductId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 200)}`);
+
+    const view = await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="product-reviews"]');
+      const caption = document.querySelector('[data-testid="product-rating-caption"]');
+      return JSON.stringify({
+        hasBox: Boolean(box),
+        body: box ? box.innerText.includes("C-2e 실주행 후기") : false,
+        caption: caption ? caption.innerText.trim() : "",
+      });
+    })()`);
+    const { hasBox, body, caption } = JSON.parse(view);
+
+    if (!hasBox) throw new Error("상품 상세에 후기 자리가 없다");
+    if (!body) throw new Error(`후기 본문이 상품 상세에 없다: ${info.text.slice(0, 200)}`);
+
+    return `본문 보임 · ${caption.slice(0, 40)}`;
+  });
+
+  await step("**평균이 건수 없이 나가지 않는다**(S8-11 규칙) — 분모를 함께 적는다", consumer, async () => {
+    const view = await evaluate(consumer, `(() => {
+      const caption = document.querySelector('[data-testid="product-rating-caption"]');
+      const overall = document.querySelector('[data-testid="product-rating-overall"]');
+      return JSON.stringify({
+        caption: caption ? caption.innerText.trim() : "",
+        overall: overall ? overall.innerText.trim() : "",
+      });
+    })()`);
+    const { caption, overall } = JSON.parse(view);
+
+    // 평균이 보이는데 건수가 없으면 그것이 이 검사가 막는 상태다.
+    if (overall === "") throw new Error("평균이 안 보인다 — 분모가 없다");
+    if (!/\d+건/.test(caption)) throw new Error(`건수가 없다: "${caption}"`);
+    if (!caption.includes("이 상품")) {
+      throw new Error(`업체 후기와 구분되지 않는다: "${caption}"`);
+    }
+
+    return `${overall} · ${caption.slice(0, 40)}`;
+  });
+
+  await step("**막힌 정렬은 여는 조건을 적는다**(C-2e 완료 조건 ③)", consumer, async () => {
+    const info = await goto(consumer, "/explore");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    // 필터 패널은 조건이 없으면 **접혀 있다**(`useState(activeCount > 0)`).
+    // 접힌 동안에는 DOM 에 없으므로 먼저 펼친다 — 사용자가 여는 조건에 실제로
+    // 닿을 수 있는지까지 확인하는 셈이다.
+    await evaluate(consumer, `(() => {
+      const toggle = [...document.querySelectorAll("button")]
+        .find((b) => /펼치기|접기/.test(b.textContent || ""));
+      if (toggle && /펼치기/.test(toggle.textContent || "")) toggle.click();
+      return true;
+    })()`);
+    await sleep(300);
+
+    const view = await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="sort-pending"]');
+      const unlocks = document.querySelectorAll('[data-testid="sort-unlock"]');
+      return JSON.stringify({
+        items: box ? box.querySelectorAll("li").length : 0,
+        unlocks: unlocks.length,
+        text: box ? box.innerText.replace(/\s+/g, " ").slice(0, 200) : "",
+      });
+    })()`);
+    const { items, unlocks, text } = JSON.parse(view);
+
+    if (items === 0) throw new Error("막힌 정렬 목록이 비었다 — 분모가 없다");
+    if (unlocks !== items) throw new Error(`여는 조건이 빠진 항목이 있다(${unlocks}/${items})`);
+    if (/후기 데이터가 아직 없습니다/.test(text)) {
+      throw new Error("후기가 생겼는데 화면은 아직 '후기 데이터가 없다' 고 적는다");
+    }
+
+    return `막힌 정렬 ${items}가지 · 전부 여는 조건 있음`;
+  });
+
   // ── 9. 하이드레이션·콘솔 ──────────────────────────────────────────────────
   await step("사슬 화면 어디에도 콘솔 오류가 없다", null, async () => {
     const noisy = steps.filter((s) => s.consoleErrors.length > 0);

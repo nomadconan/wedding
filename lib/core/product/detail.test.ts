@@ -103,10 +103,10 @@ describe("경로의 업체와 상품의 업체", () => {
 });
 
 describe("아직 열지 않은 자리", () => {
-  it("둘을 말한다 — 빈 목록이 아니다", () => {
-    // C-2d 가 `styleTags` 를 채우면서 목록에서 뺐다. 채운 자리를 남겨 두면
-    // 화면이 "준비 중" 이라 적으면서 바로 위에 그 값을 보여 준다.
-    expect([...PENDING_SECTIONS]).toEqual(["reviews", "leadTime"]);
+  it("하나 남았다 — 빈 목록이 아니다", () => {
+    // 채운 자리는 뺀다(C-2d: styleTags · C-2e: reviews). 남겨 두면 화면이
+    // "준비 중" 이라 적으면서 바로 위에 그 값을 보여 준다.
+    expect([...PENDING_SECTIONS]).toEqual(["leadTime"]);
   });
 
   it("모든 자리에 문구가 있다 — 조용히 빠지는 자리가 없다", () => {

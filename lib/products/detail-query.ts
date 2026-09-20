@@ -2,9 +2,11 @@ import { NO_INDEX_BASELINE_NOTE, priceGapBp } from "@/lib/core/pricing/price-ind
 import { effectiveStyleTags, type EffectiveStyleTags } from "@/lib/core/product/concept";
 import { descriptionSource } from "@/lib/core/product/content";
 import { priceBaselineView, type PhotoView, type PriceBaselineView } from "@/lib/core/product/detail";
+import { productRatingCaption, type VendorRating } from "@/lib/core/review/rating";
 import { summarizeAddOns, type AddOnSummary } from "@/lib/core/schemas/product-option";
 import { createPublicClient } from "@/lib/explore/query";
 import { indexKey, loadPriceIndexMap } from "@/lib/pricing/price-index-query";
+import { loadProductRating, loadProductReviews, type PublicReview } from "@/lib/reviews/read";
 import { MEDIA_BUCKET, publicMediaUrl } from "@/lib/vendor/product-media";
 
 /**
@@ -57,6 +59,8 @@ export type ProductDetail = {
   /** 컨셉(C-2d). **상품이 비면 업체 태그를 상속하고 출처를 함께 준다.** */
   styleTags: EffectiveStyleTags;
   baseline: PriceBaselineView;
+  /** 상품 단위 검증 후기(C-2e). **평균은 건수·문구와 한 덩어리로 나간다.** */
+  reviews: { rating: VendorRating; caption: string; items: PublicReview[] };
   publishedAt: string | null;
 };
 
@@ -152,6 +156,12 @@ export async function loadProductDetail(input: {
     }));
 
   // 참가격 — **탐색 목록과 같은 키·같은 함수**를 쓴다.
+  // 후기도 같은 로더가 싣는다 — 화면과 API 가 다른 것을 보지 않게(C-2c 의 규칙).
+  const [rating, reviewItems] = await Promise.all([
+    loadProductRating(product.id),
+    loadProductReviews(product.id),
+  ]);
+
   const indexMap = await loadPriceIndexMap(client, [
     { regionCode: vendor.region_code ?? "", category: vendor.category },
   ]);
@@ -190,6 +200,7 @@ export async function loadProductDetail(input: {
       productTags: product.style_tags,
       vendorTags: vendor.style_tags,
     }),
+    reviews: { rating, caption: productRatingCaption(rating), items: reviewItems },
     baseline: priceBaselineView({
       gapBp: priceGapBp(product.base_price_total, index?.p50 ?? null),
       p50: index?.p50 ?? null,
