@@ -635,13 +635,30 @@ try {
   });
 
   await step("**보낸 뒤 화면이 몇 곳에 갔는지 말한다** — 간 적 없는 곳에 갔다고 적지 않는다", consumer, async () => {
-    const sent = await evaluate(
-      consumer,
-      `(document.querySelector('[data-testid="inquiry-sent"]') || {}).innerText || ""`,
-    );
-    if (!String(sent).trim()) throw new Error("보낸 뒤 아무 말도 없다");
+    /**
+     * **한 번만 읽지 않는다.**
+     *
+     * 앞 걸음은 DB 에 행이 생긴 것을 보고 통과하는데, 그 시점에 화면은 아직 다시
+     * 그려지지 않았을 수 있다. 로컬에서는 늘 통과했고 **CI 에서만 떨어졌다** —
+     * 바로 다음 걸음이 "인박스 1건" 으로 통과했으니 문의는 실제로 만들어졌고,
+     * 못 본 것은 **문구가 그려지기 전에 읽어서**다.
+     *
+     * **끝내 안 뜨면 여전히 FAIL 이다** — 기다림을 넣는 것이지 통과시키는 것이 아니다.
+     */
+    const until = Date.now() + ms(15000);
+    for (;;) {
+      const sent = await evaluate(
+        consumer,
+        `(document.querySelector('[data-testid="inquiry-sent"]') || {}).innerText || ""`,
+      );
 
-    return String(sent).replace(/\s+/g, " ").trim().slice(0, 80);
+      if (String(sent).trim()) return String(sent).replace(/\s+/g, " ").trim().slice(0, 80);
+      if (Date.now() > until) {
+        const info = await snapshot(consumer);
+        throw new Error(`보낸 뒤 아무 말도 없다: ${info.text.slice(0, 200)}`);
+      }
+      await sleep(700);
+    }
   });
 
   // ── 2. 견적 ────────────────────────────────────────────────────────────────
