@@ -13,6 +13,7 @@ import {
   type ProductStatus,
 } from "@/lib/core/schemas/product";
 import { descriptionSource, productContentSuggestions } from "@/lib/core/product/content";
+import { type StyleTag } from "@/lib/core/schemas/onboarding";
 import { summarizeAddOns } from "@/lib/core/schemas/product-option";
 import { resolveVendorCommission } from "@/lib/pricing/vendor-rate";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -68,6 +69,14 @@ export default async function ProductDetailPage({
   if (!product) notFound();
 
   const vendor = await findMemberVendor(user.id);
+
+  // 업체가 적은 컨셉. 상품이 비었을 때 **상속되는 값**이라 화면이 그것을 말한다(C-2d).
+  const { data: vendorStyleRow } = await supabase
+    .from("vendors")
+    .select("style_tags")
+    .eq("id", product.vendor_id)
+    .maybeSingle();
+  const vendorStyleTags = ((vendorStyleRow?.style_tags ?? []) as string[]) as StyleTag[];
 
   const { data: membership } = await supabase
     .from("vendor_members")
@@ -248,10 +257,12 @@ export default async function ProductDetailPage({
                 priceIncludesVat: product.price_includes_vat,
                 summary: product.summary,
                 descriptionSource: descriptionSource(product.description_json),
+                styleTags: (product.style_tags ?? []) as StyleTag[],
               }}
               rate={rate}
               addOns={addOns}
               defaultCategory={vendor?.category ?? product.category}
+              vendorStyleTags={vendorStyleTags}
               canEdit={canEdit}
             />
           </CardContent>

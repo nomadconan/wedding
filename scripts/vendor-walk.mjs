@@ -893,6 +893,95 @@ try {
    * 시험하려면 **들어온 문의가 있어야** 한다. 예전에는 세션 fetch 로 만들었고
    * 그 칸은 아무도 지키지 못했다 — 이제 폼으로 보낸다.
    */
+  // ── C-2d — 업체가 컨셉을 붙이고 소비자가 그것으로 찾는다 ─────────────────
+  //
+  // **한 업체의 두 패키지가 서로 다른 컨셉으로 걸러진다**(완료 조건 ①)를 화면으로
+  // 민다. 같은 업체·같은 가격대인데 **고른 컨셉에 따라 하나만 나와야** 한다 —
+  // 업체 단위 태그였다면 둘 다 나오거나 둘 다 안 나온다.
+  await step("**업체가 상품에 컨셉을 붙인다**(C-2d) — 화면에서 고른다", owner, async () => {
+    const info = await goto(owner, `/vendor/products/${walk.productId}`);
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const has = await evaluate(owner, `!!document.querySelector('[data-testid="product-style-tags"]')`);
+    if (!has) throw new Error("컨셉 고르는 자리가 없다");
+
+    await click(owner, "#product-style-minimal");
+    await click(owner, 'button[type="submit"]', { text: "상품 저장" });
+
+    const until = Date.now() + ms(25000);
+    for (;;) {
+      const tags = sql(`select coalesce(array_to_string(style_tags, ','), '')
+                          from public.products where id = '${walk.productId}';`);
+      if (tags.includes("minimal")) return `style_tags=${tags}`;
+      if (Date.now() > until) {
+        const info2 = await snapshot(owner);
+        throw new Error(`컨셉이 저장되지 않았다(${tags}): ${info2.text.slice(0, 200)}`);
+      }
+      await sleep(700);
+    }
+  });
+
+  await step("**상품이 업체 태그를 덮는다** — 합집합이 아니다", null, async () => {
+    // 업체에는 다른 컨셉을 준다. 상속이라면 둘 다 걸리고, 덮어쓰기라면 상품 것만 걸린다.
+    sql(`update public.vendors set style_tags = array['romantic']::text[]
+          where id = '${walk.vendorId}';`);
+
+    const vendorTags = sql(`select array_to_string(style_tags, ',') from public.vendors
+                             where id = '${walk.vendorId}';`);
+    if (vendorTags !== "romantic") throw new Error(`업체 태그가 안 들어갔다: ${vendorTags}`);
+
+    return `업체=romantic · 상품=minimal`;
+  });
+
+  await step("**소비자가 상품 컨셉으로 찾는다** — 고른 컨셉의 상품만 나온다", consumer, async () => {
+    const info = await goto(consumer, "/explore?styleTags=minimal&taste=off");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const found = await evaluate(consumer, `(() => {
+      const text = document.body.innerText;
+      return JSON.stringify({ hit: text.includes("C-3 주말 점심 패키지"), len: text.length });
+    })()`);
+    const { hit, len } = JSON.parse(found);
+
+    if (len < 100) throw new Error("화면이 거의 비었다 — 분모가 없다");
+    if (!hit) throw new Error(`minimal 로 걸렀는데 그 상품이 없다: ${info.text.slice(0, 200)}`);
+
+    return `minimal → 상품 있음`;
+  });
+
+  await step("**업체 태그로는 안 걸린다** — 상품이 덮었기 때문이다(완료 조건 ①)", consumer, async () => {
+    const info = await goto(consumer, "/explore?styleTags=romantic&taste=off");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const hit = await evaluate(
+      consumer,
+      `document.body.innerText.includes("C-3 주말 점심 패키지")`,
+    );
+    if (hit) throw new Error("업체 태그(romantic)로도 걸린다 — 합집합이 되어 버렸다");
+
+    return `romantic → 그 상품 없음`;
+  });
+
+  await step("**태그를 안 적은 상품은 업체 태그를 상속한다** — 기존 상품이 사라지지 않는다", consumer, async () => {
+    // 사본(C-3 이 만든 것)은 태그가 비어 있다. 업체가 romantic 이므로 상속으로 걸려야 한다.
+    const bare = sql(`select count(*) from public.products
+                       where vendor_id = '${walk.vendorId}' and status = 'published'
+                         and coalesce(array_length(style_tags, 1), 0) = 0;`);
+    if (bare === "0") throw new Error("태그 없는 게시 상품이 없다 — 분모가 없다");
+
+    const info = await goto(consumer, "/explore?styleTags=romantic&taste=off");
+    const count = await evaluate(
+      consumer,
+      `document.querySelectorAll('[data-testid="vendor-card"]').length`,
+    );
+
+    if (Number(count) === 0) {
+      throw new Error(`상속으로 걸려야 하는데 0건이다: ${info.text.slice(0, 200)}`);
+    }
+
+    return `태그 없는 게시 ${bare}건 · romantic 결과 ${count}건`;
+  });
+
   await step("소비자가 **표준 폼으로** 문의를 보낸다(FIX-66)", consumer, async () => {
     const info = await goto(consumer, `/inquiries/new?vendor=${walk.vendorId}`);
     if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);

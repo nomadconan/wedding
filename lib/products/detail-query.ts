@@ -1,4 +1,5 @@
 import { NO_INDEX_BASELINE_NOTE, priceGapBp } from "@/lib/core/pricing/price-index";
+import { effectiveStyleTags, type EffectiveStyleTags } from "@/lib/core/product/concept";
 import { descriptionSource } from "@/lib/core/product/content";
 import { priceBaselineView, type PhotoView, type PriceBaselineView } from "@/lib/core/product/detail";
 import { summarizeAddOns, type AddOnSummary } from "@/lib/core/schemas/product-option";
@@ -31,7 +32,7 @@ import { MEDIA_BUCKET, publicMediaUrl } from "@/lib/vendor/product-media";
 /** 화면·API 가 함께 읽는 컬럼. 한 곳에서 관리해야 응답 모양이 갈라지지 않는다. */
 const PRODUCT_COLUMNS =
   "id, vendor_id, category, name, base_price_total, price_includes_vat, included_items_json, " +
-  "capacity_min, capacity_max, add_ons_declared_at, summary, description_json, published_at";
+  "capacity_min, capacity_max, add_ons_declared_at, summary, description_json, style_tags, published_at";
 
 export type ProductDetail = {
   id: string;
@@ -53,6 +54,8 @@ export type ProductDetail = {
   addOns: AddOnSummary;
   options: { id: string; name: string; price: number; isMandatory: boolean; condition: string | null }[];
   photos: PhotoView[];
+  /** 컨셉(C-2d). **상품이 비면 업체 태그를 상속하고 출처를 함께 준다.** */
+  styleTags: EffectiveStyleTags;
   baseline: PriceBaselineView;
   publishedAt: string | null;
 };
@@ -70,6 +73,7 @@ type ProductRow = {
   add_ons_declared_at: string | null;
   summary: string | null;
   description_json: unknown;
+  style_tags: string[] | null;
   published_at: string | null;
 };
 
@@ -100,7 +104,7 @@ export async function loadProductDetail(input: {
   // (상품 정책도 같은 조건을 보지만 **이름·지역을 이 화면이 쓰므로** 어차피 읽는다.)
   const { data: vendorRow } = await client
     .from("vendors")
-    .select("id, name, category, region_code")
+    .select("id, name, category, region_code, style_tags")
     .eq("id", input.vendorId)
     .maybeSingle();
 
@@ -109,6 +113,7 @@ export async function loadProductDetail(input: {
     name: string;
     category: string;
     region_code: string | null;
+    style_tags: string[] | null;
   } | null;
   if (!vendor) return null;
 
@@ -180,6 +185,11 @@ export async function loadProductDetail(input: {
       condition: option.trigger_condition?.description ?? null,
     })),
     photos,
+    // **상속 규칙은 순수 함수 하나**가 갖는다 — 탐색 질의도 같은 함수를 쓴다.
+    styleTags: effectiveStyleTags({
+      productTags: product.style_tags,
+      vendorTags: vendor.style_tags,
+    }),
     baseline: priceBaselineView({
       gapBp: priceGapBp(product.base_price_total, index?.p50 ?? null),
       p50: index?.p50 ?? null,

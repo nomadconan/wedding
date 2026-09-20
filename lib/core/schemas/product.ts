@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 
+import { STYLE_TAGS } from "./onboarding";
 import { VendorCategorySchema } from "./vendor";
 
 /** 상품 게시 상태. DB `products.status` CHECK 와 값이 같다. */
@@ -104,6 +105,14 @@ export const ProductInputFieldsSchema = z.object({
     includedItems: z.array(IncludedItemSchema).max(50, "포함 항목은 50개까지 등록할 수 있습니다.").default([]),
     capacityMin: CapacitySchema.default(null),
     capacityMax: CapacitySchema.default(null),
+    /**
+     * 상품 컨셉(C-2d · F-C-10 필터).
+     *
+     * 어휘는 `couples.style_tags`·`vendors.style_tags` 와 **같은 `STYLE_TAGS` 8종**이다.
+     * **비워 둘 수 있다** — 비면 업체 태그를 상속하고(`effectiveStyleTags`), 그래서
+     * 태그를 안 적은 기존 상품이 컨셉 필터에서 사라지지 않는다.
+     */
+    styleTags: z.array(z.enum(STYLE_TAGS)).max(STYLE_TAGS.length).default([]),
 });
 
 /** 수용 인원 하한 <= 상한. 두 값이 다 있을 때만 본다(부분 수정에서도 같은 규칙). */

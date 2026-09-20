@@ -3985,6 +3985,7 @@ export type Database = {
           price_includes_vat: boolean
           published_at: string | null
           status: string
+          style_tags: string[]
           summary: string | null
           updated_at: string
           vendor_id: string
@@ -4003,6 +4004,7 @@ export type Database = {
           price_includes_vat?: boolean
           published_at?: string | null
           status?: string
+          style_tags?: string[]
           summary?: string | null
           updated_at?: string
           vendor_id: string
@@ -4021,6 +4023,7 @@ export type Database = {
           price_includes_vat?: boolean
           published_at?: string | null
           status?: string
+          style_tags?: string[]
           summary?: string | null
           updated_at?: string
           vendor_id?: string

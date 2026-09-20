@@ -11,7 +11,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 /** 화면·API 가 함께 읽는 컬럼 집합. 한 곳에서 관리해야 응답 모양이 갈라지지 않는다. */
 export const PRODUCT_COLUMNS =
-  "id, vendor_id, category, name, base_price_total, included_items_json, capacity_min, capacity_max, status, published_at, price_includes_vat, add_ons_declared_at, summary, description_json, created_at, updated_at";
+  "id, vendor_id, category, name, base_price_total, included_items_json, capacity_min, capacity_max, status, published_at, price_includes_vat, add_ons_declared_at, summary, description_json, style_tags, created_at, updated_at";
 
 /**
  * 세션 사용자가 속한 업체.
