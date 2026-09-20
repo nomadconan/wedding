@@ -4,6 +4,7 @@ import type { ZodIssue } from "zod";
 
 import { compareByGap, priceGapBp } from "@/lib/core/pricing/price-index";
 import { effectiveStyleTags } from "@/lib/core/product/concept";
+import { isSidoCode } from "@/lib/core/region/regions";
 import { indexKey, loadPriceIndexMap } from "@/lib/pricing/price-index-query";
 import {
   EXPLORE_FILTER_LABEL,
@@ -253,8 +254,20 @@ async function vendorIdsFor(
   let query = client.from("vendors").select("id").eq("status", "active");
 
   if (filter.category !== null) query = query.eq("category", filter.category);
-  // 지역은 자유 입력이라 부분 일치로 본다("서울" 로 "서울 강남" 을 찾을 수 있어야 한다).
-  if (filter.region !== null) query = query.ilike("region_code", `%${filter.region}%`);
+  /**
+   * **지역은 코드로 정확히 거른다**(C-2f). 그전에는 `ilike %값%` 부분 일치였고,
+   * 그래서 "강남" 이 "강남구"·"강남동" 을 함께 물고 **오탈자는 조용히 0건**이 됐다.
+   *
+   * 시도 코드(`seoul`)를 고르면 그 안의 시군구(`seoul-gangnam`)도 함께 나와야 한다 —
+   * 사용자가 "서울" 을 고른 뜻은 "서울 어디든" 이다. 그래서 **시도는 접두어로** 본다.
+   * 접두어 판정이 다시 부분 일치가 되지 않는 이유는 **어휘가 잠겨 있기** 때문이다
+   * (`seoul-` 로 시작하는 코드는 전부 실재하는 서울의 시군구다).
+   */
+  if (filter.region !== null) {
+    query = isSidoCode(filter.region)
+      ? query.or(`region_code.eq.${filter.region},region_code.like.${filter.region}-%`)
+      : query.eq("region_code", filter.region);
+  }
 
   const { data } = await query;
 

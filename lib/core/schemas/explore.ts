@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isRegionCode, resolveRegionInput } from "../region/regions";
+
 import { STYLE_TAGS, type StyleTag } from "./onboarding";
 import { VENDOR_CATEGORIES, VendorCategorySchema } from "./vendor";
 
@@ -122,7 +124,26 @@ export const EXPLORE_PAGE_SIZE = 20;
  */
 export const ExploreFilterSchema = z
   .object({
-    region: z.string().trim().min(1).max(40).nullable().default(null),
+    /**
+     * 지역은 **코드**다(C-2f). 다만 받을 때는 너그럽다 — `resolveRegionInput` 이
+     * 별칭과 옛 자유 문자열("서울 강남" · "강남구")을 코드로 옮긴다.
+     *
+     * **옛 링크를 깨뜨리지 않기 위해서다.** 필터 상태를 URL 이 갖는 화면이라
+     * (`/explore?region=서울%20강남`) 공유된 주소가 이미 밖에 있다. 여기서 바로
+     * 거절하면 그 링크들이 전부 422 가 된다.
+     *
+     * **못 알아들은 값은 그래도 거절한다.** 조용히 무시하고 전체 목록을 보여 주면
+     * 사용자는 자기 조건이 안 걸렸다는 사실을 모른 채 결과를 믿는다.
+     */
+    region: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .transform((value) => resolveRegionInput(value))
+      .refine((value) => value !== null && isRegionCode(value), "목록에 있는 지역을 골라 주세요.")
+      .nullable()
+      .default(null),
     category: VendorCategorySchema.nullable().default(null),
     /** 예산 상한. **판매가 기준**이다(플래너 수수료 제외 — 아래 주석 참조). */
     budgetMax: AmountSchema.nullable().default(null),

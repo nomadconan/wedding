@@ -1,3 +1,5 @@
+import { regionLabel } from "../region/regions";
+
 import { VENDOR_CATEGORIES, VENDOR_CATEGORY_LABEL, type VendorCategory } from "../schemas/vendor";
 
 /**
@@ -241,7 +243,8 @@ export function priceLinkOf(seo: ContentSeo): { href: string; label: string } | 
 
   return {
     href: `/prices/${encodeURIComponent(seo.regionCode)}/${seo.category}`,
-    label: `${seo.regionCode} ${VENDOR_CATEGORY_LABEL[seo.category]} 가격 분포 보기`,
+    // 주소에는 코드가, 글자에는 라벨이 간다(C-2f).
+    label: `${regionLabel(seo.regionCode)} ${VENDOR_CATEGORY_LABEL[seo.category]} 가격 분포 보기`,
   };
 }
 

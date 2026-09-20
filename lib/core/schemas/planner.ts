@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isRegionCode } from "../region/regions";
+
 import {
   BIO_MAX,
   CAREER_YEARS_MAX,
@@ -32,7 +34,14 @@ export const PlannerProfileSchema = z.object({
   categories: z
     .array(z.enum(PLANNER_CATEGORIES))
     .min(1, "맡을 수 있는 카테고리를 하나 이상 고르세요."),
-  regions: z.array(z.string().trim().min(1)).min(1, "활동 지역을 하나 이상 고르세요."),
+  /**
+   * 활동 지역(C-2f). **업체·커플과 같은 어휘**다 — 플래너 마켓의 지역 필터가
+   * `regions.includes(고른 코드)` 로 거르므로, 여기만 자유 입력이면 그 필터가 성립하지
+   * 않는다(자유 입력이던 시절 "서울 강남" 과 "강남" 이 서로 안 걸렸다).
+   */
+  regions: z
+    .array(z.string().trim().refine(isRegionCode, "목록에 있는 지역을 골라 주세요."))
+    .min(1, "활동 지역을 하나 이상 고르세요."),
 });
 
 export type PlannerProfileInput = z.infer<typeof PlannerProfileSchema>;

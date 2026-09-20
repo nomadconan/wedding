@@ -13,6 +13,7 @@ import {
   NO_INDEX_NOTICE,
   THRESHOLD_UNDECIDED_NOTICE,
 } from "@/lib/core/pricing/anomaly";
+import { regionLabel } from "@/lib/core/region/regions";
 import { PRICE_INDEX_MIN_SAMPLE } from "@/lib/core/pricing/price-index";
 import { measured, undecided } from "@/lib/core/stats/metric";
 import { loadAnomalies, loadCurationCell, loadIndexCells } from "@/lib/pricing/curation";
@@ -129,7 +130,7 @@ export default async function AdminPricesPage({ searchParams }: PageProps) {
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <span className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground">
-                            {row.regionCode} · {row.category}
+                            {regionLabel(row.regionCode)} · {row.category}
                           </span>
                           <Badge variant={row.p50 === null ? "outline" : "secondary"}>
                             {row.p50 === null ? "표본 부족" : "지수 있음"}
@@ -168,7 +169,7 @@ export default async function AdminPricesPage({ searchParams }: PageProps) {
             <Card>
               <CardHeader>
                 <CardTitle id="sources-heading" className="text-base">
-                  원천 데이터 · {selected.regionCode} · {selected.category}
+                  원천 데이터 · {regionLabel(selected.regionCode)} · {selected.category}
                 </CardTitle>
                 <CardDescription>
                   <strong>지워진 값은 왜 지워졌는지 답할 수 있어야 합니다</strong> — 제외에는

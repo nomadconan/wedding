@@ -1119,6 +1119,142 @@ try {
     return `막힌 정렬 ${items}가지 · 전부 여는 조건 있음`;
   });
 
+  // ── 8b. 지역 필터 (C-2f) ─────────────────────────────────────────────────
+  //
+  // **어휘를 세운 일이 화면에서 실제로 되는지 본다.** 스키마와 DB 검사는 값이 옳은지
+  // 말해 주지만, 사용자가 지역을 골라 결과를 받는 데까지는 아무 말도 하지 않는다.
+  await step("**지역을 골라서 찾는다** — 코드로 정확히 거른다(C-2f)", consumer, async () => {
+    const before = await goto(consumer, "/explore");
+    if (before.notFound || before.errorState) {
+      throw new Error(`화면 상태 이상: ${before.text.slice(0, 150)}`);
+    }
+
+    await evaluate(consumer, `(() => {
+      const toggle = [...document.querySelectorAll("button")]
+        .find((b) => /펼치기|접기/.test(b.textContent || ""));
+      if (toggle && /펼치기/.test(toggle.textContent || "")) toggle.click();
+      return true;
+    })()`);
+    await sleep(300);
+
+    // **자유 입력이 아니라 고르는 자리인지 먼저 본다.** `<input>` 이 남아 있으면
+    // 아래에서 값을 넣어도 통과하므로, 무엇을 조작했는지가 검사의 일부다.
+    const shape = await evaluate(consumer, `(() => {
+      const el = document.querySelector('#region');
+      if (!el) return JSON.stringify({ tag: "none" });
+      return JSON.stringify({
+        tag: el.tagName.toLowerCase(),
+        options: el.tagName.toLowerCase() === "select" ? el.options.length : 0,
+        groups: el.tagName.toLowerCase() === "select" ? el.querySelectorAll("optgroup").length : 0,
+      });
+    })()`);
+    const { tag, options, groups } = JSON.parse(shape);
+
+    if (tag !== "select") throw new Error(`지역이 아직 자유 입력이다: <${tag}>`);
+    // 73 + '전체'
+    if (options !== 74) throw new Error(`어휘가 다 실리지 않았다: ${options}개`);
+    if (groups !== 17) throw new Error(`시도 묶음이 17이 아니다: ${groups}`);
+
+    await evaluate(consumer, `(() => {
+      const el = document.querySelector('#region');
+      el.value = 'seoul-gangnam';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      const form = el.closest('form');
+      form.requestSubmit();
+      return true;
+    })()`);
+    await sleep(1200);
+
+    const after = await evaluate(consumer, `(() => JSON.stringify({
+      url: location.search,
+      cards: document.querySelectorAll('[data-testid="vendor-card"]').length,
+      body: document.body.innerText.replace(/\\s+/g, " ").slice(0, 400),
+    }))()`);
+    const result = JSON.parse(after);
+
+    if (!result.url.includes("region=seoul-gangnam")) {
+      throw new Error(`주소에 코드가 안 실렸다: ${result.url}`);
+    }
+    if (result.cards === 0) throw new Error("지역으로 걸렀더니 0건 — 필터가 아무도 못 찾는다");
+    // **코드가 화면에 노출되면 안 된다.** 라벨이 사람이 읽는 것이다.
+    if (/seoul-gangnam/.test(result.body)) throw new Error("화면에 코드가 그대로 적혔다");
+    if (!/서울 강남/.test(result.body)) throw new Error("라벨이 화면에 없다");
+
+    return `${result.cards}곳 · 선택지 ${options}(시도 ${groups}묶음) · 화면은 라벨`;
+  });
+
+  await step("**시도를 고르면 그 안이 함께 나온다** — 서울 = 서울 어디든", consumer, async () => {
+    const wide = await goto(consumer, "/explore?region=seoul");
+    if (wide.notFound || wide.errorState) {
+      throw new Error(`화면 상태 이상: ${wide.text.slice(0, 150)}`);
+    }
+
+    const counts = await evaluate(consumer, `(() => JSON.stringify({
+      cards: document.querySelectorAll('[data-testid="vendor-card"]').length,
+    }))()`);
+    const wideCount = JSON.parse(counts).cards;
+
+    const narrowInfo = await goto(consumer, "/explore?region=gyeonggi");
+    if (narrowInfo.errorState) throw new Error("경기로 거르니 화면이 깨졌다");
+    const other = JSON.parse(
+      await evaluate(consumer, `(() => JSON.stringify({
+        cards: document.querySelectorAll('[data-testid="vendor-card"]').length,
+      }))()`),
+    ).cards;
+
+    if (wideCount === 0) throw new Error("서울로 걸렀는데 0건 — 시도가 시군구를 못 품는다");
+    // **늘 다 나오는 필터가 아니다.** 다른 시도를 고르면 줄어야 한다.
+    if (other >= wideCount) {
+      throw new Error(`시도가 구분되지 않는다: 서울 ${wideCount} · 경기 ${other}`);
+    }
+
+    return `서울 ${wideCount}곳 · 경기 ${other}곳`;
+  });
+
+  await step("**옛 링크가 살아 있다** — 공유된 주소를 깨지 않는다(C-2f 이행)", consumer, async () => {
+    const info = await goto(consumer, "/explore?region=%EA%B0%95%EB%82%A8");
+    if (info.errorState) throw new Error(`옛 표기로 들어오니 오류다: ${info.text.slice(0, 150)}`);
+
+    const body = await evaluate(consumer, `(() => document.body.innerText.replace(/\\s+/g, " ").slice(0, 300))()`);
+    if (!/서울 강남/.test(body)) throw new Error(`옛 표기가 코드로 안 옮겨졌다: ${body.slice(0, 120)}`);
+
+    return "‘강남’ → 서울 강남";
+  });
+
+  await step("**없는 지역은 조용히 넘기지 않는다** — 0건과 오탈자를 구분한다", consumer, async () => {
+    const info = await goto(consumer, "/explore?region=zzz-nowhere");
+    if (info.notFound) return "404";
+
+    // **본문 앞자락을 보지 않는다.** 처음엔 `innerText.slice(0, 400)` 이었는데 그
+    // 400자가 통째로 **지역 선택지 73개**여서 안내 문구에 닿지 못했다 — 검사가 떨어진
+    // 이유가 코드가 아니라 자기 자신이었다. 오류 상태를 자리로 집어서 본다.
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="error-state"]');
+      return JSON.stringify({
+        shown: Boolean(box),
+        text: box ? box.innerText.replace(/\\s+/g, " ").slice(0, 160) : "",
+        cards: document.querySelectorAll('[data-testid="vendor-card"]').length,
+      });
+    })()`));
+
+    // 전체 목록을 그냥 보여 주면 사용자는 자기 조건이 안 걸린 줄 모른다.
+    if (!seen.shown) throw new Error("어휘 밖 지역인데 오류 상태가 없다");
+    if (seen.cards > 0) throw new Error(`오류를 띄우면서 결과도 냈다: ${seen.cards}건`);
+    if (!/지역/.test(seen.text)) throw new Error(`무엇이 문제인지 안 적었다: ${seen.text}`);
+
+    return seen.text.replace(/\s+/g, " ").slice(0, 60);
+  });
+
+  await step("**참가격 페이지가 어휘를 지킨다** — 없는 지역은 404 다", consumer, async () => {
+    const good = await goto(consumer, "/prices/seoul-gangnam/hall");
+    if (good.notFound) throw new Error("있는 지역인데 404 다 — 늘 404 를 내는 판정이 아니다");
+
+    const bad = await goto(consumer, "/prices/zzz-nowhere/hall");
+    if (!bad.notFound) throw new Error("없는 지역이 200 이다 — 빈 페이지가 검색엔진에 쌓인다");
+
+    return "seoul-gangnam 200 · zzz-nowhere 404";
+  });
+
   // ── 9. 하이드레이션·콘솔 ──────────────────────────────────────────────────
   await step("사슬 화면 어디에도 콘솔 오류가 없다", null, async () => {
     const noisy = steps.filter((s) => s.consoleErrors.length > 0);

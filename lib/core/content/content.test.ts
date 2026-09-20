@@ -116,7 +116,7 @@ describe("seo_json", () => {
       description: "설명",
       keywords: ["웨딩홀", 3, null],
       tools: ["penalty"],
-      region_code: "서울",
+      region_code: "seoul",
       category: "hall",
     });
 
@@ -124,7 +124,7 @@ describe("seo_json", () => {
       description: "설명",
       keywords: ["웨딩홀"],
       tools: ["penalty"],
-      regionCode: "서울",
+      regionCode: "seoul",
       category: "hall",
     });
   });
@@ -145,11 +145,13 @@ describe("seo_json", () => {
   });
 
   it("가격 링크는 지역·카테고리가 둘 다 있을 때만 만든다", () => {
-    expect(priceLinkOf(parseSeo({ region_code: "서울", category: "hall" }))).toEqual({
-      href: "/prices/%EC%84%9C%EC%9A%B8/hall",
+    expect(priceLinkOf(parseSeo({ region_code: "seoul", category: "hall" }))).toEqual({
+      // **주소에 퍼센트 인코딩이 없다**(C-2f) — 코드가 ASCII 슬러그라 링크가 공유돼도
+      // 깨져 보이지 않는다. 글자에는 라벨이 간다.
+      href: "/prices/seoul/hall",
       label: "서울 웨딩홀 가격 분포 보기",
     });
-    expect(priceLinkOf(parseSeo({ region_code: "서울" }))).toBeNull();
+    expect(priceLinkOf(parseSeo({ region_code: "seoul" }))).toBeNull();
     expect(priceLinkOf(parseSeo({ category: "hall" }))).toBeNull();
   });
 });

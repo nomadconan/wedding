@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -81,11 +82,16 @@ export function RecalculatePanel() {
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="recalc-region">지역</Label>
-          <Input
+          {/*
+            **없는 칸을 다시 세지 않게 한다**(C-2f). 자유 입력이던 때는 오타 한 글자로
+            `price_index` 에 아무도 안 보는 칸이 생겼고, 그 칸은 화면 어디에도 안 뜨므로
+            잘못 만들어졌다는 사실을 알 방법이 없었다.
+          */}
+          <RegionSelect
             id="recalc-region"
+            emptyLabel="지역 선택"
             value={regionCode}
-            onChange={(event) => setRegionCode(event.target.value)}
-            placeholder="서울 강남"
+            onChange={setRegionCode}
           />
         </div>
         <div className="space-y-1.5">

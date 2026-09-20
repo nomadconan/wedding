@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DECLINE_REASONS, INQUIRY_NOTE_MAX } from "../inquiry/inquiry";
+import { isRegionCode } from "../region/regions";
 import { jsonObjectSchema } from "./json";
 
 /**
@@ -38,7 +39,13 @@ export const CreateInquirySchema = z.object({
   vendorIds: z.array(uuid).min(1).max(50),
   eventDate: DateStringSchema,
   guestCount: z.number().int().min(0).max(100_000).nullable().default(null),
-  regionCode: z.string().max(60).nullable().default(null),
+  /** 예식 지역(C-2f). 어휘는 업체·참가격과 같다. 비워 둘 수 있다. */
+  regionCode: z
+    .string()
+    .trim()
+    .refine(isRegionCode, "목록에 있는 지역을 골라 주세요.")
+    .nullable()
+    .default(null),
   budgetTotal: z.number().int().min(0).nullable().default(null),
   categories: z.array(z.string().max(40)).min(1).max(20),
   note: z.string().max(INQUIRY_NOTE_MAX).nullable().default(null),

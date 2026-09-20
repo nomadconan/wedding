@@ -53,10 +53,10 @@ describe("폼 → 본문", () => {
   });
 
   it("앞뒤 공백을 지운다", () => {
-    const draft = inquiryDraftOf(form({ note: "  주차 되나요  ", regionCode: " 서울 강남 " }));
+    const draft = inquiryDraftOf(form({ note: "  주차 되나요  ", regionCode: " seoul-gangnam " }));
 
     expect(draft.note).toBe("주차 되나요");
-    expect(draft.regionCode).toBe("서울 강남");
+    expect(draft.regionCode).toBe("seoul-gangnam");
   });
 });
 

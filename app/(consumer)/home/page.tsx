@@ -13,6 +13,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Progress } from "@/components/ui/progress";
 import { loadCarts } from "@/lib/cart/loader";
 import { loadRooms } from "@/lib/chat/loader";
+import { regionLabel } from "@/lib/core/region/regions";
 import { unreadBadge } from "@/lib/core/chat/chat";
 import { isOnboardingComplete, type OnboardingQuestion } from "@/lib/core/schemas/onboarding";
 import {
@@ -199,7 +200,7 @@ async function HomeSection() {
             <div className="space-y-1">
               <p className="text-unit text-muted-foreground">
                 {couple?.wedding_date}
-                {couple?.region_code ? ` · ${couple.region_code}` : ""}
+                {couple?.region_code ? ` · ${regionLabel(couple.region_code)}` : ""}
               </p>
               <p className="flex items-baseline gap-1">
                 <span data-amount="" className="text-amount text-foreground">
@@ -556,7 +557,7 @@ async function HomeSection() {
       {couple?.region_code ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{couple.region_code} 참가격</CardTitle>
+            <CardTitle className="text-base">{regionLabel(couple.region_code)} 참가격</CardTitle>
             <CardDescription>
               지역·카테고리별 가격 분포를 표본수·출처와 함께 볼 수 있어요.
             </CardDescription>

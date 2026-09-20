@@ -158,11 +158,21 @@ describe("파서 — 사전", () => {
     expect(valueOf(conditions, "styleTags")).toEqual(["modern", "outdoor"]);
   });
 
-  it("지역은 행정 접미사까지 함께 먹는다", () => {
+  it("지역은 행정 접미사까지 함께 먹고 **코드로** 남는다", () => {
     const { conditions, leftover } = parseSearchQuery("강남구", { asOf: ASOF });
 
-    expect(valueOf(conditions, "region")).toBe("강남");
+    // 조회가 코드로 정확히 거른다 — 읽은 말을 그대로 넘기면 0건이 된다(C-2f).
+    expect(valueOf(conditions, "region")).toBe("seoul-gangnam");
     expect(leftover).toBe("");
+  });
+
+  it("생활권 이름은 담는 시군구로 간다 — 말은 받되 코드는 어휘 안이다", () => {
+    expect(valueOf(parseSearchQuery("판교 웨딩홀", { asOf: ASOF }).conditions, "region")).toBe(
+      "gyeonggi-seongnam",
+    );
+    expect(valueOf(parseSearchQuery("여의도", { asOf: ASOF }).conditions, "region")).toBe(
+      "seoul-yeongdeungpo",
+    );
   });
 
   it("'스드메'는 하나로 좁히지 않고 이유를 남긴다", () => {
@@ -181,7 +191,7 @@ describe("파서 — 혼합 입력", () => {
     );
 
     expect(valueOf(conditions, "date")).toBe("2027-03-14");
-    expect(valueOf(conditions, "region")).toBe("강남");
+    expect(valueOf(conditions, "region")).toBe("seoul-gangnam");
     expect(valueOf(conditions, "guestCount")).toBe(300);
     expect(valueOf(conditions, "category")).toBe("hall");
     expect(valueOf(conditions, "budgetMax")).toBe(30_000_000);
@@ -215,7 +225,7 @@ describe("파서 — 혼합 입력", () => {
 const CANDIDATE: RankCandidate = {
   productId: "p1",
   basePrice: 30_000_000,
-  regionCode: "서울 강남",
+  regionCode: "seoul-gangnam",
   styleTags: ["modern", "luxury"],
   capacityMin: 100,
   capacityMax: 400,
@@ -236,12 +246,23 @@ describe("랭킹 — 조건 부합도", () => {
     expect(score).toBe(2);
   });
 
-  it("지역은 완전 일치 2점, 부분 일치 1점", () => {
-    const exact = scoreFit({ ...CANDIDATE, regionCode: "강남" }, filterWith({ region: "강남" }));
-    const partial = scoreFit(CANDIDATE, filterWith({ region: "강남" }));
+  it("지역은 완전 일치 2점, **같은 시도** 1점", () => {
+    // **부분 문자열이 아니라 시도로 본다**(C-2f). 그전에는 `code.includes(region)` 이라
+    // 코드가 자유 입력이던 시절의 우연한 겹침까지 점수가 됐다.
+    const exact = scoreFit(CANDIDATE, filterWith({ region: "seoul-gangnam" }));
+    const partial = scoreFit(
+      { ...CANDIDATE, regionCode: "seoul-seocho" },
+      filterWith({ region: "seoul-gangnam" }),
+    );
+    const none = scoreFit(
+      { ...CANDIDATE, regionCode: "gyeonggi-suwon" },
+      filterWith({ region: "seoul-gangnam" }),
+    );
 
     expect(exact.score).toBe(2);
     expect(partial.score).toBe(1);
+    // 다른 시도면 0 이다 — 1점이 "아무 데나" 를 뜻하면 점수가 순서를 설명하지 못한다.
+    expect(none.score).toBe(0);
   });
 
   it("자리 미확인은 감점이 아니라 0점이고 '모른다'로 남는다", () => {
@@ -294,7 +315,7 @@ describe("랭킹 — 조건 부합도", () => {
       { ...CANDIDATE, productId: "c", basePrice: 10_000_000 },
     ];
 
-    expect(rankByFit(rows, filterWith({ region: "강남" }))).toEqual(["c", "a", "b"]);
+    expect(rankByFit(rows, filterWith({ region: "seoul-gangnam" }))).toEqual(["c", "a", "b"]);
   });
 
   it("부합도가 높으면 더 비싸도 앞에 온다", () => {
@@ -311,7 +332,7 @@ describe("랭킹 — 조건 부합도", () => {
 
     expect(hasRankableCondition(none)).toBe(false);
     expect(rankingCodeFor(none)).toBe("price_asc");
-    expect(rankingCodeFor(filterWith({ region: "강남" }))).toBe("condition_fit");
+    expect(rankingCodeFor(filterWith({ region: "seoul-gangnam" }))).toBe("condition_fit");
   });
 
   it("조건이 없으면 순서는 가격 낮은 순이다", () => {
@@ -374,7 +395,7 @@ describe("AI 병합 — 세 관문", () => {
     });
 
     expect(outcome.discarded[0].reason).toBe("rule_wins");
-    expect(valueOf(outcome.conditions, "region")).toBe("강남");
+    expect(valueOf(outcome.conditions, "region")).toBe("seoul-gangnam");
   });
 
   it("열거값에 없는 코드는 버린다", () => {
@@ -475,7 +496,7 @@ describe("조건 → 필터", () => {
     const input = toExploreFilterInput(parsed, 2);
 
     expect(input).toMatchObject({
-      region: "강남",
+      region: "seoul-gangnam",
       category: "hall",
       guestCount: 300,
       date: "2027-03-14",
@@ -488,7 +509,7 @@ describe("조건 → 필터", () => {
 
   it("랭킹 필터는 같은 값에서 나온다", () => {
     expect(toRankFilter(parsed)).toEqual({
-      region: "강남",
+      region: "seoul-gangnam",
       guestCount: 300,
       date: "2027-03-14",
       styleTags: [],

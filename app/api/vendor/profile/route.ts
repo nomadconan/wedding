@@ -108,8 +108,9 @@ export async function PUT(request: NextRequest) {
     return fail(500, "VENDOR_PROFILE_LOAD_FAILED", "프로필을 불러오지 못했습니다.");
   }
 
+  // **지역은 여기서 바꾸지 않는다**(C-2f). 참가격 지수의 분모라 업체가 옮겨 다니면
+  // 표본이 적어 유리한 칸을 고를 수 있다 — 심사 대상 정보이며 DB 권한도 걷었다(0080).
   const nextValues = {
-    region_code: profile.regionCode,
     address: profile.address,
     address_detail: profile.addressDetail,
     capacity_min: profile.capacityMin,

@@ -371,14 +371,20 @@ describe("큐레이션 조치", () => {
 describe("RecalculateSchema — 재계산에도 사유가 필요하다", () => {
   it("정상 입력", () => {
     expect(
-      RecalculateSchema.parse({ regionCode: "서울 강남", category: "hall", reason: "이상치 제외 후" })
+      RecalculateSchema.parse({ regionCode: "seoul-gangnam", category: "hall", reason: "이상치 제외 후" })
         .category,
     ).toBe("hall");
   });
 
+  it("**어휘 밖 지역은 다시 세지 않는다** — 없는 칸이 생긴다 (C-2f)", () => {
+    expect(() =>
+      RecalculateSchema.parse({ regionCode: "서울 강남", category: "hall", reason: "오타" }),
+    ).toThrow();
+  });
+
   it("사유 없이 재계산할 수 없다 — 지수를 움직이는 일이다", () => {
     expect(() =>
-      RecalculateSchema.parse({ regionCode: "서울 강남", category: "hall", reason: "" }),
+      RecalculateSchema.parse({ regionCode: "seoul-gangnam", category: "hall", reason: "" }),
     ).toThrow();
   });
 });

@@ -9,6 +9,8 @@
 
 import { z } from "zod";
 
+import { isRegionCode } from "../region/regions";
+
 import { PRICE_INDEX_MIN_SAMPLE, type PriceSample, buildPriceIndex } from "./price-index";
 
 /** 원천 표본 한 줄. `price_sources` 행 그대로다. */
@@ -147,7 +149,16 @@ export function curationProblem(input: {
 /** 재계산 대상 한 칸. 지역·카테고리로 지정한다. */
 export const RecalculateSchema = z
   .object({
-    regionCode: z.string().trim().min(1, "지역을 지정해 주세요.").max(40),
+    /**
+     * **어휘 안의 지역만 다시 센다**(C-2f). 자유 입력이던 때는 오타 하나가
+     * `price_index` 에 아무도 안 보는 칸을 만들었고, 그 칸은 어떤 화면에도 안 뜨므로
+     * 잘못 만들어졌다는 사실을 알 방법이 없었다.
+     */
+    regionCode: z
+      .string()
+      .trim()
+      .min(1, "지역을 지정해 주세요.")
+      .refine(isRegionCode, "목록에 있는 지역을 골라 주세요."),
     category: z.string().trim().min(1, "카테고리를 지정해 주세요.").max(40),
     reason: z.string().trim().min(1, "재계산 사유를 적어 주세요.").max(1_000),
   })

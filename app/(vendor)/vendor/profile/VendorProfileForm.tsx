@@ -9,6 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  REGION_IS_REVIEWED_NOTE,
+  REGION_UNKNOWN_LABEL,
+  regionLabel,
+} from "@/lib/core/region/regions";
 import { STYLE_TAGS, STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import {
   VENDOR_FACILITIES,
@@ -40,6 +45,7 @@ export type VendorProfileFormProps = {
   /** 수정 권한(= 업체 owner). false 면 읽기 전용으로 보여준다. 최종 경계는 RLS 다. */
   canEdit: boolean;
   defaults: {
+    /** 읽기 전용이다 — 폼이 되돌려 보내지 않는다. */
     regionCode: string;
     address: string;
     addressDetail: string;
@@ -124,8 +130,7 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile: {
-            regionCode: form.get("regionCode"),
-            address: String(form.get("address") ?? "").trim() || null,
+              address: String(form.get("address") ?? "").trim() || null,
             addressDetail: String(form.get("addressDetail") ?? "").trim() || null,
             capacityMin: toNumber(form.get("capacityMin")),
             capacityMax: toNumber(form.get("capacityMax")),
@@ -192,11 +197,19 @@ export function VendorProfileForm({ canEdit, defaults, media }: VendorProfileFor
       <fieldset disabled={!canEdit || pending} className="space-y-6">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="regionCode">지역</Label>
-            <Input id="regionCode" name="regionCode" required defaultValue={defaults.regionCode} />
-            {fieldErrors["profile.regionCode"] ? (
-              <p className="text-caption text-danger">{fieldErrors["profile.regionCode"]}</p>
-            ) : null}
+            <Label>지역</Label>
+            {/*
+              **고칠 수 없는 칸이다**(C-2f). 입력이 아니라 **확인**이라 `<Input>` 이 아니고,
+              disabled 입력도 아니다 — 폼이 값을 실어 보내지 않는다. DB 에서도 업체는
+              `vendors.region_code` 를 못 쓴다(UPDATE 권한을 칸 목록으로 좁혔다).
+              화면이 막는 것이 보안 경계가 아니므로, 여기 있는 것은 **설명**이다.
+            */}
+            <p className="text-sm text-foreground" data-testid="vendor-region">
+              {regionLabel(defaults.regionCode) ?? REGION_UNKNOWN_LABEL}
+            </p>
+            <p className="text-caption text-muted-foreground" data-testid="vendor-region-locked">
+              {REGION_IS_REVIEWED_NOTE}
+            </p>
           </div>
 
           <div className="space-y-1.5">

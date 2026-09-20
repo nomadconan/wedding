@@ -1,3 +1,4 @@
+import { regionLabel } from "../region/regions";
 import { STYLE_TAG_LABEL, type StyleTag } from "../schemas/onboarding";
 import {
   SEARCH_FIELDS,
@@ -108,7 +109,9 @@ export function formatAmount(amount: number): string {
 export function conditionChipLabel(condition: SearchCondition): string {
   switch (condition.field) {
     case "region":
-      return `지역 · ${condition.value}`;
+      // **코드가 아니라 라벨을 적는다.** 칩은 "무엇으로 걸렀는지" 를 사람에게 보이는
+      // 자리라, `seoul-gangnam` 이라고 적히면 아무것도 설명하지 못한다.
+      return `지역 · ${regionLabel(condition.value)}`;
     case "category":
       return `카테고리 · ${VENDOR_CATEGORY_LABEL[condition.value]}`;
     case "date":

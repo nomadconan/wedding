@@ -1,5 +1,6 @@
 "use client";
 
+import { regionLabel } from "@/lib/core/region/regions";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -163,7 +164,7 @@ function PlannerRow({ planner }: { planner: PlannerCard }) {
       <p className="text-sm font-semibold text-foreground">{planner.headline}</p>
 
       <p className="mt-1 text-xs text-neutral-600">
-        경력 {planner.careerYears}년 · {planner.regions.join(", ")}
+        경력 {planner.careerYears}년 · {planner.regions.map((code) => regionLabel(code)).join(", ")}
       </p>
 
       <div className="mt-2 flex flex-wrap gap-1.5">

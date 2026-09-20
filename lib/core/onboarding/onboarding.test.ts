@@ -79,15 +79,15 @@ describe("'미정'과 '아직 안 정함'은 다르다", () => {
 
 describe("toAnswerJson / toCoupleFields", () => {
   it("문항 키는 컬럼이 가지므로 answer_json 에서 뺀다", () => {
-    expect(toAnswerJson({ question: "region", regionCode: "서울 강남" })).toEqual({
-      regionCode: "서울 강남",
+    expect(toAnswerJson({ question: "region", regionCode: "seoul-gangnam" })).toEqual({
+      regionCode: "seoul-gangnam",
     });
   });
 
   it("답변을 couples 컬럼으로 옮긴다", () => {
     const answers: OnboardingAnswer[] = [
       { question: "wedding_date", undecided: false, date: "2027-05-05" },
-      { question: "region", regionCode: "서울 강남" },
+      { question: "region", regionCode: "seoul-gangnam" },
       { question: "budget", undecided: false, totalBudget: 40_000_000 },
       { question: "guest_count", undecided: false, guestCount: 200 },
       { question: "style", styleTags: ["modern", "natural"] },
@@ -96,7 +96,7 @@ describe("toAnswerJson / toCoupleFields", () => {
 
     expect(toCoupleFields(answers)).toEqual({
       wedding_date: "2027-05-05",
-      region_code: "서울 강남",
+      region_code: "seoul-gangnam",
       total_budget: 40_000_000,
       guest_count: 200,
       style_tags: ["modern", "natural"],
@@ -211,5 +211,27 @@ describe("초대 코드 (F-C-02)", () => {
     );
 
     expect(blocker?.code).toBe("ALREADY_USED");
+  });
+});
+describe("지역은 어휘 안에서만 받는다 (C-2f)", () => {
+  /**
+   * **자유 입력이던 시절의 값이 통과하면 안 된다.** 이 시험이 없으면 테스트가 옛
+   * 표기("서울 강남")를 계속 쓰면서 초록으로 남고, 어휘를 세운 일이 화면에만 남는다.
+   */
+  it("코드가 아닌 지역 표기를 거절한다", () => {
+    for (const bad of ["서울 강남", "강남", "Seoul", "seoul-nowhere", ""]) {
+      expect(() =>
+        OnboardingAnswerInputSchema.parse({ question: "region", regionCode: bad }),
+      ).toThrow();
+    }
+  });
+
+  it("어휘 안의 코드는 받는다 — 늘 거절하는 검사가 아니다", () => {
+    expect(() =>
+      OnboardingAnswerInputSchema.parse({ question: "region", regionCode: "seoul-gangnam" }),
+    ).not.toThrow();
+    expect(() =>
+      OnboardingAnswerInputSchema.parse({ question: "region", regionCode: "jeju" }),
+    ).not.toThrow();
   });
 });

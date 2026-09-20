@@ -6,6 +6,8 @@ import {
   type SearchField,
 } from "../schemas/search";
 
+import { resolveRegionInput } from "../region/regions";
+
 import { sortConditions, type RuleParseResult } from "./parse";
 
 /**
@@ -109,17 +111,36 @@ export function mergeAiConditions(input: {
     }
 
     /**
-     * 지역은 자유 텍스트라 열거값이 지켜 주지 못한다. 그래서 **값 자체도 입력에 있어야**
-     * 한다고 요구한다 — 모델이 "강남" 이라 적힌 문장을 근거로 "서초" 를 내는 것을 막는
-     * 유일한 장치다.
+     * 지역은 **두 관문을 다 지나야 한다.**
+     *
+     * ① 모델이 낸 값 자체가 입력에 있어야 한다 — "강남" 이라 적힌 문장을 근거로
+     *    "서초" 를 내는 것을 막는다.
+     * ② 그 말이 **어휘의 코드로 풀려야** 한다(C-2f). 그전에는 이 관문이 없었고,
+     *    주석이 *"자유 텍스트라 열거값이 지켜 주지 못한다"* 고 적어 둔 그대로였다.
+     *    이제 지켜 준다 — 모델이 낸 말이 지역이 아니면 **조건을 안 건다.** 걸고
+     *    0건을 내면 사용자는 왜 아무것도 없는지 알 수 없다.
+     *
+     * 값은 **코드로 바꿔** 담는다. 규칙 파서가 내는 것과 같은 모양이어야 아래 조회가
+     * 둘을 구분하지 않는다.
      */
-    if (field === "region" && !quoteExists(input.text, String(checked.data))) {
-      discarded.push({ field, sourceText, reason: "invalid_value" });
-      continue;
+    let value = checked.data;
+    if (field === "region") {
+      if (!quoteExists(input.text, String(checked.data))) {
+        discarded.push({ field, sourceText, reason: "invalid_value" });
+        continue;
+      }
+
+      const code = resolveRegionInput(String(checked.data));
+      if (code === null) {
+        discarded.push({ field, sourceText, reason: "invalid_value" });
+        continue;
+      }
+
+      value = code;
     }
 
     seen.add(field);
-    accepted.push({ field, value: checked.data, sourceText, origin: "ai" } as SearchCondition);
+    accepted.push({ field, value, sourceText, origin: "ai" } as SearchCondition);
   }
 
   const merged = dropInvertedBudget([...input.rule.conditions, ...accepted], discarded);

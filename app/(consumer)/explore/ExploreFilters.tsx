@@ -16,6 +16,7 @@ import {
 } from "@/lib/core/schemas/explore";
 import { STYLE_TAGS, STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import { VENDOR_CATEGORIES, VENDOR_CATEGORY_LABEL } from "@/lib/core/schemas/vendor";
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { SORT_CRITERIA } from "@/components/domain/SortCriteriaBadge";
 
 /**
@@ -123,7 +124,12 @@ export function ExploreFilters({ defaults }: ExploreFiltersProps) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="region">지역</Label>
-              <Input id="region" name="region" placeholder="서울" defaultValue={defaults.region} />
+              {/*
+                **자유 입력이 아니다**(C-2f). 그전에는 `<input>` 이었고 질의가
+                `ilike %값%` 라서 "강남" 이 "강남구"·"강남동" 을 함께 물었다. 오탈자는
+                조용히 0건이 됐고, 사용자는 없는 지역을 적었다는 사실조차 알 수 없었다.
+              */}
+              <RegionSelect id="region" name="region" emptyLabel="전체" defaultValue={defaults.region} />
             </div>
 
             <div className="space-y-1.5">

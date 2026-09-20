@@ -261,7 +261,7 @@ if (memberOf === "1") {
   // 0 행으로 끝나므로 **반영된 행 수**로 확인한다.
   check(
     "배우자의 수정이 반영된다 (couples_update = 당사자)",
-    asUser(partner, `with u as (update public.couples set region_code = 'RLS점검' returning id)
+    asUser(partner, `with u as (update public.couples set region_code = 'busan' returning id)
        select count(*) from u;`) === "1",
   );
 
@@ -286,7 +286,7 @@ for (const [label, table] of [
 
 check(
   "남의 수정은 한 행도 반영되지 않는다",
-  asUser(outsider, `with u as (update public.couples set region_code = '침입' returning id)
+  asUser(outsider, `with u as (update public.couples set region_code = 'daegu' returning id)
      select count(*) from u;`) === "0",
 );
 
@@ -345,7 +345,7 @@ const cartFixture = `
 /** 위 픽스처에 더해, 플래너 위임까지 붙인다(범위: carts·wishlists). */
 const plannerFixture = `${cartFixture}
   insert into public.planners (id, user_id, status, profile_json, regions)
-    values ('${PLANNER}', '${vendorStaff ?? outsider}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+    values ('${PLANNER}', '${vendorStaff ?? outsider}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
   insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
     values ('${PLANNER}', '${coupleId}', '{"tables":["carts","wishlists"]}'::jsonb,
             'active', now() - interval '1 day', now() + interval '30 days');
@@ -450,7 +450,7 @@ check(
   "위임 범위를 빼면 플래너도 못 본다",
   asUser(plannerUser, `select count(*) from public.cart_items;`,
     `${cartFixture}
-     insert into public.planners (id, user_id, status, profile_json, regions) values ('${PLANNER}', '${plannerUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+     insert into public.planners (id, user_id, status, profile_json, regions) values ('${PLANNER}', '${plannerUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
      insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
        values ('${PLANNER}', '${coupleId}', '{"tables":["tasks"]}'::jsonb, 'active',
                now() - interval '1 day', now() + interval '30 days');`) === "0",
@@ -715,8 +715,8 @@ const EP_HIDDEN = "00000000-0000-0000-0000-00000000e005";
 
 const exploreFixture = `
   insert into public.vendors (id, name, category, status, region_code, style_tags)
-    values ('${EV_ACTIVE}', 'RLS공개업체', 'hall', 'active', '서울', array['modern']),
-           ('${EV_PENDING}', 'RLS심사중업체', 'hall', 'pending', '서울', array['modern']);
+    values ('${EV_ACTIVE}', 'RLS공개업체', 'hall', 'active', 'seoul', array['modern']),
+           ('${EV_PENDING}', 'RLS심사중업체', 'hall', 'pending', 'seoul', array['modern']);
   insert into public.products
     (id, vendor_id, category, name, base_price_total, status, included_items_json, add_ons_declared_at)
     values
@@ -775,7 +775,7 @@ const indexFixture = `
   insert into public.price_index
     (id, region_code, category, guest_bucket, season, p25, p50, p75, sample_size,
      source_type, collected_at, version)
-    values ('${IDX}', 'RLS시', 'hall', 'all', 'all', 10000000, 20000000, 30000000, 7,
+    values ('${IDX}', 'incheon', 'hall', 'all', 'all', 10000000, 20000000, 30000000, 7,
             'registered_price', now(), 'rls-check');
   insert into public.price_sources (index_id, source_name, raw_value)
     values ('${IDX}', 'vendor_registered_price', 10000000);
@@ -1257,7 +1257,7 @@ if (!adminUser || !opsUser || !vendorStaff) {
   // 갈리는 이유는 0021 헬퍼 블록에 적었다 — 대화에는 상대 당사자가 있다.
   const chatPlannerFixture = `${chatFixture}
     insert into public.planners (id, user_id, status, profile_json, regions)
-      values ('${CPLANNER}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+      values ('${CPLANNER}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       values ('${CPLANNER}', '${coupleId}',
@@ -2041,7 +2041,7 @@ if (!adminUser || !opsUser || !vendorStaff) {
   // ── 3) 플래너 — **채팅과 갈리는 지점** ───────────────────────────────────
   // §3.9 는 상담 행에만 "위임 플래너" 를 명시한다. 채팅(0021)에서는 뺐다.
   const consultPlannerFixture = `${consultFixture}
-    insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+    insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       values ('${PL2}', '${coupleId}', '{"tables":["consultations"]}'::jsonb,
@@ -2077,7 +2077,7 @@ if (!adminUser || !opsUser || !vendorStaff) {
     "위임 범위를 빼면 플래너도 못 본다",
     asUser(adminUser, `select count(*) from public.consultations where id = '${CONS}';`,
       `${consultFixture}
-       insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+       insert into public.planners (id, user_id, status, profile_json, regions) values ('${PL2}', '${adminUser}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
        insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
          values ('${PL2}', '${coupleId}', '{"tables":["carts"]}'::jsonb, 'active',
                  now() - interval '1 day', now() + interval '30 days');`) === "0",
@@ -2547,8 +2547,8 @@ if (!vendorStaff || !adminUser) {
              ('${POSET}', '${POV}', '2026-09-01', '2026-09-30', 20000000, 800, 1600000, 18400000,
               'draft', 'pre_discount', now());
     insert into public.planners (id, user_id, status, profile_json, regions)
-      values ('${PPL}', '${owner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']),
-             ('${POPL}', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+      values ('${PPL}', '${owner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']),
+             ('${POPL}', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
     insert into public.planner_settlements
       (id, planner_id, booking_id, gross_amount, fee_rate_bp, fee_amount, earned_at, payable_at)
       values ('${PPS}', '${PPL}', '${PB}', 10000000, 300, 300000,
@@ -4625,7 +4625,7 @@ if (!vendorStaff || !adminUser) {
       rejectedWith(/planner_scopes_no_engagement|위임이 활성 상태인/, () =>
         sql(`begin;
           insert into public.planners (id, user_id, status, profile_json, regions)
-            values ('00000000-0000-0000-0000-00000000c0b9', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);
+            values ('00000000-0000-0000-0000-00000000c0b9', '${partner}', 'active', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);
           insert into public.planner_scopes (couple_id, planner_id, category)
             values ('${coupleId}', '00000000-0000-0000-0000-00000000c0b9', 'dress');
           rollback;`)),
@@ -4731,7 +4731,7 @@ if (!vendorStaff || !adminUser) {
         owner,
         `select count(*) from public.planners where id = '00000000-0000-0000-0000-00000000c0c9';`,
         `insert into public.planners (id, user_id, status, profile_json, regions)
-           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);`,
       ) === "0",
     );
     check(
@@ -4740,7 +4740,7 @@ if (!vendorStaff || !adminUser) {
         partner,
         `select status from public.planners where user_id = '${partner}';`,
         `insert into public.planners (id, user_id, status, profile_json, regions)
-           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);`,
       ) === "pending",
     );
     check(
@@ -4749,7 +4749,7 @@ if (!vendorStaff || !adminUser) {
         adminUser,
         `select count(*) from public.planners where status = 'pending';`,
         `insert into public.planners (id, user_id, status, profile_json, regions)
-           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+           values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);`,
       ) === "1",
     );
     check(
@@ -4760,7 +4760,7 @@ if (!vendorStaff || !adminUser) {
           `update public.planners set status = 'active' where user_id = '${partner}';`,
           `insert into public.planners (id, user_id, status, profile_json, regions)
              values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending',
-                     '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+                     '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);`,
         )),
     );
     check(
@@ -4770,7 +4770,7 @@ if (!vendorStaff || !adminUser) {
           partner,
           `update public.planners set status = 'rejected' where user_id = '${partner}';`,
           `insert into public.planners (id, user_id, status, profile_json, regions)
-             values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['서울']);`,
+             values ('00000000-0000-0000-0000-00000000c0c9', '${partner}', 'pending', '{"headline":"픽스처 플래너","categories":["studio"]}'::jsonb, array['seoul']);`,
         )),
     );
     check(
@@ -6080,7 +6080,7 @@ if (!vendorStaff || !adminUser) {
     ${budgetFixture}
     insert into public.planners (id, user_id, status, profile_json, regions)
       values ('${BUDGET_PLANNER}', '${plannerAccount ?? outsider}', 'active',
-              '{"headline":"예산 픽스처","categories":["hall"]}'::jsonb, array['서울'])
+              '{"headline":"예산 픽스처","categories":["hall"]}'::jsonb, array['seoul'])
       on conflict (user_id) do nothing;
     insert into public.planner_engagements (planner_id, couple_id, scope_json, status, valid_from, valid_to)
       -- **budget_items 는 범위 키가 아니다.** 그 표는 부모(budgets)의 정책을 통해
@@ -8462,7 +8462,7 @@ if (!vendorStaff || !adminUser) {
     rejectedWith(/permission denied|row-level security/, () =>
       asUser(vendorOwner, `insert into public.price_index
         (region_code, category, guest_bucket, season, p50, sample_size, source_type, version)
-        values ('서울 강남','hall','all','all', 1, 999, 'registered_price', 'v1');`),
+        values ('seoul-gangnam','hall','all','all', 1, 999, 'registered_price', 'v1');`),
     ),
   );
   check(
@@ -11742,7 +11742,7 @@ if (!vendorStaff || !adminUser) {
   const plannerRow = `
     insert into public.planners (id, user_id, status, profile_json, regions)
       values ('${S604_PLANNER}', '${outsider}', 'active',
-              '{"headline":"위임 픽스처 플래너","categories":["hall"]}'::jsonb, array['서울']);
+              '{"headline":"위임 픽스처 플래너","categories":["hall"]}'::jsonb, array['seoul']);
   `;
 
   /** 아직 수락되지 않은 제안 하나. 범위는 couples 뿐이라 열림·닫힘이 한 값으로 읽힌다. */
@@ -11983,7 +11983,7 @@ if (!vendorStaff || !adminUser) {
       sql(`begin;
              insert into public.planners (id, user_id, status, profile_json, regions)
                values ('${S604_PLANNER}', '${outsider}', 'active',
-                       '{"headline":"삭제 시험","categories":["hall"]}'::jsonb, array['서울']);
+                       '{"headline":"삭제 시험","categories":["hall"]}'::jsonb, array['seoul']);
              insert into public.planner_engagements
                (id, planner_id, couple_id, scope_json, valid_from, valid_to)
                values ('${S604_OFFER}', '${S604_PLANNER}', '${coupleId}',
@@ -12093,7 +12093,7 @@ if (!vendorStaff || !adminUser) {
       sql(`begin;
              insert into public.planners (id, user_id, status, profile_json, regions)
                values ('${S604_PLANNER}', '${outsider}', 'pending',
-                       '{"headline":"미심사","categories":["hall"]}'::jsonb, array['서울']);
+                       '{"headline":"미심사","categories":["hall"]}'::jsonb, array['seoul']);
              insert into public.planner_engagements
                (planner_id, couple_id, scope_json, valid_from, valid_to)
                values ('${S604_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb,
@@ -12314,7 +12314,7 @@ if (!vendorStaff || !adminUser) {
   const expiredFixture = `
     insert into public.planners (id, user_id, status, profile_json, regions)
       values ('${S603_PLANNER}', '${outsider}', 'active',
-              '{"headline":"만료 픽스처","categories":["hall"]}'::jsonb, array['서울']);
+              '{"headline":"만료 픽스처","categories":["hall"]}'::jsonb, array['seoul']);
     insert into public.planner_engagements
       (planner_id, couple_id, scope_json, status, valid_from, valid_to, responded_at)
       values ('${S603_PLANNER}', '${coupleId}', '{"tables":["couples"]}'::jsonb, 'active',
@@ -12526,7 +12526,7 @@ if (!vendorStaff || !adminUser) {
            values ('${coupleId}', '${S603_PLANNER}', 'hall');`,
         `insert into public.planners (id, user_id, status, profile_json, regions)
            values ('${S603_PLANNER}', '${outsider}', 'active',
-                   '{"headline":"위임 없음","categories":["hall"]}'::jsonb, array['서울']);`,
+                   '{"headline":"위임 없음","categories":["hall"]}'::jsonb, array['seoul']);`,
       ),
     ),
   );
@@ -12743,7 +12743,7 @@ if (!vendorStaff || !adminUser) {
         `insert into public.planners (user_id, status, profile_json, regions)
            values ('${outsider}', 'active',
                    '{"headline":"자가 공개","categories":["hall"],"careerYears":1}'::jsonb,
-                   array['서울']);`,
+                   array['seoul']);`,
       ),
     ),
   );
@@ -12754,7 +12754,7 @@ if (!vendorStaff || !adminUser) {
       `insert into public.planners (user_id, profile_json, regions)
          values ('${outsider}',
                  '{"headline":"정상 등록","categories":["hall"],"careerYears":1}'::jsonb,
-                 array['서울']);
+                 array['seoul']);
        select status from public.planners where user_id = '${outsider}';`,
     ) === "pending",
   );
@@ -12777,9 +12777,9 @@ if (!vendorStaff || !adminUser) {
     "**본인 프로필 수정은 여전히 된다** — 값이 바뀌었는지 직접 본다(함정 9)",
     asUser(
       plannerAccount ?? outsider,
-      `update public.planners set regions = array['RLS점검'] where user_id = '${plannerAccount ?? outsider}';
+      `update public.planners set regions = array['gangwon'] where user_id = '${plannerAccount ?? outsider}';
        select regions[1] from public.planners where user_id = '${plannerAccount ?? outsider}';`,
-    ) === "RLS점검",
+    ) === "gangwon",
   );
   check(
     "**스스로 공개 상태로 올리는 것은 여전히 트리거가 막는다**(0037)",
@@ -14573,7 +14573,7 @@ if (!vendorStaff || !adminUser) {
    */
   const fixture = `
     insert into public.vendors (id, name, category, region_code, status)
-    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', '서울 강남', 'pending');
+    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', 'seoul-gangnam', 'pending');
 
     insert into public.products (id, vendor_id, category, name, base_price_total, status,
                                  included_items_json, add_ons_declared_at, published_at,
@@ -14836,7 +14836,7 @@ if (!vendorStaff || !adminUser) {
      where id = (select vendor_id from public.vendor_members where user_id = '${outsider}' limit 1);
 
     insert into public.vendors (id, name, category, region_code, status, style_tags)
-    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', '서울 강남', 'pending', array['luxury']::text[]);
+    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', 'seoul-gangnam', 'pending', array['luxury']::text[]);
 
     insert into public.products (id, vendor_id, category, name, base_price_total, status,
                                  included_items_json, add_ons_declared_at, published_at, style_tags)
@@ -15363,6 +15363,335 @@ if (!vendorStaff || !adminUser) {
   check(
     "**상품 상세가 후기 자리를 잇는다** — 만든 화면이 도달 불가로 남지 않는다",
     /<ProductReviews/.test(srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx")),
+  );
+}
+
+// =============================================================================
+// C-2f — 지역 코드 (어휘 · 이행 · 권한 세 층)
+// =============================================================================
+/**
+ * 지역은 **분류이면서 동시에 참가격 지수의 분모**다. 그래서 여기서 보는 것이 두 가지다.
+ *
+ *  · **어휘가 하나인가** — TS 모듈(`lib/core/region/regions.ts`)과 DB 함수
+ *    (`is_region_code`)가 같은 73개를 말하는가. 두 벌을 손으로 적었으니 한쪽이
+ *    낡으면 스키마는 받아 주는데 화면이 못 고르는 값이 생긴다.
+ *  · **업체가 자기 분모를 옮길 수 있는가** — 옮길 수 있으면 표본이 적어 유리한 칸으로
+ *    이사할 수 있다. 자격의 근거를 당사자가 쓰는 모양이라 층 3 이다.
+ */
+{
+  const REGION_SRC = srcOf("lib/core/region/regions.ts");
+
+  // ── 어휘 대조 — 두 벌이 같은 말을 하는가 ────────────────────────────────
+  //
+  // **목록을 실제로 읽었는지 먼저 본다.** 정규식이 빗나가 빈 배열이 나오면 아래
+  // "전부 일치" 는 0개를 견줘 조용히 통과한다(운영 규칙 §7.0b).
+  const sidos = (REGION_SRC.match(/^export const SIDO_CODES = \[([\s\S]*?)\] as const;/m) ?? [
+    "",
+    "",
+  ])[1]
+    .match(/"([a-z-]+)"/g)
+    ?.map((value) => value.slice(1, -1)) ?? [];
+
+  /**
+   * 시군구는 **묶음마다 속한 시도가 다르다.** 처음에는 "앞의 25개가 서울" 이라고
+   * 순서로 갈랐는데, 그 경계를 세는 정규식이 빗나가 **56개 전부 경기로 붙었고**
+   * 대조가 48/73 으로 떨어졌다. 순서가 아니라 `.map` 이 붙여 주는 `sido:` 를 읽는다.
+   */
+  const sigungu = [
+    ...(REGION_SRC.match(/const SIGUNGU[\s\S]*?\n\];/) ?? [""])[0].matchAll(
+      /\[([\s\S]*?)\]\.map\(\(\[slug, name\]\) => \(\{ sido: "([a-z]+)"/g,
+    ),
+  ].flatMap(([, entries, sido]) =>
+    (entries.match(/\["([a-z]+)", "[^"]+"\]/g) ?? []).map(
+      (entry) => `${sido}-${entry.match(/\["([a-z]+)"/)[1]}`,
+    ),
+  );
+
+  check(
+    "**어휘 목록을 실제로 읽었다** — 못 읽으면 아래 대조가 0개를 견주고 통과한다",
+    sidos.length === 17 && sigungu.length === 56,
+    `sido=${sidos.length} sigungu=${sigungu.length}`,
+  );
+
+  check(
+    "**시군구가 두 시도로 갈려 있다** — 한 묶음으로 읽히면 대조가 엉뚱한 코드를 만든다",
+    sigungu.filter((code) => code.startsWith("seoul-")).length === 25 &&
+      sigungu.filter((code) => code.startsWith("gyeonggi-")).length === 31,
+    `seoul=${sigungu.filter((code) => code.startsWith("seoul-")).length} gyeonggi=${
+      sigungu.filter((code) => code.startsWith("gyeonggi-")).length
+    }`,
+  );
+
+  if (sidos.length === 17 && sigungu.length === 56) {
+    const codes = [...sidos, ...sigungu];
+
+    const dbSaysYes = Number(
+      sqlOrNull(
+        `select count(*) from unnest(array[${codes
+          .map((code) => `'${code}'`)
+          .join(",")}]) c where public.is_region_code(c);`,
+      ),
+    );
+
+    check(
+      "**TS 어휘 73개를 DB 도 전부 안다** — 두 벌이 갈리면 못 고르는 값이 생긴다",
+      dbSaysYes === 73 && codes.length === 73,
+      `ts=${codes.length} db_ok=${dbSaysYes}`,
+    );
+
+    const dbTotal = Number(
+      sqlOrNull(
+        `select count(*) from (select unnest(string_to_array(
+           (select substring(pg_get_functiondef(p.oid) from 'select p_value in \\(([^)]*)\\)')
+              from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'is_region_code'), ','))) t;`,
+      ),
+    );
+
+    check(
+      "**DB 가 TS 보다 더 알지도 않는다** — 한쪽에만 있는 코드는 화면에서 못 고른다",
+      dbTotal === 73,
+      `db=${dbTotal}`,
+    );
+  }
+
+  check(
+    "**어휘 밖 값은 DB 도 거절한다** — 늘 참을 돌려주는 함수가 아니다",
+    sqlOrNull(`select public.is_region_code('seoul-nowhere');`) === "f" &&
+      sqlOrNull(`select public.is_region_code('서울 강남');`) === "f" &&
+      sqlOrNull(`select public.is_region_code('seoul-gangnam');`) === "t",
+  );
+
+  // ── 층 1 — CHECK 가 다섯 표에서 실제로 무는가 ───────────────────────────
+  //
+  // **"있을 때 조용한가" 도 함께 본다.** 거절만 확인하면 늘 거절하는 CHECK 도 통과한다.
+  const vendorId = sqlOrNull(`select id from public.vendors limit 1;`);
+
+  check(
+    "**vendors 픽스처가 있다** — 없으면 아래 CHECK 검사가 빈 표를 훑는다",
+    Boolean(vendorId),
+  );
+
+  if (vendorId) {
+    check(
+      "**층1 — vendors 가 어휘 밖 지역을 거절한다**",
+      rejectedWith(/vendors_region_vocab_chk/, () =>
+        sql(`begin; update public.vendors set region_code = '서울 강남' where id = '${vendorId}'; rollback;`),
+      ),
+    );
+    check(
+      "**층1 — 어휘 안 지역은 통과한다** (늘 거절하는 CHECK 가 아니다)",
+      sqlOrNull(
+        `begin; update public.vendors set region_code = 'jeju' where id = '${vendorId}';
+         select region_code from public.vendors where id = '${vendorId}'; rollback;`,
+      ) === "jeju",
+    );
+    check(
+      "**층1 — 지역을 비우는 것은 허용한다** — '아직 모른다' 를 막으면 이행이 못 선다",
+      sqlOrNull(
+        `begin; update public.vendors set region_code = null where id = '${vendorId}';
+         select count(*) from public.vendors where id = '${vendorId}' and region_code is null; rollback;`,
+      ) === "1",
+    );
+  }
+
+  check(
+    "**층1 — couples 가 어휘 밖 지역을 거절한다**",
+    rejectedWith(/couples_region_vocab_chk/, () =>
+      sql(`begin; update public.couples set region_code = '강남'; rollback;`),
+    ),
+  );
+  check(
+    "**층1 — inquiries 가 어휘 밖 지역을 거절한다**",
+    rejectedWith(/inquiries_region_vocab_chk/, () =>
+      sql(`begin; update public.inquiries set region_code = 'gangnam'; rollback;`),
+    ),
+  );
+  check(
+    "**층1 — price_index 는 지역을 비울 수도 없다** (지수의 분모다)",
+    rejectedWith(/price_index_region_vocab_chk|null value/, () =>
+      sql(`begin; update public.price_index set region_code = '서울'; rollback;`),
+    ),
+  );
+  check(
+    "**층1 — planners 는 배열 원소 하나만 어긋나도 거절한다**",
+    rejectedWith(/planners_region_vocab_chk/, () =>
+      sql(`begin; update public.planners set regions = array['seoul-gangnam','강남']; rollback;`),
+    ),
+  );
+  check(
+    "**층1 — planners 의 정상 배열은 통과한다** (늘 거절하는 CHECK 가 아니다)",
+    sqlOrNull(
+      `begin; update public.planners set regions = array['jeju','busan'];
+       select count(*) from public.planners where regions = array['jeju','busan']; rollback;`,
+    ) === "1",
+  );
+
+  // ── 층 1 — 표 단위 GRANT 가 아니라 칸 목록인가 ──────────────────────────
+  //
+  // `revoke ... (칸)` 만으로는 무효다(§5.5 층 1). **표에서 걷고 칸을 나열해 다시 준
+  // 것**인지 권한 표를 직접 본다 — 마이그레이션 문장을 읽는 것이 아니라 결과를 본다.
+  check(
+    "**층1 — vendors 에 표 단위 UPDATE 권한이 없다**",
+    sqlOrNull(
+      `select count(*) from information_schema.table_privileges
+        where grantee = 'authenticated' and table_name = 'vendors' and privilege_type = 'UPDATE';`,
+    ) === "0",
+  );
+  check(
+    "**층1 — region_code 는 칸 권한에도 없다**",
+    sqlOrNull(
+      `select count(*) from information_schema.column_privileges
+        where grantee = 'authenticated' and table_name = 'vendors'
+          and privilege_type = 'UPDATE' and column_name = 'region_code';`,
+    ) === "0",
+  );
+  check(
+    "**층1 — 고칠 수 있는 칸은 여전히 고친다** — 권한을 통째로 잠그지 않았다",
+    sqlOrNull(
+      `select count(*) from information_schema.column_privileges
+        where grantee = 'authenticated' and table_name = 'vendors'
+          and privilege_type = 'UPDATE'
+          and column_name in ('intro','address','capacity_min','capacity_max','facilities','style_tags','address_detail');`,
+    ) === "7",
+  );
+
+  // ── 층 3 — 자격의 근거를 당사자가 쓰는가 ────────────────────────────────
+  {
+    const ownerUser = idOf("vendor@local.test");
+
+    check(
+      "**업체 대표 픽스처가 있다** — 없으면 아래 층3 검사가 헛돈다",
+      Boolean(ownerUser),
+    );
+
+    if (ownerUser) {
+      check(
+        "**층3 — 업체가 자기 지역을 못 바꾼다** — 표본이 적어 유리한 칸으로 이사할 수 없다",
+        rejectedWith(/permission denied/, () =>
+          asUser(ownerUser, `update public.vendors set region_code = 'jeju'
+                              where id in (select vendor_id from public.vendor_members
+                                            where user_id = auth.uid());`),
+        ),
+      );
+      check(
+        "**층3 — 그래도 소개문은 바꾼다** — 프로필이 통째로 잠기지 않았다",
+        asUser(ownerUser, `with u as (update public.vendors set intro = 'C-2f 확인'
+                                      where id in (select vendor_id from public.vendor_members
+                                                    where user_id = auth.uid())
+                                      returning 1)
+                           select count(*) from u;`) !== "0",
+      );
+    }
+  }
+
+  // ── 탐색 — 지역을 모르는 업체가 사라지지 않는다 ─────────────────────────
+  //
+  // 이행에서 못 옮긴 값은 `null` 이 됐다. **그 업체를 목록에서 빼면 우리 쪽 이행
+  // 사정을 업체에 떠넘기는 셈**이다(표본 없는 지역을 목록에서 빼지 않기로 한 것과
+  // 같은 판단 · S3-08). 지역으로 거를 때만 안 나온다.
+  {
+    const noRegion = `insert into public.vendors (id, name, category, region_code, status)
+                      values ('00000000-0000-0000-0000-0000000002f0', 'C-2f 지역미등록', 'hall', null, 'active')
+                      on conflict (id) do nothing;`;
+
+    check(
+      "**지역 없는 업체도 비로그인 목록에 남는다**",
+      asAnon(
+        `select count(*) from public.vendors where id = '00000000-0000-0000-0000-0000000002f0';`,
+        noRegion,
+      ) === "1",
+    );
+    check(
+      "**지역으로 거르면 그 업체는 안 나온다** — 남는 것과 걸리는 것은 다르다",
+      asAnon(
+        `select count(*) from public.vendors
+          where id = '00000000-0000-0000-0000-0000000002f0' and region_code = 'seoul-gangnam';`,
+        noRegion,
+      ) === "0",
+    );
+    check(
+      "**지역 있는 업체는 그 필터에 걸린다** — 늘 0 을 돌려주는 검사가 아니다",
+      Number(
+        asAnon(`select count(*) from public.vendors where region_code = 'seoul-gangnam';`),
+      ) > 0,
+    );
+  }
+
+  // ── 참가격 지수 — 유령 칸을 만들지 않는다 ───────────────────────────────
+  check(
+    "**지수의 모든 칸이 어휘 안이다** — 못 옮긴 칸은 이행이 지웠다",
+    sqlOrNull(`select count(*) from public.price_index where not public.is_region_code(region_code);`) ===
+      "0",
+  );
+  check(
+    "**지수가 비어 있지 않다** — 빈 표 덕분에 위 검사가 통과한 것이 아니다",
+    Number(sqlOrNull(`select count(*) from public.price_index;`)) > 0,
+  );
+  check(
+    "**표본 하한 아래로 떨어진 칸이 없다** — 1:1 이름 바꾸기라 분모가 그대로다",
+    sqlOrNull(`select count(*) from public.price_index where sample_size < 5;`) === "0",
+  );
+  check(
+    "**배치가 지역 없는 업체를 칸으로 만들지 않는다** — 'null|hall' 칸이 표본을 빨아먹는다",
+    /region_code !== null/.test(srcOf("app/api/jobs/price-index-refresh/route.ts")),
+  );
+  check(
+    // **선언이 아니라 나가는 자리를 본다.** 처음엔 `/skippedNoRegion/` 였는데, 되돌려
+    // 보니 응답에서 빼도 통과했다 — 이름이 `const` 선언에 남아 있어서다.
+    "**건너뛴 수를 밖으로 낸다** — 조용히 빼면 표본이 왜 적은지 아무도 모른다",
+    /\n\s*skippedNoRegion,/.test(srcOf("app/api/jobs/price-index-refresh/route.ts")) &&
+      /no_region:\$\{skippedNoRegion\}/.test(srcOf("app/api/jobs/price-index-refresh/route.ts")),
+  );
+
+  // ── 화면 — 자유 입력이 사라졌는가 ───────────────────────────────────────
+  //
+  // **입력 수단을 세는 검사다.** 어휘를 세워도 어딘가 `<input>` 이 남아 있으면
+  // 그 자리로 어휘 밖 값이 계속 들어오고, 스키마가 422 로 되받아 사용자만 막힌다.
+  for (const [path, label] of [
+    ["app/(consumer)/explore/ExploreFilters.tsx", "탐색 필터"],
+    ["app/(consumer)/search/ConditionEditor.tsx", "조건 편집기"],
+    ["app/(auth)/onboarding/OnboardingStepper.tsx", "온보딩"],
+    ["app/(consumer)/inquiries/new/InquiryForm.tsx", "문의 작성"],
+    ["app/(vendor)/vendor/apply/VendorApplyForm.tsx", "입점 신청"],
+    ["app/(admin)/admin/prices/RecalculatePanel.tsx", "지수 재계산"],
+    ["app/(admin)/admin/cms/EditorPanel.tsx", "CMS SEO"],
+    ["app/(planner)/pro/ProfileForm.tsx", "플래너 활동 지역"],
+  ]) {
+    check(
+      `**${label} 가 지역을 고르게 한다** — 자유 입력이 아니다`,
+      /<RegionSelect/.test(srcOf(path)),
+    );
+  }
+
+  check(
+    "**업체 프로필은 지역을 되돌려 보내지 않는다** — 권한이 없는 칸을 폼이 실어 보내면 전부 실패한다",
+    !/regionCode: form\.get/.test(srcOf("app/(vendor)/vendor/profile/VendorProfileForm.tsx")),
+  );
+  check(
+    // **import 줄이 아니라 그려지는 자리를 본다.** 되돌려 보니 문구를 화면에서 빼도
+    // 통과했다 — 이름이 import 에 남아 있어서다(C-2d 가 같은 자리에서 물렸다).
+    "**대신 왜 못 바꾸는지 적는다** — 사라진 칸은 설명 없이 사라지지 않는다",
+    /\{REGION_IS_REVIEWED_NOTE\}/.test(srcOf("app/(vendor)/vendor/profile/VendorProfileForm.tsx")),
+  );
+  check(
+    "**탐색 카드가 코드가 아니라 라벨을 적는다**",
+    /regionLabel\(row\.regionCode\)/.test(srcOf("app/(consumer)/explore/VendorCard.tsx")),
+  );
+  check(
+    "**참가격 페이지가 없는 지역 코드에 404 를 낸다** — 빈 페이지가 검색엔진에 쌓이지 않게",
+    /isRegionCode\(decodeURIComponent\(params\.region\)\)/.test(
+      srcOf("app/(marketing)/prices/[region]/[category]/page.tsx"),
+    ),
+  );
+  check(
+    "**시도를 고르면 그 안의 시군구도 나온다** — 질의가 접두어를 함께 본다",
+    /isSidoCode\(filter\.region\)/.test(srcOf("lib/explore/query.ts")) &&
+      /region_code\.like\.\$\{filter\.region\}-%/.test(srcOf("lib/explore/query.ts")),
+  );
+  check(
+    "**부분 일치가 사라졌다** — `ilike %값%` 로 돌아가지 않았다",
+    !/region_code.*ilike/.test(srcOf("lib/explore/query.ts")),
   );
 }
 

@@ -14,6 +14,8 @@
 
 import { z } from "zod";
 
+import { isRegionCode } from "../region/regions";
+
 import { CONTENT_TYPES, SLUG_MAX_LENGTH, SLUG_PATTERN, TOOL_CTAS } from "./content";
 
 export const CONTENT_STATUSES = ["draft", "scheduled", "published"] as const;
@@ -65,7 +67,12 @@ export const ContentSeoSchema = z.object({
     .refine((keys) => keys.every((key) => KNOWN_TOOL_KEYS.includes(key)), {
       message: "등록되지 않은 CTA 키입니다. 목록에 있는 것만 고를 수 있습니다.",
     }),
-  regionCode: z.string().trim().max(40).nullable(),
+  /** SEO 대상 지역(C-2f). `/prices/[region]` 과 **같은 어휘**여야 링크가 성립한다. */
+  regionCode: z
+    .string()
+    .trim()
+    .refine(isRegionCode, "목록에 있는 지역을 골라 주세요.")
+    .nullable(),
   category: z.string().trim().max(40).nullable(),
 });
 export type ContentSeoInput = z.infer<typeof ContentSeoSchema>;

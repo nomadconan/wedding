@@ -11,7 +11,6 @@ import {
 } from "../schemas/vendor-profile";
 
 const base = {
-  regionCode: "서울 강남",
   address: "서울시 강남구 테헤란로 1",
   addressDetail: "3층",
   capacityMin: 100,
@@ -29,7 +28,7 @@ describe("VendorProfileInputSchema (F-V-02)", () => {
   });
 
   it("선택 항목은 비워 둘 수 있다 — 심사 중에도 부분 입력이 가능해야 한다", () => {
-    const parsed = VendorProfileInputSchema.parse({ regionCode: "서울 강남" });
+    const parsed = VendorProfileInputSchema.parse({});
 
     expect(parsed.address).toBeNull();
     expect(parsed.capacityMin).toBeNull();
@@ -59,8 +58,15 @@ describe("VendorProfileInputSchema (F-V-02)", () => {
     expect(() => VendorProfileInputSchema.parse({ ...base, capacityMax: 150.5 })).toThrow();
   });
 
-  it("지역이 비면 거부한다", () => {
-    expect(() => VendorProfileInputSchema.parse({ ...base, regionCode: "" })).toThrow();
+  it("**지역은 프로필이 받지 않는다** — 심사 대상 정보다 (C-2f)", () => {
+    // 참가격 지수의 분모라 업체가 스스로 바꾸면 표본이 적어 유리한 칸으로 옮겨
+    // 다닐 수 있다. 업체명·카테고리와 같은 자리로 옮겼고 DB 권한에서도 걷었다.
+    const parsed = VendorProfileInputSchema.parse({
+      ...base,
+      regionCode: "seoul-seocho",
+    } as Record<string, unknown>);
+
+    expect(parsed).not.toHaveProperty("regionCode");
   });
 
   it("소개문 2000자 상한을 넘기면 거부한다", () => {

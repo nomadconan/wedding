@@ -6,6 +6,7 @@ import {
 } from "@/lib/core/ai/empty";
 import { buildCartCompare } from "@/lib/cart/compare";
 import { loadCarts } from "@/lib/cart/loader";
+import { resolveRegionInput } from "@/lib/core/region/regions";
 import { couponEligibility, type CouponIssueStatus } from "@/lib/core/coupon/coupon";
 import { calculatePenalty, daysUntilEvent } from "@/lib/core/pricing/penalty";
 import { PRICE_INDEX_MIN_SAMPLE } from "@/lib/core/pricing/price-index";
@@ -123,8 +124,19 @@ const getCoupleContext: ToolHandler = async (_args, ctx) => {
 // =============================================================================
 
 const searchPriceIndex: ToolHandler = async (args, ctx) => {
-  const region = String(args.region);
+  /**
+   * **못 알아들은 지역을 '표본 없음' 으로 위장하지 않는다**(C-2f).
+   *
+   * 조회가 코드로 정확히 거르게 되면서, 어휘 밖의 말은 `null` 을 돌려받는다. 그것을
+   * `no_sample` 로 넘기면 모델은 "아직 표본이 안 모였어요" 라고 말하고, 사용자는
+   * **있는 지역인데 없다고** 듣는다. 이유가 다르면 다른 사유로 돌려준다.
+   */
+  const region = resolveRegionInput(String(args.region));
   const category = String(args.category);
+
+  if (region === null) {
+    return { result: emptyResult("unknown_region", { region: String(args.region), category }) };
+  }
 
   const row = await findPriceIndex(ctx.publicClient, { regionCode: region, category });
 
@@ -469,9 +481,16 @@ const explainPlannerFee: ToolHandler = async (args, ctx) => {
 // =============================================================================
 
 const searchPlanners: ToolHandler = async (args, ctx) => {
+  // 플래너의 `regions` 도 같은 어휘다(C-2f) — 말로 거르면 아무도 안 걸린다.
+  const region = args.region === undefined ? null : resolveRegionInput(String(args.region));
+
+  if (args.region !== undefined && region === null) {
+    return { result: emptyResult("unknown_region", { region: String(args.region) }) };
+  }
+
   const market = await loadMarket(ctx.supabase as never, {
     category: args.category === undefined ? null : String(args.category),
-    region: args.region === undefined ? null : String(args.region),
+    region,
   });
 
   const basis = [
