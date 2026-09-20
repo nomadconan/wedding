@@ -135,6 +135,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (input.includedItems !== undefined) patch.included_items_json = input.includedItems;
   if (input.capacityMin !== undefined) patch.capacity_min = input.capacityMin;
   if (input.capacityMax !== undefined) patch.capacity_max = input.capacityMax;
+  if (input.styleTags !== undefined) patch.style_tags = input.styleTags;
   if (input.summary !== undefined) {
     // 빈 문자열은 **지운다**는 뜻이다. DB CHECK 이 빈 문자열을 받지 않는다(0076).
     patch.summary = input.summary && input.summary.length > 0 ? input.summary : null;

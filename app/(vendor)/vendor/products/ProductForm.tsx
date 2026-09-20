@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { PriceDisplay, formatKrw } from "@/components/domain/PriceDisplay";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -27,6 +28,7 @@ import {
   type IncludedItem,
 } from "@/lib/core/schemas/product";
 import { ADD_ONS_PUBLISH_BLOCKER, type AddOnSummary } from "@/lib/core/schemas/product-option";
+import { STYLE_TAGS, STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import {
   VENDOR_CATEGORIES,
   VENDOR_CATEGORY_LABEL,
@@ -64,7 +66,11 @@ export type ProductFormProps = {
     /** 한 줄 소개·본문(C-2b). 게시 조건이 아니라 완성도다. */
     summary: string | null;
     descriptionSource: string | null;
+    /** 상품 컨셉(C-2d). 비우면 업체 태그를 상속한다. */
+    styleTags: StyleTag[];
   };
+  /** 업체가 프로필에 적은 컨셉. 상품이 비었을 때 **상속되는 값**이라 화면이 보여 준다. */
+  vendorStyleTags?: StyleTag[];
   rate: RateInfo;
   /**
    * 추가금 사전 등록 상태(F-V-04). 신규 등록 화면에는 아직 상품이 없으므로 미등록이다.
@@ -88,6 +94,7 @@ export function ProductForm({
   addOns = { kind: "unknown" },
   defaultCategory,
   canEdit,
+  vendorStyleTags = [],
 }: ProductFormProps) {
   const router = useRouter();
   const isEdit = Boolean(product);
@@ -104,6 +111,7 @@ export function ProductForm({
   const [capacityMax, setCapacityMax] = useState(
     product?.capacityMax === null || product?.capacityMax === undefined ? "" : String(product.capacityMax),
   );
+  const [styleTags, setStyleTags] = useState<StyleTag[]>(product?.styleTags ?? []);
   const [summary, setSummary] = useState(product?.summary ?? "");
   const [description, setDescription] = useState(product?.descriptionSource ?? "");
   const [pending, setPending] = useState(false);
@@ -152,6 +160,7 @@ export function ProductForm({
       capacityMin: capacityMin.trim() === "" ? null : Number(capacityMin),
       capacityMax: capacityMax.trim() === "" ? null : Number(capacityMax),
       // 빈 칸은 **지운다**는 뜻으로 보낸다(null). 안 보내면 기존 값이 남는다.
+      styleTags,
       summary: summary.trim() === "" ? null : summary.trim(),
       description: description.trim() === "" ? null : description.trim(),
     };
@@ -276,6 +285,41 @@ export function ProductForm({
                 <p className="text-caption text-danger">{fieldErrors.capacityMax}</p>
               ) : null}
             </div>
+          </div>
+        </div>
+
+        {/* ── 컨셉 태그 (C-2d) ──────────────────────────────────────────
+            **상품 단위 컨셉이다.** 비워 두면 업체 태그를 **상속**하므로 지금까지
+            업체 태그로 걸리던 상품이 사라지지 않는다. 적는 순간 이 상품만의 답이
+            되고, 그래야 한 업체의 두 패키지를 서로 다른 컨셉으로 가를 수 있다.
+            **순위에는 쓰이지 않는다** — 많이 고른다고 위로 올라가지 않는다. */}
+        <div className="space-y-2" data-testid="product-style-tags">
+          <Label>컨셉 (선택)</Label>
+          <p className="text-caption text-muted-foreground">
+            {styleTags.length === 0 && (vendorStyleTags?.length ?? 0) > 0
+              ? `비워 두면 업체 컨셉(${vendorStyleTags!.map((t) => STYLE_TAG_LABEL[t]).join(" · ")})을 그대로 씁니다.`
+              : "고객이 탐색에서 컨셉으로 찾을 때 쓰입니다. 비워 두면 업체 컨셉을 그대로 씁니다."}
+            {" "}많이 고른다고 위에 노출되지는 않아요.
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {STYLE_TAGS.map((code) => (
+              <div key={code} className="flex items-center gap-2">
+                <Checkbox
+                  id={`product-style-${code}`}
+                  checked={styleTags.includes(code)}
+                  onCheckedChange={(checked) =>
+                    setStyleTags((prev) =>
+                      checked === true
+                        ? [...new Set([...prev, code])]
+                        : prev.filter((tag) => tag !== code),
+                    )
+                  }
+                />
+                <Label htmlFor={`product-style-${code}`} className="font-normal">
+                  {STYLE_TAG_LABEL[code]}
+                </Label>
+              </div>
+            ))}
           </div>
         </div>
 

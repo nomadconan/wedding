@@ -3,6 +3,7 @@ import type { Database } from "@/types/database";
 import type { ZodIssue } from "zod";
 
 import { compareByGap, priceGapBp } from "@/lib/core/pricing/price-index";
+import { effectiveStyleTags } from "@/lib/core/product/concept";
 import { indexKey, loadPriceIndexMap } from "@/lib/pricing/price-index-query";
 import {
   EXPLORE_FILTER_LABEL,
@@ -234,13 +235,18 @@ function baseProductQuery(client: SupabaseClient<Database>, filter: ExploreFilte
   return query;
 }
 
-/** 업체 조건(지역·카테고리·스타일)에 맞는 업체 id. null 이면 업체 조건이 없다는 뜻이다. */
+/**
+ * 업체 조건(지역·카테고리)에 맞는 업체 id. null 이면 업체 조건이 없다는 뜻이다.
+ *
+ * **스타일은 더 이상 여기서 보지 않는다**(C-2d). 컨셉이 **상품 단위**가 되면서
+ * 판정이 업체로는 안 끝난다 — 같은 업체의 두 패키지가 서로 다른 컨셉일 수 있다.
+ * 스타일은 `styleProductIdsFor` 가 상품 id 집합으로 돌려준다.
+ */
 async function vendorIdsFor(
   client: SupabaseClient<Database>,
   filter: ExploreFilter,
 ): Promise<string[] | null> {
-  const hasVendorFilter =
-    filter.region !== null || filter.category !== null || filter.styleTags.length > 0;
+  const hasVendorFilter = filter.region !== null || filter.category !== null;
 
   if (!hasVendorFilter) return null;
 
@@ -249,11 +255,64 @@ async function vendorIdsFor(
   if (filter.category !== null) query = query.eq("category", filter.category);
   // 지역은 자유 입력이라 부분 일치로 본다("서울" 로 "서울 강남" 을 찾을 수 있어야 한다).
   if (filter.region !== null) query = query.ilike("region_code", `%${filter.region}%`);
-  if (filter.styleTags.length > 0) query = query.overlaps("style_tags", filter.styleTags);
 
   const { data } = await query;
 
   return (data ?? []).map((row) => (row as { id: string }).id);
+}
+
+/**
+ * 컨셉 필터에 걸리는 상품 id. null 이면 컨셉 조건이 없다는 뜻이다(C-2d).
+ *
+ * ── 규칙은 `effectiveStyleTags` **하나**가 갖는다 ───────────────────────────
+ * 상품에 태그가 있으면 그것이 답이고, 없으면 업체 태그를 상속한다. 그 규칙을
+ * 질의문에 다시 적지 않는다 — 두 벌이 되면 화면과 순수 함수가 다른 답을 낸다.
+ * 그래서 후보를 두 번에 나눠 읽고 **판정은 순수 함수가** 한다.
+ *
+ *  (a) **자기 태그가 겹치는 상품** — 업체 태그가 무엇이든 이쪽이 이긴다.
+ *  (b) **태그를 고른 업체의 상품 중 자기 태그가 빈 것** — 상속으로 걸린다.
+ *
+ * 합집합이 아니다: 업체가 '로맨틱' 인데 상품이 '미니멀' 이면 그 상품은 (a) 에서
+ * 안 걸리고 (b) 에서도 **자기 태그가 있으므로** 빠진다 — 완료 조건 ① 그대로다.
+ */
+async function styleProductIdsFor(
+  client: SupabaseClient<Database>,
+  filter: ExploreFilter,
+): Promise<string[] | null> {
+  if (filter.styleTags.length === 0) return null;
+
+  const ids = new Set<string>();
+
+  // (a) 자기 태그로 걸리는 상품
+  const { data: own } = await client
+    .from("products")
+    .select("id")
+    .overlaps("style_tags", filter.styleTags);
+
+  for (const row of (own ?? []) as { id: string }[]) ids.add(row.id);
+
+  // (b) 태그를 고른 업체의 상품 중 **자기 태그가 없는 것**
+  const { data: vendors } = await client
+    .from("vendors")
+    .select("id")
+    .eq("status", "active")
+    .overlaps("style_tags", filter.styleTags);
+
+  const vendorIds = (vendors ?? []).map((row) => (row as { id: string }).id);
+
+  if (vendorIds.length > 0) {
+    const { data: inherited } = await client
+      .from("products")
+      .select("id, style_tags")
+      .in("vendor_id", vendorIds);
+
+    for (const row of (inherited ?? []) as { id: string; style_tags: string[] | null }[]) {
+      // 상속 여부 판정도 **같은 함수**가 한다.
+      if (effectiveStyleTags({ productTags: row.style_tags }).source === "none") ids.add(row.id);
+    }
+  }
+
+  return [...ids];
 }
 
 /**
@@ -326,8 +385,12 @@ async function countFor(client: SupabaseClient<Database>, filter: ExploreFilter)
   const vendorIds = await vendorIdsFor(client, filter);
   if (vendorIds !== null && vendorIds.length === 0) return 0;
 
+  const styleIds = await styleProductIdsFor(client, filter);
+  if (styleIds !== null && styleIds.length === 0) return 0;
+
   let query = baseProductQuery(client, filter);
   if (vendorIds !== null) query = query.in("vendor_id", vendorIds);
+  if (styleIds !== null) query = query.in("id", styleIds);
 
   const { data, count } = await query.range(0, AVAILABILITY_SCAN_LIMIT - 1);
 
@@ -350,6 +413,7 @@ export async function searchVendors(
 
   const filter = parsed.data;
   const vendorIds = await vendorIdsFor(client, filter);
+  const styleIds = await styleProductIdsFor(client, filter);
 
   const empty: ExploreResult = {
     rows: [],
@@ -362,7 +426,7 @@ export async function searchVendors(
     truncated: false,
   };
 
-  if (vendorIds !== null && vendorIds.length === 0) {
+  if ((vendorIds !== null && vendorIds.length === 0) || (styleIds !== null && styleIds.length === 0)) {
     return { ok: true, result: { ...empty, relaxationHints: await hintsFor(client, filter) } };
   }
 
@@ -370,6 +434,7 @@ export async function searchVendors(
 
   let query = baseProductQuery(client, filter);
   if (vendorIds !== null) query = query.in("vendor_id", vendorIds);
+  if (styleIds !== null) query = query.in("id", styleIds);
 
   // '자리 있는 곳만'(슬롯)과 '참가격 대비'(지수)는 다른 테이블을 봐야 판정되므로
   // 페이지를 잘라내기 전에 후보를 넉넉히 읽는다. 상한에 걸리면 화면이 그 사실을 알린다.

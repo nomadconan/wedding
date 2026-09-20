@@ -20,7 +20,9 @@ import { descriptionSource } from "./content";
 // =============================================================================
 
 /** 상품 상세가 나중에 채울 자리. 값은 **담당 태스크**이며 화면이 그것을 말하지 않는다. */
-export const PENDING_SECTIONS = ["styleTags", "reviews", "leadTime"] as const;
+// **`styleTags` 는 C-2d 가 채웠다.** 채운 자리는 목록에서 뺀다 — 남겨 두면
+// 화면이 "아직 준비 중" 이라고 적으면서 바로 위에 그 값을 보여 준다.
+export const PENDING_SECTIONS = ["reviews", "leadTime"] as const;
 
 export type PendingSection = (typeof PENDING_SECTIONS)[number];
 
@@ -32,7 +34,6 @@ export type PendingSection = (typeof PENDING_SECTIONS)[number];
  * 어휘라 화면에 쓰지 않는다.
  */
 export const PENDING_SECTION_NOTE: Record<PendingSection, string> = {
-  styleTags: "상품별 컨셉 태그는 아직 준비 중이에요. 지금은 업체 단위 태그만 있어요.",
   reviews: "상품별 후기는 아직 모으는 중이에요. 이 업체의 후기는 업체 상세에서 볼 수 있어요.",
   leadTime: "언제까지 주문해야 하는지는 업체에 문의해 주세요. 상품별 주문 기한은 준비 중이에요.",
 };

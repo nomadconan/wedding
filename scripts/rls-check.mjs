@@ -14815,5 +14815,277 @@ if (!vendorStaff || !adminUser) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 상품 컨셉 태그 (C-2d · D-213) — 어휘 · 상속 · 랭킹 금지 · 권한
+// ═══════════════════════════════════════════════════════════════════════════
+{
+  const DRAFT = "00000000-0000-0000-0000-0000000c2d01";
+  const PUBLISHED = "00000000-0000-0000-0000-0000000c2d0f";
+  const PENDING_VENDOR = "00000000-0000-0000-0000-0000000c2d90";
+  const PENDING_PRODUCT = "00000000-0000-0000-0000-0000000c2d91";
+
+  /**
+   * 초안 1 · 게시 1 — **둘 다 `outsider`(업체 대표)의 업체**에 붙인다. 그래야
+   * "자기 상품은 고칠 수 있다" 와 "남의 상품은 못 고친다" 를 같은 픽스처로 가른다.
+   * 그 업체는 시드에서 `pending` 이라 여기서 `active` 로 올린다(롤백된다).
+   * 그리고 **남의 업체**(심사 중) 하나에 게시 상품을 둔다.
+   */
+  const fixture = `
+    update public.vendors set status = 'active'
+     where id = (select vendor_id from public.vendor_members where user_id = '${outsider}' limit 1);
+
+    insert into public.vendors (id, name, category, region_code, status, style_tags)
+    values ('${PENDING_VENDOR}', '심사중 업체', 'hall', '서울 강남', 'pending', array['luxury']::text[]);
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at, style_tags)
+    select '${DRAFT}', vm.vendor_id, 'hall', 'C2D 초안', 1000000, 'draft',
+           '[{"label":"대관","note":null}]'::jsonb, now(), null, array['outdoor']::text[]
+      from public.vendor_members vm where vm.user_id = '${outsider}' limit 1;
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at, style_tags)
+    select '${PUBLISHED}', vm.vendor_id, 'hall', 'C2D 게시', 2000000, 'published',
+           '[{"label":"대관","note":null}]'::jsonb, now(), now(), array['minimal']::text[]
+      from public.vendor_members vm where vm.user_id = '${outsider}' limit 1;
+
+    insert into public.products (id, vendor_id, category, name, base_price_total, status,
+                                 included_items_json, add_ons_declared_at, published_at, style_tags)
+    values ('${PENDING_PRODUCT}', '${PENDING_VENDOR}', 'hall', '심사중 게시 상품', 3000000,
+            'published', '[{"label":"대관","note":null}]'::jsonb, now(), now(), array['luxury']::text[]);
+  `;
+
+  // ── 어휘 — 늘리지 않았다 · CHECK 이 잠근다 (층 1) ───────────────────────
+  {
+    const block = (srcOf("lib/core/schemas/onboarding.ts")
+      .match(/STYLE_TAGS = \[([\s\S]*?)\] as const/) ?? ["", ""])[1];
+    const codes = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+
+    check(
+      "**컨셉 어휘를 코드에서 실제로 읽었다** (빈 목록으로 통과하지 않는다)",
+      codes.length === 8,
+      `code=${codes.length}`,
+    );
+    check(
+      "**어휘를 늘리지 않았다** — 세 표가 같은 여덟을 쓴다",
+      codes.length === 8 &&
+        codes.every((tag) =>
+          ["products", "vendors"].every(
+            (table) =>
+              sql(`select count(*) from pg_constraint
+                    where conrelid = 'public.${table}'::regclass
+                      and conname = '${table}_style_tags_chk'
+                      and pg_get_constraintdef(oid) like '%''${tag}''%';`) === "1",
+          ),
+        ),
+    );
+  }
+  check(
+    "**층 1 — 어휘 밖 태그를 DB 가 막는다** (오타가 새 컨셉을 만들지 않는다)",
+    rejectedWith(/products_style_tags_chk|check constraint/, () =>
+      sql(`update public.products set style_tags = array['romatic']::text[]
+            where id = '00000000-0000-0000-0000-000000000951';`),
+    ),
+  );
+  check(
+    "**층 1 — 어휘 안의 값은 통과한다** (늘 거절하는 CHECK 이 아니다)",
+    sqlOrNull(`begin;
+      update public.products set style_tags = array['romantic','minimal']::text[]
+       where id = '00000000-0000-0000-0000-000000000951';
+      rollback;`) !== null,
+  );
+  check(
+    "**컨셉 필터가 GIN 인덱스를 갖는다** — 업체 쪽과 같은 모양이다",
+    sql(`select count(*) from pg_indexes
+          where schemaname = 'public' and indexname = 'idx_products_style_tags';`) === "1",
+  );
+  check(
+    "**기본값이 빈 배열이고 NOT NULL 이다** — null 과 '없음' 이 갈리지 않는다",
+    sql(`select is_nullable || '|' || coalesce(column_default, '-')
+           from information_schema.columns
+          where table_schema = 'public' and table_name = 'products' and column_name = 'style_tags';`)
+      === "NO|'{}'::text[]",
+  );
+
+  // ── 상속 — 값을 복사해 저장하지 않았다 ──────────────────────────────────
+  //
+  // 복사하면 업체가 태그를 바꿔도 상품은 옛 값을 들고 있고, 그때 어느 쪽이 맞는지
+  // 답할 수 없다. **마이그레이션이 데이터를 건드리지 않았다는 사실**을 고정한다.
+  check(
+    "**마이그레이션이 업체 태그를 상품으로 복사하지 않았다** (계산 가능한 값을 저장하지 않는다)",
+    !/update\s+public\.products[\s\S]{0,200}style_tags/i.test(
+      srcOf("supabase/migrations/20260808007800_product_style_tags.sql"),
+    ),
+  );
+  check(
+    "**지금 모든 상품의 태그가 비어 있다** — 그래서 전부 업체 태그로 계속 걸린다",
+    sql(`select count(*) from public.products
+          where coalesce(array_length(style_tags, 1), 0) > 0;`) === "0",
+  );
+  check(
+    "**상속 규칙이 `lib/core` 에 코드로 있다** — 질의문이 규칙을 두 번 적지 않는다",
+    /effectiveStyleTags/.test(srcOf("lib/core/product/concept.ts")) &&
+      /effectiveStyleTags/.test(srcOf("lib/explore/query.ts")) &&
+      /effectiveStyleTags/.test(srcOf("lib/products/detail-query.ts")),
+  );
+  check(
+    "**합집합이 아니다** — 상품 태그가 있으면 업체 태그를 덮는다(완료 조건 ①)",
+    /source: "product"/.test(srcOf("lib/core/product/concept.ts")) &&
+      /source: "vendor"/.test(srcOf("lib/core/product/concept.ts")),
+  );
+  check(
+    "**상속받은 태그는 출처를 밝힌다** — 업체 컨셉을 상품 컨셉처럼 그리지 않는다",
+    /STYLE_TAG_SOURCE_NOTE/.test(
+      srcOf("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+    ),
+  );
+
+  // ── 카테고리 축과 섞이지 않았다 (C-2a · D-206) ──────────────────────────
+  check(
+    "**컨셉이 카테고리 두 축에 섞이지 않았다** — `axes.ts` 가 컨셉을 모른다",
+    !/style_tags|STYLE_TAGS|styleTags/.test(srcOf("lib/core/category/axes.ts")),
+  );
+  check(
+    "**컨셉 모듈이 카테고리 매핑을 끌어오지 않는다** — 느낌과 카테고리를 대응시키지 않는다",
+    !/category\/axes/.test(srcOf("lib/core/product/concept.ts")),
+  );
+  check(
+    "**그 사실이 문장으로도 적혀 있다** (다음 사람이 섞지 않도록)",
+    /CONCEPT_AXIS_NOTE/.test(srcOf("lib/core/product/concept.ts")),
+  );
+
+  // ── 랭킹에 쓰지 않는다 ──────────────────────────────────────────────────
+  //
+  // 태그가 많을수록 위로 올라가면 **태그 남발이 이득**이 된다(D-03 과 같은 자리).
+  // 정렬을 만드는 자리에 태그가 등장하지 않는 것을 본다.
+  {
+    const query = srcOf("lib/explore/query.ts");
+    const sortBlock = (query.match(/switch \(filter\.sort\)[\s\S]*?\n  \}/) ?? ["", ""])[0];
+
+    check(
+      "**정렬 분기를 실제로 읽었다** (빈 문자열로 통과하지 않는다)",
+      sortBlock.includes("price_asc") && sortBlock.includes("price_index_gap"),
+      `len=${sortBlock.length}`,
+    );
+    check(
+      "**정렬 분기에 컨셉 태그가 없다** — 태그가 많다고 위로 올라가지 않는다",
+      sortBlock.length > 0 && !/style_tags|styleTags/.test(sortBlock),
+    );
+  }
+  check(
+    "**DB 의 노출·순위 함수가 컨셉을 모른다**",
+    sql(`select count(*) from pg_proc
+          where prosrc like '%style_tags%'
+            and proname in ('is_active_vendor', 'resolve_commission_rate', 'published_content');`) === "0",
+  );
+  check(
+    "**그 원칙이 문장으로 적혀 있다**",
+    /CONCEPT_NOT_RANKING_NOTE/.test(srcOf("lib/core/product/concept.ts")),
+  );
+
+  // ── 층 2·3 — 남의 상품에 태그를 붙일 수 있는가 ──────────────────────────
+  //
+  // 태그는 `products` 의 칸이라 **"남의 상품을 가리키는" 경로가 애초에 없다**
+  // (C-2b 의 `vendor_media` 와 다른 점 — 그쪽은 자기 업체 행에서 남의 상품을
+  //  가리킬 수 있어 복합 FK 가 필요했다). 그래도 **가정하지 않고 눌러 본다.**
+  check(
+    "**층 3 — 남의(심사 중) 업체 상품은 보이지도 않는다** — 고치기 전에 읽히지 않는다",
+    asUser(
+      outsider,
+      `select count(*) from public.products where id = '${PENDING_PRODUCT}';`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**층 3 — 남의 상품 태그가 실제로 안 바뀐다** (덮어써 보고 확인한다)",
+    asUser(
+      outsider,
+      `update public.products set style_tags = array['modern']::text[]
+        where id = '${PENDING_PRODUCT}';
+       select count(*) from public.products
+        where id = '${PENDING_PRODUCT}' and style_tags @> array['modern']::text[];`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**층 1 — staff 는 상품 태그를 못 고친다** (상품 쓰기는 owner 전용)",
+    asUser(
+      vendorStaff,
+      `update public.products set style_tags = array['modern']::text[]
+        where id = '${PUBLISHED}';
+       select count(*) from public.products
+        where id = '${PUBLISHED}' and style_tags @> array['modern']::text[];`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**owner 는 자기 상품 태그를 고친다** (늘 거절하는 정책이 아니다)",
+    asUser(
+      outsider,
+      `update public.products set style_tags = array['modern']::text[]
+        where id = '${PUBLISHED}';
+       select count(*) from public.products
+        where id = '${PUBLISHED}' and style_tags @> array['modern']::text[];`,
+      fixture,
+    ) === "1",
+  );
+  check(
+    "**층 2 — 컨셉 때문에 새 표·새 정책이 생기지 않았다** (부모에 기대는 정책을 늘리지 않았다)",
+    !/create policy|create table/i.test(
+      srcOf("supabase/migrations/20260808007800_product_style_tags.sql"),
+    ),
+  );
+
+  // ── 비로그인이 보는 것 ──────────────────────────────────────────────────
+  check(
+    "**비로그인은 초안 상품의 컨셉을 못 본다**",
+    asAnon(
+      `select count(*) from public.products
+        where id = '${DRAFT}' and style_tags @> array['outdoor']::text[];`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**비로그인은 심사 중 업체 상품의 컨셉을 못 본다**",
+    asAnon(
+      `select count(*) from public.products
+        where id = '${PENDING_PRODUCT}' and style_tags @> array['luxury']::text[];`,
+      fixture,
+    ) === "0",
+  );
+  check(
+    "**게시 상품의 컨셉은 보인다** (분모가 실재한다)",
+    asAnon(
+      `select count(*) from public.products
+        where id = '${PUBLISHED}' and style_tags @> array['minimal']::text[];`,
+      fixture,
+    ) === "1",
+  );
+
+  // ── 취향 기본 필터 — 지울 수 있는가 ─────────────────────────────────────
+  check(
+    "**취향을 기본값으로 넣는 규칙이 `lib/core` 에 있다**",
+    /tasteDefault/.test(srcOf("lib/core/product/concept.ts")) &&
+      /tasteDefault/.test(srcOf("app/(consumer)/explore/page.tsx")),
+  );
+  // **import 줄만 보고 통과하지 않게 한다.** 이름이 파일에 있다는 것과 화면이
+  // 그린다는 것은 다르다 — `{...}` 로 **그려지는 자리**를 본다(되돌림 시험에서 걸렸다).
+  check(
+    "**어디서 온 값인지 화면이 말한다** (import 가 아니라 그려지는 자리를 본다)",
+    /\{TASTE_DEFAULT_NOTE\}/.test(srcOf("app/(consumer)/explore/page.tsx")),
+  );
+  check(
+    "**지우는 수단이 함께 있다** — 지울 수 없는 기본값은 거르는 게 아니라 가리는 것이다",
+    /\{TASTE_DEFAULT_CLEAR_LABEL\}/.test(srcOf("app/(consumer)/explore/page.tsx")) &&
+      /TASTE_OFF/.test(srcOf("app/(consumer)/explore/page.tsx")),
+  );
+  check(
+    "**비로그인에게는 기본 필터가 걸리지 않는다** — 취향은 커플에 붙은 값이다",
+    /getSessionUser/.test(srcOf("lib/explore/taste.ts")) &&
+      /return \[\]/.test(srcOf("lib/explore/taste.ts")),
+  );
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 process.exit(results.every(Boolean) ? 0 : 1);

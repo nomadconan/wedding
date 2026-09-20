@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
       included_items_json: input.includedItems,
       capacity_min: input.capacityMin,
       capacity_max: input.capacityMax,
+      style_tags: input.styleTags,
       summary: input.summary && input.summary.length > 0 ? input.summary : null,
       description_json: toProductDescription(input.description ?? null),
       // 새 상품은 항상 작성 중으로 시작한다. 게시는 체크리스트를 통과해야 한다.

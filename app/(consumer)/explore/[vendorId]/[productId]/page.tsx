@@ -8,15 +8,18 @@ import { ContentBody } from "@/components/domain/ContentBody";
 import { PriceDisplay, formatKrw } from "@/components/domain/PriceDisplay";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { bpToPercentText } from "@/lib/core/pricing/dynamic";
+import { STYLE_TAG_SOURCE_NOTE } from "@/lib/core/product/concept";
 import { descriptionBlocks } from "@/lib/core/product/content";
 import {
   NO_PRODUCT_BODY_NOTE,
   PENDING_SECTION_NOTE,
   photoSection,
 } from "@/lib/core/product/detail";
+import { STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import { ADD_ONS_POLICY_NOTICE } from "@/lib/core/schemas/product-option";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { loadProductDetail } from "@/lib/products/detail-query";
@@ -78,6 +81,26 @@ export default async function ProductDetailPage(props: {
             <p className="text-sm text-foreground" data-testid="product-summary">
               {product.summary}
             </p>
+          ) : null}
+
+          {/* 컨셉(C-2d). **출처를 함께 적는다** — 상품이 비어 업체 태그를 상속한
+              것이라면 그 사실을 말해야 한다. 업체 컨셉을 상품 컨셉처럼 그리면
+              같은 업체의 두 패키지가 같은 성격인 것처럼 읽힌다. */}
+          {product.styleTags.tags.length > 0 ? (
+            <div className="space-y-1" data-testid="product-style-tags" data-source={product.styleTags.source}>
+              <div className="flex flex-wrap gap-1.5">
+                {product.styleTags.tags.map((tag) => (
+                  <Badge key={tag} variant="secondary">
+                    {STYLE_TAG_LABEL[tag as StyleTag] ?? tag}
+                  </Badge>
+                ))}
+              </div>
+              {STYLE_TAG_SOURCE_NOTE[product.styleTags.source] ? (
+                <p className="text-caption text-muted-foreground">
+                  {STYLE_TAG_SOURCE_NOTE[product.styleTags.source]}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </section>
 
