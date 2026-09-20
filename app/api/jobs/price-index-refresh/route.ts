@@ -51,11 +51,23 @@ export async function POST(request: NextRequest) {
       .eq("status", "active")
       .limit(1_000);
 
+    /**
+     * **지역을 모르는 업체는 칸을 만들지 않는다**(C-2f).
+     *
+     * 이행에서 옮기지 못한 자유 문자열은 `null` 이 됐다. 그대로 두면 `"null|hall"`
+     * 이라는 칸이 하나 생기고, 그 칸은 어느 지역 페이지에도 안 뜨면서 **표본만 빨아
+     * 먹는다** — 강남 업체가 '지역 없음' 칸에 섞이면 강남 칸의 표본이 하한(5) 아래로
+     * 떨어질 수 있다. 세지 않는 편이 정직하다. 그 업체들은 탐색 목록에는 그대로
+     * 남는다(빼는 것은 우리 이행 사정을 업체에 떠넘기는 일이다).
+     */
+    const withRegion = ((vendorRows ?? []) as { region_code: string | null; category: string }[])
+      .filter((row): row is { region_code: string; category: string } => row.region_code !== null);
+
+    const skippedNoRegion = (vendorRows ?? []).length - withRegion.length;
+
     const cells = [
       ...new Map(
-        ((vendorRows ?? []) as { region_code: string; category: string }[]).map(
-          (row) => [`${row.region_code}|${row.category}`, row],
-        ),
+        withRegion.map((row) => [`${row.region_code}|${row.category}`, row]),
       ).values(),
     ];
 
@@ -99,6 +111,8 @@ export async function POST(request: NextRequest) {
             [
               auditLost > 0 ? `audit_lost:${auditLost}` : null,
               insufficient > 0 ? `insufficient_sample:${insufficient}` : null,
+              // **건너뛴 사실을 밖으로 낸다.** 조용히 빼면 표본이 왜 적은지 아무도 모른다.
+              skippedNoRegion > 0 ? `no_region:${skippedNoRegion}` : null,
             ]
               .filter(Boolean)
               .join(" ") || null,
@@ -110,6 +124,8 @@ export async function POST(request: NextRequest) {
       cells: cells.length,
       built,
       insufficient,
+      // 지역을 모르는 업체 수. **0 으로 감추지 않는다** — 세지 않은 것이 있다는 사실이다.
+      skippedNoRegion,
       guestBucket: PRICE_INDEX_ALL,
     });
   } catch {

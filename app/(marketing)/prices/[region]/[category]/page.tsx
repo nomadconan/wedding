@@ -13,6 +13,7 @@ import {
   PRICE_INDEX_ALL,
   PRICE_INDEX_MIN_SAMPLE,
 } from "@/lib/core/pricing/price-index";
+import { isRegionCode, regionLabel } from "@/lib/core/region/regions";
 import { VENDOR_CATEGORIES, VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { createPublicClient } from "@/lib/explore/query";
 import { findPriceIndex } from "@/lib/pricing/price-index-query";
@@ -23,7 +24,7 @@ type Params = { region: string; category: string };
 
 export async function generateMetadata(props: { params: Promise<Params> }): Promise<Metadata> {
   const params = await props.params;
-  const region = decodeURIComponent(params.region);
+  const region = regionLabel(params.region) ?? params.region;
   const label = VENDOR_CATEGORY_LABEL[params.category as VendorCategory] ?? params.category;
 
   return {
@@ -44,15 +45,20 @@ export async function generateMetadata(props: { params: Promise<Params> }): Prom
  */
 export default async function PriceReportPage(props: { params: Promise<Params> }) {
   const params = await props.params;
-  // **카테고리는 값 집합이 정해져 있다.** 없는 코드는 페이지가 성립하지 않으므로 404 다.
-  // 지역은 자유 입력이라 같은 판정을 할 수 없다 — 아래에서 '표본 없음'으로 다룬다.
+  // **둘 다 값 집합이 정해져 있다.** 없는 코드는 페이지가 성립하지 않으므로 404 다.
+  //
+  // 지역은 C-2f 전까지 자유 입력이라 이 판정을 할 수 없었고, 그래서 `/prices/ㅁㄴㅇ/hall`
+  // 같은 주소가 **200 에 빈 상태**로 떴다 — 검색엔진에 빈 페이지가 무한히 쌓이는 모양이다
+  // (카테고리에 대해 이미 내린 판단과 같다). 어휘가 생겼으니 같은 규칙을 지역에도 쓴다.
+  // 다만 **어휘 안의 지역인데 표본만 없는 경우는 여전히 404 가 아니다** — 아래 빈 상태다.
   if (!(VENDOR_CATEGORIES as readonly string[]).includes(params.category)) notFound();
+  if (!isRegionCode(decodeURIComponent(params.region))) notFound();
 
   const region = decodeURIComponent(params.region);
   const category = params.category as VendorCategory;
 
   return (
-    <ConsumerShell title={`${region} ${VENDOR_CATEGORY_LABEL[category]} 가격`}>
+    <ConsumerShell title={`${regionLabel(region)} ${VENDOR_CATEGORY_LABEL[category]} 가격`}>
       <Suspense fallback={<LoadingState label="가격 분포를 불러오는 중" rows={3} variant="block" />}>
         <ReportSection region={region} category={category} />
       </Suspense>
@@ -77,9 +83,9 @@ async function ReportSection({ region, category }: { region: string; category: V
   const exploreHref = `/explore?region=${encodeURIComponent(region)}&category=${category}`;
 
   if (index === null) {
-    // **404 가 아니라 빈 상태다.** 지역은 자유 입력이라 "없는 지역" 을 판정할 수 없고,
-    // 표본이 아직 모이지 않았다는 사실 자체가 이 페이지가 말할 내용이다.
-    // 404 를 내면 "그런 지역은 없다" 는 틀린 신호가 된다.
+    // **404 가 아니라 빈 상태다.** 여기까지 왔다는 것은 **어휘에 있는 지역**이라는 뜻이고
+    // (없는 코드는 위에서 404 로 끊었다), 표본이 아직 모이지 않았다는 사실 자체가
+    // 이 페이지가 말할 내용이다. 404 를 내면 "그런 지역은 없다" 는 틀린 신호가 된다.
     return (
       <div className="space-y-4">
         <EmptyState
@@ -88,7 +94,7 @@ async function ReportSection({ region, category }: { region: string; category: V
           description={INSUFFICIENT_SAMPLE_NOTICE}
           action={
             <Link href={exploreHref} className="text-sm font-medium text-brand-600">
-              {region} {VENDOR_CATEGORY_LABEL[category]} 업체 보기
+              {regionLabel(region)} {VENDOR_CATEGORY_LABEL[category]} 업체 보기
             </Link>
           }
         />

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
+import { regionLabel } from "@/lib/core/region/regions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -50,21 +52,17 @@ export function ProfileForm({ data }: { data: ProfileData }) {
   const [bio, setBio] = useState(data.planner?.bio ?? "");
   const [careerYears, setCareerYears] = useState(String(data.planner?.careerYears ?? 0));
   const [categories, setCategories] = useState<PlannerCategory[]>(data.planner?.categories ?? []);
-  const [regions, setRegions] = useState((data.planner?.regions ?? []).join(", "));
+  const [regions, setRegions] = useState<string[]>(data.planner?.regions ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const parsedRegions = regions
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value !== "");
 
   const draft = {
     headline: headline.trim(),
     bio,
     careerYears: Number(careerYears),
     categories,
-    regions: parsedRegions,
+    regions,
   };
 
   const ready = canRequestListing(draft);
@@ -183,16 +181,39 @@ export function ProfileForm({ data }: { data: ProfileData }) {
             </div>
           </div>
 
-          <label className="block text-xs text-neutral-700">
+          <div className="block text-xs text-neutral-700">
             활동 지역
-            <Input
-              value={regions}
-              onChange={(event) => setRegions(event.target.value)}
-              placeholder="서울 강남, 서울 서초"
-              className="mt-1"
+            {/*
+              **쉼표로 적던 자리다**(C-2f). 자유 입력이라 "서울 강남"·"강남"·"강남구" 가
+              모두 들어왔고, 마켓의 지역 필터는 코드로 거르므로 그중 어느 것도 안 걸렸다.
+              고른 것만 들어오게 바꾸고, 고른 것은 지운다.
+            */}
+            <div className="mt-1 flex flex-wrap gap-1.5" data-testid="planner-regions">
+              {regions.length === 0 ? (
+                <span className="text-neutral-500">아직 고르지 않았어요.</span>
+              ) : (
+                regions.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => setRegions(regions.filter((value) => value !== code))}
+                    className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700"
+                  >
+                    {regionLabel(code)} ×
+                  </button>
+                ))
+              )}
+            </div>
+            <RegionSelect
+              id="planner-region-add"
+              aria-label="활동 지역 추가"
+              emptyLabel="지역 추가"
+              value=""
+              onChange={(value) => {
+                if (value !== "" && !regions.includes(value)) setRegions([...regions, value]);
+              }}
             />
-            <span className="mt-1 block text-neutral-500">쉼표로 구분해 적어 주세요.</span>
-          </label>
+          </div>
 
           <label className="block text-xs text-neutral-700">
             소개

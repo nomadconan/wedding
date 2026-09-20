@@ -10,6 +10,8 @@
 // (S1-02 의 `AMOUNT_UNKNOWN`, S2-04 의 '없음' vs '미등록' 과 같은 원칙).
 
 import { z } from "zod";
+
+import { isRegionCode } from "../region/regions";
 import type { JsonObject } from "../json";
 
 export const ONBOARDING_QUESTIONS = [
@@ -96,7 +98,13 @@ export const OnboardingAnswerSchema = z.discriminatedUnion("question", [
   }),
   z.object({
     question: z.literal("region"),
-    regionCode: z.string().trim().min(2, "지역을 입력해 주세요.").max(40),
+    /**
+     * 예식 지역(C-2f).
+     *
+     * **업체·참가격과 같은 어휘**를 쓴다 — 자유 입력이면 "커플이 적은 강남" 과
+     * "업체가 적은 서울 강남" 이 다른 값이 되어 매칭이 성립하지 않는다.
+     */
+    regionCode: z.string().trim().refine(isRegionCode, "목록에 있는 지역을 골라 주세요."),
   }),
   z.object({
     question: z.literal("budget"),

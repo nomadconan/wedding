@@ -1,3 +1,4 @@
+import { regionLabel } from "@/lib/core/region/regions";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -59,7 +60,7 @@ async function DetailSection({ id }: { id: string }) {
         <section className="rounded-xl border border-border p-4">
           <h2 className="text-base font-semibold text-foreground">{planner.headline}</h2>
           <p className="mt-1 text-xs text-neutral-600">
-            경력 {planner.careerYears}년 · {planner.regions.join(", ")}
+            경력 {planner.careerYears}년 · {planner.regions.map((code) => regionLabel(code)).join(", ")}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-1.5">

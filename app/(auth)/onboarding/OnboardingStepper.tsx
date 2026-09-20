@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { formatKrw } from "@/components/domain/PriceDisplay";
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -196,11 +197,14 @@ export function OnboardingStepper({ answers, complete }: OnboardingStepperProps)
         ) : null}
 
         {question === "region" ? (
-          <Input
+          // **자유 입력이 아니다**(C-2f). 커플이 적은 지역은 참가격 링크(`/prices/...`)와
+          // 탐색 필터에 그대로 들어간다 — 어휘 밖의 값을 적으면 둘 다 조용히 빈손이 된다.
+          <RegionSelect
+            id="onboarding-region"
             aria-label="지역"
-            placeholder="예: 서울 강남"
+            emptyLabel="아직 안 정했어요"
             value={draft.regionCode}
-            onChange={(event) => setDraft({ ...draft, regionCode: event.target.value })}
+            onChange={(value) => setDraft({ ...draft, regionCode: value })}
           />
         ) : null}
 

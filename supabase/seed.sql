@@ -318,7 +318,7 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 | 보증인원 | 계약서 본문 |
 | 해지 위약금 | 계약서 해지 조항 |
 | 일정 변경 | 계약서 특약 |$md$,
-  '{"description": "웨딩홀 계약서에 서명하기 전에 확인하면 좋은 다섯 가지를 정리했습니다. 총액, 보증인원, 추가금, 해지 조건, 계약서 검토.", "keywords": ["웨딩홀", "웨딩홀 계약", "보증인원", "위약금"], "tools": ["explore", "penalty", "reports"], "region_code": "서울", "category": "hall"}'::jsonb,
+  '{"description": "웨딩홀 계약서에 서명하기 전에 확인하면 좋은 다섯 가지를 정리했습니다. 총액, 보증인원, 추가금, 해지 조건, 계약서 검토.", "keywords": ["웨딩홀", "웨딩홀 계약", "보증인원", "위약금"], "tools": ["explore", "penalty", "reports"], "region_code": "seoul", "category": "hall"}'::jsonb,
   now() - interval '20 days'
 ),
 (

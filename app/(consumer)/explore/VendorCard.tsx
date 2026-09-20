@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { CartActions } from "@/components/domain/CartActions";
 import type { CartChoice } from "@/lib/core/cart/multi-cart";
+import { regionLabel } from "@/lib/core/region/regions";
 import { bpToPercentText } from "@/lib/core/pricing/dynamic";
 import { NO_INDEX_BASELINE_NOTE } from "@/lib/core/pricing/price-index";
 import { PriceDisplay, type PriceAddOns } from "@/components/domain/PriceDisplay";
@@ -83,7 +84,7 @@ export function VendorCard({
             </Link>
             <p className="truncate text-caption text-muted-foreground">
               {VENDOR_CATEGORY_LABEL[row.category as VendorCategory] ?? row.category}
-              {row.regionCode ? ` · ${row.regionCode}` : ""}
+              {row.regionCode ? ` · ${regionLabel(row.regionCode)}` : ""}
             </p>
           </div>
           {inCart ? (

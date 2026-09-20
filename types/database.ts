@@ -5808,6 +5808,7 @@ export type Database = {
           vendor_name: string
         }[]
       }
+      are_region_codes: { Args: { p_values: string[] }; Returns: boolean }
       attach_set_updated_at: { Args: { p_table: string }; Returns: undefined }
       booking_couple_id: { Args: { p_booking_id: string }; Returns: string }
       booking_vendor_id: { Args: { p_booking_id: string }; Returns: string }
@@ -5884,6 +5885,7 @@ export type Database = {
       is_planner_record: { Args: { p_planner_id: string }; Returns: boolean }
       is_prep_category: { Args: { p_value: string }; Returns: boolean }
       is_published_post: { Args: { p_post_id: string }; Returns: boolean }
+      is_region_code: { Args: { p_value: string }; Returns: boolean }
       is_rsvp_status: { Args: { p_value: string }; Returns: boolean }
       is_share_resource_type: { Args: { p_value: string }; Returns: boolean }
       is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Button } from "@/components/ui/button";
 import {
   CONTENT_STATUS_HINT,
@@ -267,8 +268,14 @@ export function EditorPanel({ post, now }: EditorPanelProps) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1">
-            <span className="text-caption text-muted-foreground">지역 코드 (선택)</span>
-            <input value={regionCode} onChange={(e) => setRegionCode(e.target.value)} className={field} />
+            <span className="text-caption text-muted-foreground">지역 (선택)</span>
+            {/* SEO 대상 지역도 같은 어휘다 — 여기만 자유 입력이면 `/prices` 와 안 맞는다. */}
+            <RegionSelect
+              id="cms-region"
+              emptyLabel="지역 없음"
+              value={regionCode}
+              onChange={setRegionCode}
+            />
           </label>
           <label className="block space-y-1">
             <span className="text-caption text-muted-foreground">카테고리 (선택)</span>

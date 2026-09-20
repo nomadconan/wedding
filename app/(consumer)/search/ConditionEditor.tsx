@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -104,7 +105,13 @@ export function ConditionEditor({ query, defaults, emptyFields }: ConditionEdito
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="search-region">지역</Label>
-              <Input id="search-region" name="region" placeholder="강남" defaultValue={defaults.region} />
+              {/* 탐색 필터와 **같은 수단**이다 — 같은 조건을 두 화면이 다르게 받지 않는다. */}
+              <RegionSelect
+                id="search-region"
+                name="region"
+                emptyLabel="전체"
+                defaultValue={defaults.region}
+              />
             </div>
 
             <div className="space-y-1.5">

@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 
+import { isRegionCode } from "../region/regions";
 import { isValidBusinessNumber, normalizeBusinessNumber } from "../vendor/business-number";
 
 /** 업체 카테고리. `vendors.category`(text)에 그대로 들어가는 코드값이다. */
@@ -53,7 +54,8 @@ const PhoneSchema = z
 export const VendorApplicationInputSchema = z.object({
   name: z.string().trim().min(2, "업체명을 2자 이상 입력해 주세요.").max(100),
   category: VendorCategorySchema,
-  regionCode: z.string().trim().min(2, "지역을 선택해 주세요.").max(40),
+  /** 지역(C-2f). **심사 대상 정보**라 프로필에서 못 바꾼다 — 참가격 지수의 분모다. */
+  regionCode: z.string().trim().refine(isRegionCode, "목록에 있는 지역을 골라 주세요."),
   /** 사업자등록번호. 체크섬까지 검증한다 — 오타가 심사 큐로 흘러가지 않게 한다. */
   businessNumber: z
     .string()

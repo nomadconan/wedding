@@ -21,6 +21,14 @@ export const EMPTY_REASONS = [
   "no_match",
   /** 아직 세지 않는 지표. **0이 아니다.** */
   "not_counted_yet",
+  /**
+   * 사용자가 말한 지역을 **어휘에서 못 찾았다**(C-2f).
+   *
+   * `no_sample` 과 섞으면 안 된다 — 그쪽은 "있는 지역인데 표본이 없다" 이고 이쪽은
+   * "그런 지역을 못 알아들었다" 다. 같은 사유로 묶으면 모델이 **있는 지역을 없다고**
+   * 말하게 된다.
+   */
+  "unknown_region",
 ] as const;
 
 export type EmptyReason = (typeof EMPTY_REASONS)[number];
@@ -53,6 +61,11 @@ export const EMPTY_GUIDANCE: Record<EmptyReason, EmptyGuidance> = {
     reason: "not_counted_yet",
     say: "이 값은 아직 세지 않아요.",
     nextAction: "지금 셀 수 있는 값으로 대신 견줘 보기",
+  },
+  unknown_region: {
+    reason: "unknown_region",
+    say: "말씀하신 지역을 목록에서 찾지 못했어요.",
+    nextAction: "시·군·구 이름으로 다시 말해 주기",
   },
 };
 

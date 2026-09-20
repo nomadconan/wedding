@@ -171,7 +171,7 @@ function segmentValue(name, routeHint) {
     vendorId: FIX.vendorPublic ?? FIX.vendor ?? MISSING_UUID,
     bookingId: FIX.booking ?? MISSING_UUID,
     slug: FIX.slug ?? "missing-slug",
-    region: FIX.priceRegion ?? "서울 강남",
+    region: FIX.priceRegion ?? "seoul-gangnam",
     category: FIX.priceCategory ?? "hall",
     token: routeHint.startsWith("/share")
       ? (FIX.shareToken ?? MISSING_TOKEN)

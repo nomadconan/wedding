@@ -777,7 +777,7 @@ try {
       const current = await fetch("/api/vendor/profile").then((r) => r.json());
       const v = current.data.vendor;
       const profile = {
-        regionCode: v.region_code || "서울 강남",
+        regionCode: v.region_code || "seoul-gangnam",
         address: v.address, addressDetail: v.address_detail,
         capacityMin: v.capacity_min, capacityMax: v.capacity_max,
         facilities: v.facilities || [], styleTags: v.style_tags || [], intro: v.intro,

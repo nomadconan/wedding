@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -157,13 +158,12 @@ export function VendorApplyForm({ isResubmit, defaults }: VendorApplyFormProps) 
 
         <div className="space-y-1.5">
           <Label htmlFor="regionCode">지역</Label>
-          <Input
-            id="regionCode"
-            name="regionCode"
-            required
-            defaultValue={defaults?.regionCode}
-            placeholder="예: 서울 강남"
-          />
+          {/*
+            **입점 심사가 확인하는 정보다**(C-2f). 그래서 여기서 한 번 고르고 프로필에서는
+            바꾸지 않는다 — 지역은 참가격 지수의 분모라, 나중에 스스로 옮길 수 있으면
+            표본이 적어 유리한 칸으로 이사할 수 있다.
+          */}
+          <RegionSelect id="regionCode" name="regionCode" required defaultValue={defaults?.regionCode} />
           {fieldErrors.regionCode ? (
             <p className="text-caption text-danger">{fieldErrors.regionCode}</p>
           ) : null}

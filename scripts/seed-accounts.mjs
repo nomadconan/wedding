@@ -95,7 +95,7 @@ const LINKED_COUPLE_ID = "00000000-0000-0000-0000-00000000c0a1";
  */
 const LINKED_COUPLE_ANSWERS = [
   ["wedding_date", { value: "2027-05-15" }],
-  ["region", { value: "서울 강남" }],
+  ["region", { value: "seoul-gangnam" }],
   ["budget", { value: 40000000 }],
   ["guest_count", { value: 150 }],
   ["style", { value: ["modern"] }],
@@ -257,7 +257,7 @@ async function seedVendor(vendorUser, staffUser) {
       body: JSON.stringify({
         name: "로컬 데모 웨딩홀",
         category: "hall",
-        region_code: "서울 강남",
+        region_code: "seoul-gangnam",
         // 평문 저장 금지(§7.2). 앱과 같은 방식으로 SHA-256 해시만 남긴다.
         biz_no_enc: createHash("sha256").update(DEMO_BUSINESS_NUMBER).digest("hex"),
         status: "pending",
@@ -443,7 +443,7 @@ async function seedLinkedCouple(ownerUser, partnerUser) {
         owner_id: ownerUser.id,
         stage: "active",
         wedding_date: "2027-05-15",
-        region_code: "서울 강남",
+        region_code: "seoul-gangnam",
         guest_count: 150,
         total_budget: 40000000,
       }),
@@ -516,7 +516,7 @@ async function seedPlanner(plannerUser, coupleId) {
         // is a review outcome, not a self-declaration (0037 trigger blocks
         // self-activation) - the seed writes it with the service role.
         status: "active",
-        regions: ["서울 강남", "서울 서초"],
+        regions: ["seoul-gangnam", "seoul-seocho"],
         // Fees live in planner_fee_rates (S5-01) - never in the profile.
         // A CHECK keeps fee_json empty (0037).
         profile_json: {
@@ -716,7 +716,7 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     couple_id: coupleId,
     status: "open",
     request_json: { note: "local demo inquiry" },
-    region_code: "서울 강남",
+    region_code: "seoul-gangnam",
     guest_count: 150,
   });
 
@@ -1863,7 +1863,7 @@ async function seedPriceFixture(vendorId) {
   if (existing.length > 0) return "existing";
 
   const base = await rest(`vendors?id=eq.${vendorId}&select=region_code,category`);
-  const regionCode = base[0]?.region_code ?? "서울 강남";
+  const regionCode = base[0]?.region_code ?? "seoul-gangnam";
   const category = base[0]?.category ?? "hall";
 
   // Prices spread on purpose so p25/p50/p75 are three DIFFERENT numbers - if they

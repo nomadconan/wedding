@@ -30,6 +30,7 @@ import {
   isQuoteTemplatePayload,
   quoteTemplatePayloadOf,
 } from "@/lib/core/vendor/quote-template";
+import { regionLabel } from "@/lib/core/region/regions";
 import type { VendorTemplateView } from "@/lib/core/schemas/vendor-settings";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { cn } from "@/lib/utils";
@@ -201,7 +202,7 @@ export function VendorInquiriesView({
                   <p className="text-sm font-semibold text-foreground">
                     {active.eventDate ?? "날짜 미정"}
                     {active.guestCount !== null ? ` · 하객 ${active.guestCount}명` : ""}
-                    {active.regionCode ? ` · ${active.regionCode}` : ""}
+                    {active.regionCode ? ` · ${regionLabel(active.regionCode)}` : ""}
                   </p>
                   {active.budgetTotal !== null ? (
                     <p className="text-caption text-muted-foreground">

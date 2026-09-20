@@ -143,7 +143,11 @@ export const TOOL_INPUTS: Record<string, ToolInputDefinition> = {
     jsonSchema: {
       type: "object",
       properties: {
-        region: { type: "string", description: "지역 코드 또는 지역 이름. 예: 강남" },
+        region: {
+          type: "string",
+          description:
+            "지역 코드(예: seoul-gangnam) 또는 사용자가 말한 지역 이름(예: 강남, 판교). 이름은 서버가 코드로 옮기고, 못 옮기면 그 사실을 돌려준다.",
+        },
         category: {
           type: "string",
           description: "업체 카테고리 코드",

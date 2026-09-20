@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -202,13 +203,12 @@ export function InquiryForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="inquiry-region">지역 (선택)</Label>
-          <input
+          {/* 업체가 이 값을 보고 응답할지 정한다 — 어휘 밖의 값은 아무에게도 안 닿는다(C-2f). */}
+          <RegionSelect
             id="inquiry-region"
+            emptyLabel="상관없어요"
             value={form.regionCode}
-            maxLength={60}
-            placeholder="예: 서울 강남"
-            onChange={(event) => patch({ regionCode: event.target.value })}
-            className="h-11 w-full rounded-md border border-input bg-background px-2 text-sm"
+            onChange={(value) => patch({ regionCode: value })}
           />
         </div>
 

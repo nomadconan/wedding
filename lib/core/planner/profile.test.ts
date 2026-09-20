@@ -31,7 +31,7 @@ function profile(over: Partial<PlannerProfile> = {}): Partial<PlannerProfile> {
     bio: "스드메 위주로 진행합니다.",
     careerYears: 10,
     categories: ["studio", "dress"],
-    regions: ["서울 강남"],
+    regions: ["seoul-gangnam"],
     ...over,
   };
 }
@@ -195,7 +195,7 @@ describe("마켓 정렬 — 실적과 사실로만 (D-25 · D-03)", () => {
 
 describe("마켓 필터", () => {
   const rows = [
-    { categories: ["studio"], regions: ["서울 강남"] },
+    { categories: ["studio"], regions: ["seoul-gangnam"] },
     { categories: ["hall"], regions: ["부산"] },
   ];
 

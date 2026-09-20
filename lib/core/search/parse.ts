@@ -1,3 +1,4 @@
+import { REGION_ALIASES, REGION_ALIAS_KEYS, REGION_SUFFIX_PATTERN } from "../region/regions";
 import { STYLE_TAG_LABEL, type StyleTag } from "../schemas/onboarding";
 import type { RejectedCondition, SearchCondition, SearchField } from "../schemas/search";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "../schemas/vendor";
@@ -33,26 +34,6 @@ export type RuleParseResult = {
 // 사전
 // =============================================================================
 
-/**
- * 지역 토큰.
- *
- * `vendors.region_code` 는 자유 입력("서울 강남")이라 조회는 부분 일치로 한다(S3-03).
- * 그래서 여기서는 **행정구역 이름을 알아보는 일**만 하고, 무엇과 맞출지는 조회가 정한다.
- * 자유 텍스트를 그대로 지역으로 넘기지 않는 이유는 "예쁜 홀" 같은 조각이 지역 필터로
- * 들어가면 **결과가 0건인데 이유는 화면에 없기** 때문이다.
- */
-const REGION_TOKENS = [
-  // 광역
-  "서울", "경기", "인천", "부산", "대구", "대전", "광주", "울산", "세종",
-  "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
-  // 서울 자치구
-  "강남", "서초", "송파", "강동", "광진", "성동", "종로", "용산", "마포", "서대문",
-  "은평", "노원", "도봉", "강북", "성북", "동대문", "중랑", "강서", "양천", "구로",
-  "금천", "영등포", "동작", "관악",
-  // 예식 수요가 몰리는 생활권 이름
-  "청담", "압구정", "삼성동", "역삼", "논현", "잠실", "여의도", "명동", "을지로",
-  "판교", "분당", "일산", "수원", "성남", "용인", "고양", "부천", "안양", "광명", "김포",
-] as const;
 
 /** 카테고리 별칭. `VENDOR_CATEGORY_LABEL` 의 표기도 함께 받는다. */
 const CATEGORY_SYNONYMS: Record<string, VendorCategory> = {
@@ -134,7 +115,14 @@ function dictionaryOf<T extends string>(
 
 const CATEGORY_DICT = dictionaryOf(CATEGORY_SYNONYMS, VENDOR_CATEGORY_LABEL);
 const STYLE_DICT = dictionaryOf(STYLE_SYNONYMS, STYLE_TAG_LABEL);
-const REGION_DICT = [...REGION_TOKENS].sort((a, b) => b.length - a.length);
+/**
+ * 지역 사전은 **어휘 파일이 갖는다**(`lib/core/region` · C-2f).
+ *
+ * 여기서 따로 들고 있던 시절에는 조회가 부분 일치라 사전이 달라도 티가 안 났다.
+ * 코드로 정확히 거르는 지금은 사전이 둘이면 같은 문장이 경로에 따라 다른 지역으로
+ * 걸린다. 파서는 **말을 찾는 일**만 하고, 그 말이 어느 코드인지는 어휘가 정한다.
+ */
+const REGION_DICT = REGION_ALIAS_KEYS;
 
 // =============================================================================
 // 스캐너 — 한 번 쓴 자리는 다시 쓰지 않는다
@@ -453,12 +441,14 @@ function readStyleTags(text: string, taken: Taken): SearchCondition[] {
 function readRegion(text: string, taken: Taken): SearchCondition[] {
   for (const token of REGION_DICT) {
     // 행정 접미사는 함께 먹는다. "강남구" 를 "강남" 만 읽으면 '구' 가 찌꺼기로 남는다.
-    const [match] = findFree(text, taken, new RegExp(`${escapeRegExp(token)}(?:특별시|광역시|시|군|구|동)?`, "g"));
+    const pattern = new RegExp(escapeRegExp(token) + REGION_SUFFIX_PATTERN + "?", "g");
+    const [match] = findFree(text, taken, pattern);
     if (match === undefined) continue;
 
     take(taken, match.index, match.index + match[0].length);
 
-    return [{ field: "region", value: token, sourceText: match[0], origin: "rule" }];
+    // **말이 아니라 코드를 넘긴다** — 조회가 코드로 거르기 때문이다(C-2f).
+    return [{ field: "region", value: REGION_ALIASES[token]!, sourceText: match[0], origin: "rule" }];
   }
 
   return [];

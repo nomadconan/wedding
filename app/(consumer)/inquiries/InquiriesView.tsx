@@ -28,6 +28,7 @@ import {
   type TargetStatus,
 } from "@/lib/core/inquiry/inquiry";
 import type { InquiryView } from "@/lib/inquiry/loader";
+import { regionLabel } from "@/lib/core/region/regions";
 import type { QuoteView } from "@/lib/core/schemas/inquiry";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { cn } from "@/lib/utils";
@@ -191,7 +192,7 @@ export function InquiriesView({
                   {inquiry.categories
                     .map((code) => VENDOR_CATEGORY_LABEL[code as VendorCategory] ?? code)
                     .join(" · ")}
-                  {inquiry.regionCode ? ` · ${inquiry.regionCode}` : ""}
+                  {inquiry.regionCode ? ` · ${regionLabel(inquiry.regionCode)}` : ""}
                 </p>
               </div>
 

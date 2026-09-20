@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { regionLabel } from "@/lib/core/region/regions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -107,7 +108,7 @@ export function ReviewPanel({ item }: { item: ReviewItem }) {
           </div>
           <p className="text-caption text-muted-foreground">
             {VENDOR_CATEGORY_LABEL[item.category as VendorCategory] ?? item.category}
-            {item.regionCode ? ` · ${item.regionCode}` : ""} · 신청{" "}
+            {item.regionCode ? ` · ${regionLabel(item.regionCode)}` : ""} · 신청{" "}
             {item.submittedAt.slice(0, 10)}
           </p>
         </div>

@@ -19,6 +19,7 @@ import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { AiDisclaimer } from "@/components/domain/AiDisclaimer";
 import { BrokerNotice } from "@/components/domain/BrokerNotice";
 import { PriceDisplay } from "@/components/domain/PriceDisplay";
+import { RegionSelect } from "@/components/domain/RegionSelect";
 import { SortCriteriaBadge } from "@/components/domain/SortCriteriaBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -479,7 +480,7 @@ export default function DesignSystemPage() {
             <CardContent className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="ds-region">예식 지역</Label>
-                <Input id="ds-region" placeholder="예: 서울 강남" />
+                <RegionSelect id="ds-region" emptyLabel="전체" />
               </div>
 
               <div className="space-y-1.5">

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { regionLabel } from "@/lib/core/region/regions";
 import { STYLE_TAG_LABEL, type StyleTag } from "@/lib/core/schemas/onboarding";
 import { VENDOR_CATEGORY_LABEL, type VendorCategory } from "@/lib/core/schemas/vendor";
 import { VENDOR_FACILITY_LABEL, type VendorFacility } from "@/lib/core/schemas/vendor-profile";
@@ -68,7 +69,7 @@ export default async function VendorDetailPage(props: { params: Promise<{ vendor
         <section className="space-y-2">
           <p className="text-caption text-muted-foreground">
             {VENDOR_CATEGORY_LABEL[vendor.category as VendorCategory] ?? vendor.category}
-            {vendor.region_code ? ` · ${vendor.region_code}` : ""}
+            {vendor.region_code ? ` · ${regionLabel(vendor.region_code)}` : ""}
           </p>
 
           {/* 배지·날짜·범위 고지는 **한 덩어리**다(TransparentContractBadge 주석). */}

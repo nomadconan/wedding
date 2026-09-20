@@ -77,7 +77,11 @@ const CapacitySchema = z
  * 변경이 필요하면 재심사 절차를 타야 한다(F-A-01).
  */
 export const VendorProfileInputSchema = z.object({
-  regionCode: z.string().trim().min(2, "지역을 입력해 주세요.").max(40),
+  /**
+   * **지역은 여기 없다**(C-2f). 참가격 지수의 분모라 업체가 마음대로 바꾸면
+   * 표본이 적어 유리한 칸으로 옮겨 다닐 수 있다 — 업체명·카테고리와 같은
+   * **심사 대상 정보**로 옮겼고 DB 권한에서도 걷었다(0080).
+   */
   address: z.string().trim().max(200).nullable().default(null),
   addressDetail: z.string().trim().max(100).nullable().default(null),
   capacityMin: CapacitySchema.default(null),

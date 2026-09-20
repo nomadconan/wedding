@@ -1,3 +1,5 @@
+import { SIDO_LABEL, regionLabel, regionSido } from "../region/regions";
+
 /**
  * 조건 부합도 랭킹 (S7-02 · 명세서 §5.5 3단계)
  *
@@ -80,14 +82,33 @@ function regionFit(candidate: RankCandidate, region: string): FitDetail {
   }
 
   if (code === region) {
-    return { criterion: "region", points: 2, matched: true, note: `지역이 '${region}' 로 같아요.` };
+    return {
+      criterion: "region",
+      points: 2,
+      matched: true,
+      note: `지역이 '${regionLabel(region)}' 로 같아요.`,
+    };
   }
 
-  if (code.includes(region)) {
-    return { criterion: "region", points: 1, matched: true, note: `'${code}' 안에 '${region}' 이 들어 있어요.` };
+  /**
+   * **부분 문자열이 아니라 시도로 본다**(C-2f).
+   *
+   * 그전에는 `code.includes(region)` 이었다. 코드가 자유 입력이던 시절의 판정이고,
+   * 그래서 "강남" 이 "강남구"·"강남동" 뿐 아니라 **아무 문자열에나** 걸렸다. 코드가
+   * 생긴 지금은 '일부만 겹친다' 가 **같은 시도**를 뜻한다 — 표로 적힌 규칙
+   * ("일부만 겹치면 1점") 그대로이고, 판정 근거만 말에서 어휘로 바뀌었다.
+   */
+  const sido = regionSido(region);
+  if (sido !== null && regionSido(code) === sido) {
+    return {
+      criterion: "region",
+      points: 1,
+      matched: true,
+      note: `'${regionLabel(code)}' 라 같은 ${SIDO_LABEL[sido]} 안이에요.`,
+    };
   }
 
-  return { criterion: "region", points: 0, matched: false, note: `업체 지역은 '${code}' 예요.` };
+  return { criterion: "region", points: 0, matched: false, note: `업체 지역은 '${regionLabel(code)}' 예요.` };
 }
 
 function dateFit(candidate: RankCandidate): FitDetail {
