@@ -44,6 +44,19 @@ export const NOTIFICATION_TOPICS = [
    * **업체 대표 전용** · §3.9).
    */
   "settlement",
+  /**
+   * C-4d. **태스크 기한과 상품 주문 기한을 한 토픽에 둔다.**
+   *
+   * 기준은 **사용자에게 어떻게 보이는가** 다. 둘 다 *"이 날짜까지 해야 한다"* 이고,
+   * 다른 것은 **어디로 가는가**(체크리스트 / 상품 상세)뿐이다 — 그것은 **문장과
+   * 링크의 차이**이므로 템플릿이 가른다. 토픽은 **끄는 단위**이며, 비슷한 항목 둘을
+   * 수신 설정에 세우면 사용자가 차이를 설명받아야 한다. 설명이 필요한 구분은 대개
+   * 구현의 구분이다.
+   *
+   * `dday` 와는 나눈다 — 그쪽은 **예식일 하나**에 대한 안내이고 이쪽은 **항목마다**
+   * 온다. 빈도가 다르므로 따로 끌 수 있어야 한다.
+   */
+  "task_due",
 ] as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[number];
@@ -60,6 +73,7 @@ export const TOPIC_LABEL: Record<NotificationTopic, string> = {
   vendor_invite: "멤버 초대",
   payment: "결제",
   settlement: "정산",
+  task_due: "준비 항목·주문 기한",
 };
 
 export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
@@ -74,6 +88,7 @@ export const TOPIC_DESCRIPTION: Record<NotificationTopic, string> = {
   vendor_invite: "업체 멤버로 초대받으면 알려드려요.",
   payment: "회차 결제가 완료되거나 실패하면 알려드려요.",
   settlement: "정산이 확정되거나 지급되면 알려드려요.",
+  task_due: "체크리스트 항목과 담은 상품의 주문 기한이 다가오면 알려드려요.",
 };
 
 /**
@@ -193,6 +208,33 @@ export type NotificationAction = z.infer<typeof NotificationActionSchema>;
  * 사실은 "무엇을 보냈는가" 가 아니라 "언제 보냈고 도달했고 열람됐는가" 다.
  */
 export const NOTIFICATION_TEMPLATES = {
+  /**
+   * 준비 항목 기한 (C-4d).
+   *
+   * **제목을 담지 않는다.** 태스크 제목은 사용자가 직접 적은 문장이고, 그것을
+   * `payload_json` 에 실으면 알림함이 사용자 입력의 사본이 된다(§7.3 — 참조 ID와
+   * 숫자만). 무엇인지는 체크리스트가 보여 준다.
+   */
+  "task_due.remind": {
+    topic: "task_due",
+    render: (params: Record<string, unknown>) =>
+      Number(params.days ?? 0) === 0
+        ? "오늘까지 하기로 한 준비 항목이 있어요."
+        : `준비 항목 기한이 ${Number(params.days ?? 0)}일 남았어요.`,
+  },
+  /**
+   * 상품 주문 기한 (C-4d · C-4b 가 만든 `lead_time_days`).
+   *
+   * **상품명·업체명·금액을 담지 않는다.** 참조(productId·vendorId)와 남은 일수만
+   * 담고 문장은 고정이다 — `chat.new_message`·`inquiry.received` 와 같은 규칙이다.
+   */
+  "task_due.order": {
+    topic: "task_due",
+    render: (params: Record<string, unknown>) =>
+      Number(params.days ?? 0) === 0
+        ? "담아 두신 상품의 주문 기한이 오늘이에요."
+        : `담아 두신 상품을 ${Number(params.days ?? 0)}일 안에 주문하셔야 해요.`,
+  },
   "dday.remind": {
     topic: "dday",
     /** `{days}` 만 받는다. 예식일 자체를 넣지 않는다 — 날짜는 개인을 특정하는 값이다. */

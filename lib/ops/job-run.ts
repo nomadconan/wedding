@@ -33,7 +33,17 @@ export async function openJobRun(jobName: string): Promise<JobRunHandle> {
 
 export async function closeJobRun(
   handle: JobRunHandle,
-  result: { status: "succeeded" | "failed"; processedCount?: number; errorSummary?: string | null },
+  result: {
+    /**
+     * **`skipped` 를 받는다**(C-4d). `job_runs.status` CHECK 에는 넷이 있는데 이
+     * 타입이 둘만 받고 있었다 — 그래서 *"파라미터가 없어 아무것도 못 했다"* 를
+     * `succeeded` 로 적을 수밖에 없었고, 그러면 모니터링 화면이 **"잘 돌았고 0건"**
+     * 으로 읽는다. **못 한 것과 할 게 없었던 것은 다르다.**
+     */
+    status: "succeeded" | "failed" | "skipped";
+    processedCount?: number;
+    errorSummary?: string | null;
+  },
 ): Promise<void> {
   if (handle.id === null) return;
 

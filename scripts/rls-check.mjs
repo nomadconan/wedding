@@ -10571,8 +10571,8 @@ if (!vendorStaff || !adminUser) {
     const inCheck = sql(`select pg_get_constraintdef(oid) from pg_constraint
                            where conname = 'job_runs_name_vocab';`);
 
-    // §4.5 의 열 종 + FIX-14 가 더한 `escrow-release`.
-    check("코드가 배치 열한 종을 선언한다 (명세 §4.5 + FIX-14)", new Set(names).size === 11);
+    // §4.5 의 열 종 + FIX-14 의 `escrow-release` + C-4d 의 `task-due-notifications`.
+    check("코드가 배치 열두 종을 선언한다 (명세 §4.5 + FIX-14 + C-4d)", new Set(names).size === 12);
     check(
       "**CHECK 어휘가 코드와 같다** — 갈리면 배치가 이름을 못 남기거나 화면이 그 배치를 모른다",
       names.length > 0 && names.every((name) => inCheck.includes(`'${name}'`)),
@@ -15986,15 +15986,20 @@ if (!vendorStaff || !adminUser) {
   // ── 층 1 — CHECK · 표 단위 권한 ──────────────────────────────────────────
   if (productId) {
     check(
+      // **한쪽을 명시적으로 비운다.** 처음엔 한 칸만 썼는데, 그 상품에 이미 근거가
+      // 들어 있으면 짝이 맞아 **통과해 버렸다**(C-4d 회차에 실제로 그랬다) — 검사가
+      // 표의 현재 상태에 기대고 있었다.
       "**층1 — 값만 있고 근거가 없으면 거절한다**(D-224)",
       rejectedWith(/products_lead_time_pair_chk/, () =>
-        sql(`begin; update public.products set lead_time_days = 30 where id = '${productId}'; rollback;`),
+        sql(`begin; update public.products set lead_time_days = 30, lead_time_note = null
+                    where id = '${productId}'; rollback;`),
       ),
     );
     check(
       "**층1 — 근거만 있어도 거절한다** — 한쪽만 남은 기한을 만들지 않는다",
       rejectedWith(/products_lead_time_pair_chk/, () =>
-        sql(`begin; update public.products set lead_time_note = '제작 4주' where id = '${productId}'; rollback;`),
+        sql(`begin; update public.products set lead_time_days = null, lead_time_note = '제작 4주'
+                    where id = '${productId}'; rollback;`),
       ),
     );
     check(
@@ -16275,6 +16280,406 @@ if (!vendorStaff || !adminUser) {
         union.includes(`kind: "${kind}"`),
       );
     })(),
+  );
+}
+
+// =============================================================================
+// C-4d — 기한 알림 (태스크 · 상품 주문 기한)
+// =============================================================================
+/**
+ * **어휘가 네 군데에 있다** — 코드(`NOTIFICATION_TOPICS`) · `notifications.topic` ·
+ * `notification_prefs.topic` · `job_runs.job_name`. 한 군데만 빠지면 조용히 깨진다:
+ * 토픽이 알림 표에만 있으면 **수신 설정을 저장할 수 없고**(사용자가 껐다고 믿는데
+ * 계속 온다), 배치 이름이 `job_runs` 어휘에 없으면 **첫 실행에서 기록이 사라진다**
+ * (CLAUDE.md §7.0 의 `settlement-run` 사고와 같은 모양).
+ */
+{
+  const notifSrc = srcOf("lib/core/schemas/notification.ts");
+
+  const topics = [
+    ...((notifSrc.match(/NOTIFICATION_TOPICS = \[([\s\S]*?)\] as const/) ?? ["", ""])[1]
+      .matchAll(/"([a-z_]+)"/g)),
+  ].map((m) => m[1]);
+
+  check(
+    "**토픽 목록을 실제로 읽었다** — 못 읽으면 아래가 0개를 견주고 통과한다",
+    topics.length === 12,
+    `code=${topics.length}`,
+  );
+  check("**`task_due` 가 코드 어휘에 있다**", topics.includes("task_due"));
+
+  // ── 어휘 넷이 같은 말을 하는가 ───────────────────────────────────────────
+  for (const [table, constraint] of [
+    ["notifications", "notifications_topic_chk"],
+    ["notification_prefs", "notification_prefs_topic_chk"],
+  ]) {
+    const def = sqlOrNull(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.${table}'::regclass and conname = '${constraint}';`,
+    );
+
+    check(
+      `**${table}.topic 이 코드 어휘를 전부 안다**`,
+      def !== null && topics.every((topic) => def.includes(`'${topic}'`)),
+    );
+  }
+
+  check(
+    "**`job_runs` 가 새 배치 이름을 안다** — 없으면 첫 실행에서 기록이 사라진다",
+    (sqlOrNull(
+      `select pg_get_constraintdef(oid) from pg_constraint
+        where conrelid = 'public.job_runs'::regclass and conname = 'job_runs_name_vocab';`,
+    ) ?? "").includes("'task-due-notifications'"),
+  );
+  check(
+    "**늘 통과하는 검사가 아니다** — 없는 배치 이름은 거절한다",
+    rejectedWith(/job_runs_name_vocab/, () =>
+      sql(`begin; insert into public.job_runs (job_name, started_at, status)
+                  values ('task-due-run', now(), 'running'); rollback;`),
+    ),
+  );
+
+  // ── 파라미터 — 값이 없으면 보내지 않는다 ────────────────────────────────
+  check(
+    "**파라미터 키 둘이 있다** — 없으면 배치가 영영 막힌다",
+    sqlOrNull(
+      `select count(*) from public.app_settings
+        where key in ('notify.task_due_lead_days', 'notify.task_due_interval_days');`,
+    ) === "2",
+  );
+  check(
+    "**마이그레이션이 값을 지어내지 않았다** — 로컬 값은 seed:accounts 가 넣는다",
+    !/task_due_(lead|interval)_days[\s\S]{0,300}"value": *\d/.test(
+      readFileSync("supabase/migrations/20260808008300_task_due_notifications.sql", "utf8"),
+    ),
+  );
+  check(
+    "**로컬에는 값이 들어와 있다** — 그래야 배치가 실제로 돈다",
+    Number(
+      sqlOrNull(
+        `select value_json->>'value' from public.app_settings where key = 'notify.task_due_lead_days';`,
+      ),
+    ) > 0 &&
+      Number(
+        sqlOrNull(
+          `select value_json->>'value' from public.app_settings
+            where key = 'notify.task_due_interval_days';`,
+        ),
+      ) > 0,
+  );
+  check(
+    "**코드가 값 없음을 0 으로 읽지 않는다** — 둘 중 하나만 없어도 막는다",
+    /leadDays === null \|\| intervalDays === null/.test(srcOf("lib/core/notify/task-due.ts")),
+  );
+  check(
+    "**막힌 실행을 성공으로 적지 않는다** — '0건 보냈다' 와 구분된다",
+    /status: result\.blocked === null \? "succeeded" : "skipped"/.test(
+      srcOf("app/api/jobs/task-due-notifications/route.ts"),
+    ),
+  );
+
+  // ── 네 갈래가 알림에서도 유지되는가 (C-4b · D-225) ──────────────────────
+  {
+    const batchSrc = srcOf("lib/notify/task-due.ts");
+
+    /**
+     * **조건과 집계를 붙여서 본다.**
+     *
+     * 처음엔 둘을 따로 찾았는데, 되돌림 시험에서 `if (false && deadline.kind === …)`
+     * 로 조건을 죽여도 **문자열이 남아 통과했다.** 갈래 판정이 실제로 그 집계를
+     * 지키고 있는지는 **붙어 있는 모양**으로만 확인된다.
+     */
+    const guards = [
+      ["not_declared", "lead_time_not_declared"],
+      ["no_deadline", "no_order_deadline"],
+      ["no_wedding_date", "no_due_date"],
+    ];
+
+    check(
+      "**네 갈래를 각각 다른 사유로 센다** — 합치면 왜 안 갔는지를 못 본다",
+      guards.every(([kind, reason]) =>
+        new RegExp(
+          "if \\(deadline\\.kind === \"" + kind + "\"\\) \\{" +
+            "\\s*counts\\.skipped\\." + reason + " \\+= 1;",
+        ).test(batchSrc),
+      ),
+    );
+    check(
+      // 위 검사가 셋을 다 보므로 여기서는 **분모**를 본다 — 목록이 비면 every 가 참이다.
+      "**갈래 셋을 실제로 세었다** — 빈 목록이 통과하지 않는다",
+      guards.length === 3,
+    );
+    check(
+      "**끝낸 항목에는 보내지 않는다**",
+      /task\.status === "done"/.test(batchSrc) && /counts\.skipped\.done \+= 1/.test(batchSrc),
+    );
+    check(
+      "**멱등 열쇠에 날짜가 아니라 지점이 들어간다** — 재실행이 중복을 만들지 않게",
+      /period: `d-\$\{input\.days\}`/.test(batchSrc),
+    );
+    check(
+      "**payload 에 제목·상품명을 담지 않는다**(§7.3) — 참조와 숫자만",
+      !/title/.test(batchSrc) && !/task\.title/.test(batchSrc),
+    );
+  }
+
+  // ── 저장된 알림이 규칙을 지키는가 ───────────────────────────────────────
+  //
+  // **배치를 손으로 돌려 둔 상태에 기대지 않는다.** 처음엔 `notifications` 를 그냥
+  // 셌는데 `db:reseed` 뒤에는 0행이라 검사가 통째로 떨어졌다 — 검사가 **자기 픽스처를**
+  // 세우고 롤백한다.
+  {
+    const someUser = sqlOrNull(`select id::text from auth.users limit 1;`);
+
+    check("**알림 픽스처의 사용자가 있다**", Boolean(someUser));
+
+    if (someUser) {
+      const fixture =
+        `insert into public.notifications (user_id, topic, channel, template_key, payload_json, dedupe_key)` +
+        ` values ('${someUser}', 'task_due', 'in_app', 'task_due.remind',` +
+        ` '{"days": 26, "taskId": "00000000-0000-0000-0000-0000000004d1"}'::jsonb, 'c4d-probe');`;
+
+      check(
+        "**새 토픽이 실제로 저장된다** — CHECK 을 넓힌 것이 값으로 확인된다",
+        sqlOrNull(
+          `begin; ${fixture}` +
+            ` select count(*) from public.notifications where dedupe_key = 'c4d-probe'; rollback;`,
+        ) === "1",
+      );
+      check(
+        "**payload 의 키가 참조와 숫자뿐이다** — 이름·금액이 없다",
+        sqlOrNull(
+          `begin; ${fixture}` +
+            ` select count(*) from public.notifications n, jsonb_object_keys(n.payload_json) k` +
+            ` where n.topic = 'task_due'` +
+            ` and k not in ('days', 'taskId', 'productId', 'vendorId'); rollback;`,
+        ) === "0",
+      );
+      check(
+        "**어휘 밖 토픽은 거절한다** — 늘 참인 CHECK 이 아니다",
+        rejectedWith(/notifications_topic_chk/, () =>
+          sql(
+            `begin; insert into public.notifications (user_id, topic, channel, dedupe_key)` +
+              ` values ('${someUser}', 'task_deadline', 'in_app', 'c4d-bad'); rollback;`,
+          ),
+        ),
+      );
+    }
+
+    check(
+      "**본문을 저장하지 않는다**(§7.3) — 문장 칸이 표에 없다",
+      sqlOrNull(
+        `select count(*) from information_schema.columns
+          where table_name = 'notifications' and column_name in ('body', 'message', 'text');`,
+      ) === "0",
+    );
+  }
+
+  // ── 이동 링크 — 없는 화면으로 보내지 않는다 (D-98) ──────────────────────
+  {
+    const linkSrc = srcOf("lib/core/notify/links.ts");
+    const hrefs = [...linkSrc.matchAll(/href: "(\/[a-z-]+)"/g)].map((m) => m[1]);
+
+    check(
+      "**링크 레지스트리를 실제로 읽었다**",
+      /NOTIFICATION_LINKS/.test(linkSrc) && hrefs.length > 0,
+      `static=${hrefs.length}`,
+    );
+    check(
+      "**정적 경로가 실재한다** — 디스크에 화면 파일이 있다",
+      hrefs.every((href) =>
+        existsSync(`app/(consumer)${href}/page.tsx`) || existsSync(`app${href}/page.tsx`),
+      ),
+    );
+    check(
+      "**동적 경로도 실재한다** — 상품 상세 화면이 있다",
+      /\/explore\/\$\{vendorId\}\/\$\{productId\}/.test(linkSrc) &&
+        existsSync("app/(consumer)/explore/[vendorId]/[productId]/page.tsx"),
+    );
+    check(
+      "**참조가 모자라면 링크를 안 만든다** — 잘못된 곳으로 보내지 않는다",
+      /if \(vendorId === null \|\| productId === null\) return null;/.test(linkSrc),
+    );
+    check(
+      "**화면이 링크를 실제로 그린다** — 만든 자리가 도달 불가로 남지 않는다",
+      /data-testid="notification-link"/.test(
+        srcOf("app/(consumer)/notifications/NotificationsView.tsx"),
+      ) && /notificationLink\(/.test(srcOf("app/(consumer)/notifications/page.tsx")),
+    );
+  }
+
+  // ── 증적 ─────────────────────────────────────────────────────────────────
+  check(
+    "**배치 증적의 쓰기 결과를 본다**(FIX-72) — 안 보면 조용히 사라진다",
+    /const recorded = await recordAudit\(\{/.test(
+      srcOf("app/api/jobs/task-due-notifications/route.ts"),
+    ) && /recorded \? null : "audit_lost:1"/.test(
+      srcOf("app/api/jobs/task-due-notifications/route.ts"),
+    ),
+  );
+  check(
+    "**배치에는 사람이 없다**(D-173) — actor 에 uuid 를 지어내지 않는다",
+    /actorId: null,/.test(srcOf("app/api/jobs/task-due-notifications/route.ts")),
+  );
+  /**
+   * **여기서는 '표가 그 모양을 받는가' 만 본다.**
+   *
+   * 처음엔 `audit_logs`·`job_runs` 를 그냥 세었는데 `db:reseed` 뒤에는 0행이라
+   * 떨어졌다 — 검사가 **내가 손으로 배치를 돌려 둔 상태**에 기대고 있었다.
+   * **배치가 실제로 쓰는지는 서버가 있어야 알 수 있고**, 그것은 `chain:walk` 가
+   * 배치를 두 번 불러 확인한다(발송·중복·증적 개수까지).
+   */
+  check(
+    "**증적이 배치의 모양 그대로 들어간다** — 사람 없는 행위자를 표가 받는다(D-173)",
+    sqlOrNull(
+      `begin;
+       insert into public.audit_logs (actor_id, actor_role, action, target_type, target_id, after_json)
+         values (null, null, 'task_due_batch_ran', 'job_run', null, '{"sent": 1}'::jsonb);
+       select count(*) from public.audit_logs where action = 'task_due_batch_ran'; rollback;`,
+    ) === "1",
+  );
+  check(
+    "**`skipped` 상태를 표가 받는다** — 안 보낸 것을 성공으로 적지 않아도 된다",
+    sqlOrNull(
+      `begin;
+       insert into public.job_runs (job_name, started_at, status, error_summary)
+         values ('task-due-notifications', now(), 'skipped', 'blocked:params_unset');
+       select count(*) from public.job_runs
+        where job_name = 'task-due-notifications' and status = 'skipped'; rollback;`,
+    ) === "1",
+  );
+  check(
+    "**타입도 `skipped` 를 받는다** — DB 는 받는데 코드가 못 적는 상태가 아니다",
+    /"succeeded" \| "failed" \| "skipped"/.test(srcOf("lib/ops/job-run.ts")),
+  );
+
+  // ── 권한 세 층 ───────────────────────────────────────────────────────────
+  //
+  // **층 1** — `notifications` 의 UPDATE 는 S4-13 이 **칸 목록 하나**로 좁혀 뒀다.
+  // 칸 목록 방식이라 새 칸은 **자동으로 못 고치는 칸**이 된다(`products` 가 표 단위라
+  // 정반대인 것과 대비 · C-4b 가 짚었다). 토픽을 늘려도 그 좁힘이 그대로인지 본다.
+  check(
+    "**층1 — 당사자가 고칠 수 있는 칸은 `read_at` 하나다**",
+    sqlOrNull(
+      `select string_agg(column_name, ',' order by column_name)
+         from information_schema.column_privileges
+        where grantee = 'authenticated' and table_name = 'notifications'
+          and privilege_type = 'UPDATE';`,
+    ) === "read_at",
+  );
+  check(
+    "**층1 — 표 단위 UPDATE 가 아니다** — 새 칸이 자동으로 열리지 않는다",
+    sqlOrNull(
+      `select count(*) from information_schema.table_privileges
+        where grantee = 'authenticated' and table_name = 'notifications'
+          and privilege_type = 'UPDATE';`,
+    ) === "0",
+  );
+  check(
+    "**층1 — 배치 실행 기록은 아무도 못 쓴다**",
+    sqlOrNull(
+      `select count(*) from information_schema.table_privileges
+        where grantee = 'authenticated' and table_name = 'job_runs'
+          and privilege_type in ('INSERT', 'UPDATE', 'DELETE');`,
+    ) === "0",
+  );
+
+  {
+    const owner = idOf("couple-linked-a@local.test");
+
+    check("**커플 픽스처가 있다** — 없으면 아래 층2·층3 이 헛돈다", Boolean(owner));
+
+    if (owner) {
+      // **층 2** — 정책이 부모를 타지 않는다. `notifications` 는 `user_id` 를 직접
+      // 본다(부모 표에 기대지 않으므로 부모가 열려도 새지 않는다).
+      check(
+        "**층2 — 알림 정책이 부모 표에 기대지 않는다** (user_id 를 직접 본다)",
+        (sqlOrNull(
+          `select qual from pg_policies where tablename = 'notifications' and cmd = 'SELECT';`,
+        ) ?? "").includes("auth.uid()"),
+      );
+      check(
+        "**층2 — 남의 알림은 한 건도 안 보인다**",
+        asUser(
+          owner,
+          `select count(*) from public.notifications where user_id <> auth.uid();`,
+        ) === "0",
+      );
+      check(
+        // **픽스처를 스스로 세운다.** `db:reseed` 뒤 알림 표가 비어 있으면 "안 보인다"
+        // 가 0행으로 통과해 버린다(운영 규칙 §7.0b).
+        "**층2 — 내 알림은 보인다** — 늘 0 을 돌려주는 검사가 아니다",
+        asUser(
+          owner,
+          `select count(*) from public.notifications;`,
+          `insert into public.notifications (user_id, topic, channel, template_key, payload_json, dedupe_key)
+             values ('${owner}', 'task_due', 'in_app', 'task_due.remind', '{"days": 12}'::jsonb, 'c4d-mine');`,
+        ) === "1",
+      );
+
+      // **층 3** — 자격의 근거. 알림을 받는 조건은 **커플 구성원**이고, 발송 여부는
+      // **운영 파라미터**가 정한다. 둘 다 당사자가 못 쓴다.
+      check(
+        "**층3 — 사용자가 발송 파라미터를 못 고친다** — 자기에게 더 자주 보내게 할 수 없다",
+        rejectedWith(/permission denied|row-level security/, () =>
+          asUser(
+            owner,
+            `update public.app_settings set value_json = '{"value": 400}'::jsonb
+              where key = 'notify.task_due_lead_days';`,
+          ),
+        ) ||
+          asUser(
+            owner,
+            `with u as (update public.app_settings set value_json = '{"value": 400}'::jsonb
+                         where key = 'notify.task_due_lead_days' returning 1)
+             select count(*) from u;`,
+          ) === "0",
+      );
+      check(
+        "**층3 — 당사자가 발송 시각을 못 고친다**(S4-13 이 세운 경계가 살아 있다)",
+        rejectedWith(/permission denied/, () =>
+          asUser(owner, `update public.notifications set sent_at = now();`),
+        ),
+      );
+      check(
+        "**층3 — 그래도 읽음 표시는 한다** — 통째로 잠근 것이 아니다",
+        asUser(
+          owner,
+          `with u as (update public.notifications set read_at = now()
+                       where user_id = auth.uid() returning 1)
+           select count(*) from u;`,
+        ) !== null,
+      );
+      check(
+        "**층3 — 수신 설정은 본인 것만 쓴다**",
+        rejectedWith(/row-level security/, () =>
+          asUser(
+            owner,
+            `insert into public.notification_prefs (user_id, topic, channel_flags)
+              values ('00000000-0000-0000-0000-0000000004d9', 'task_due', '{}'::jsonb);`,
+          ),
+        ),
+      );
+      check(
+        "**층3 — 자기 수신 설정으로 새 토픽을 끌 수 있다** — 끄는 수단이 실재한다",
+        asUser(
+          owner,
+          `with u as (insert into public.notification_prefs (user_id, topic, channel_flags)
+                       values (auth.uid(), 'task_due', '{"email": false}'::jsonb)
+                       on conflict (user_id, topic) do update set channel_flags = excluded.channel_flags
+                       returning 1)
+           select count(*) from u;`,
+        ) === "1",
+      );
+    }
+  }
+
+  // ── 스텁 발송 (D-28) ─────────────────────────────────────────────────────
+  check(
+    "**보낸 것과 안 보낸 것이 구분된다** — 발송 시각이 남는다",
+    sqlOrNull(
+      `select count(*) from public.notifications where topic = 'task_due' and sent_at is null;`,
+    ) !== null,
   );
 }
 

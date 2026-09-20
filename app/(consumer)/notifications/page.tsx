@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { ConsumerShell } from "@/components/layout/ConsumerShell";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { notificationLink } from "@/lib/core/notify/links";
 import { renderBody, type ChannelFlags } from "@/lib/core/schemas/notification";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -78,6 +79,17 @@ async function NotificationsSection() {
     channel: row.channel,
     // **저장된 문장이 아니다.** 틀 + 참조로 지금 다시 만든다(§7.3).
     body: row.template_key ? renderBody(row.template_key, row.payload_json ?? {}) : null,
+    /**
+     * 어디로 가는가 (C-4d · D-98).
+     *
+     * **경로를 여기서 조립하지 않는다** — 레지스트리가 갖는다. 참조가 모자라거나
+     * 아직 링크가 없는 템플릿이면 `null` 이고 화면은 문장만 그린다. **잘못된 곳으로
+     * 보내는 것보다 안 보내는 편이 낫다.**
+     */
+    link: notificationLink(
+      row.template_key,
+      (row.payload_json ?? {}) as Record<string, unknown>,
+    ),
     sentAt: row.sent_at,
     deliveredAt: row.delivered_at,
     readAt: row.read_at,
