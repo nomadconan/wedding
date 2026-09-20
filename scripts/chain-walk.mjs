@@ -68,6 +68,32 @@ if (!CONTAINER) {
   process.exit(1);
 }
 
+/**
+ * 배치 라우트를 부른다 (C-4d).
+ *
+ * **서버가 있어야 도는 것을 여기서 확인한다** — `db:rls` 는 표가 그 모양을 받는지
+ * 까지만 보고, *정말 보내는가·두 번 안 보내는가·증적이 남는가* 는 배치를 실제로
+ * 불러야 알 수 있다. 인증은 로컬에서 손으로 부를 때 쓰는 서비스롤 키다
+ * (`lib/ops/job-auth.ts` 가 `CRON_SECRET` 과 함께 받는다).
+ */
+async function callJob(path) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY 가 없다 — .env.local 을 확인한다.");
+
+  const res = await fetch(BASE + path, {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}` },
+  });
+
+  const body = await res.json().catch(() => null);
+
+  if (res.status !== 200) {
+    throw new Error(`배치가 ${res.status} 를 돌려줬다: ${JSON.stringify(body).slice(0, 200)}`);
+  }
+
+  return { status: res.status, body };
+}
+
 function sql(query) {
   return execFileSync(
     "docker",
@@ -609,13 +635,30 @@ try {
   });
 
   await step("**보낸 뒤 화면이 몇 곳에 갔는지 말한다** — 간 적 없는 곳에 갔다고 적지 않는다", consumer, async () => {
-    const sent = await evaluate(
-      consumer,
-      `(document.querySelector('[data-testid="inquiry-sent"]') || {}).innerText || ""`,
-    );
-    if (!String(sent).trim()) throw new Error("보낸 뒤 아무 말도 없다");
+    /**
+     * **한 번만 읽지 않는다.**
+     *
+     * 앞 걸음은 DB 에 행이 생긴 것을 보고 통과하는데, 그 시점에 화면은 아직 다시
+     * 그려지지 않았을 수 있다. 로컬에서는 늘 통과했고 **CI 에서만 떨어졌다** —
+     * 바로 다음 걸음이 "인박스 1건" 으로 통과했으니 문의는 실제로 만들어졌고,
+     * 못 본 것은 **문구가 그려지기 전에 읽어서**다.
+     *
+     * **끝내 안 뜨면 여전히 FAIL 이다** — 기다림을 넣는 것이지 통과시키는 것이 아니다.
+     */
+    const until = Date.now() + ms(15000);
+    for (;;) {
+      const sent = await evaluate(
+        consumer,
+        `(document.querySelector('[data-testid="inquiry-sent"]') || {}).innerText || ""`,
+      );
 
-    return String(sent).replace(/\s+/g, " ").trim().slice(0, 80);
+      if (String(sent).trim()) return String(sent).replace(/\s+/g, " ").trim().slice(0, 80);
+      if (Date.now() > until) {
+        const info = await snapshot(consumer);
+        throw new Error(`보낸 뒤 아무 말도 없다: ${info.text.slice(0, 200)}`);
+      }
+      await sleep(700);
+    }
   });
 
   // ── 2. 견적 ────────────────────────────────────────────────────────────────
@@ -1427,6 +1470,179 @@ try {
     if (seen.disabled === true) throw new Error("넣을 것이 있는데 버튼이 잠겼다");
 
     return seen.text.slice(0, 60);
+  });
+
+  // ── 8d. 기한 알림 (C-4d) ─────────────────────────────────────────────────
+  //
+  // **배치는 서버가 있어야 돈다.** `db:rls` 는 표가 그 모양을 받는지까지만 보고,
+  // **정말 보내는가·두 번 안 보내는가·증적이 남는가**는 여기서 실제로 부른다.
+  await step("**파라미터가 없으면 아무것도 안 보낸다**(C-4d · §7.4)", null, async () => {
+    // 로컬 값을 잠깐 비운다 — 되돌리는 것까지 이 걸음이 책임진다.
+    sql(`update public.app_settings
+            set value_json = jsonb_set(value_json, '{value}', 'null'::jsonb)
+          where key in ('notify.task_due_lead_days', 'notify.task_due_interval_days');`);
+
+    const res = await callJob("/api/jobs/task-due-notifications?today=2026-09-15");
+
+    sql(`update public.app_settings
+            set value_json = jsonb_set(value_json, '{value}', '40'::jsonb)
+          where key = 'notify.task_due_lead_days';
+         update public.app_settings
+            set value_json = jsonb_set(value_json, '{value}', '14'::jsonb)
+          where key = 'notify.task_due_interval_days';`);
+
+    if (res.body?.data?.blocked !== "params_unset") {
+      throw new Error(`막히지 않았다: ${JSON.stringify(res.body).slice(0, 200)}`);
+    }
+    if (res.body.data.sent !== 0) throw new Error(`막혔는데 ${res.body.data.sent}건 보냈다`);
+
+    const status = sql(`select status from public.job_runs
+                         where job_name = 'task-due-notifications'
+                         order by started_at desc limit 1;`);
+
+    // **성공으로 적지 않는다** — "0건 보냈다" 와 구분돼야 한다.
+    if (status !== "skipped") throw new Error(`상태가 skipped 가 아니다: ${status}`);
+
+    return `blocked:params_unset · job_runs=skipped`;
+  });
+
+  await step("**기한이 다가온 항목에 보낸다** — 배치가 tasks 를 읽는다(B-1 이 지목한 결함)", null, async () => {
+    // 지점(40/26/12/0) 중 하나에 정확히 걸리는 기한을 만든다.
+    const coupleId = sql(`select couple_id from public.couple_members limit 1;`);
+    if (!coupleId) throw new Error("커플 픽스처가 없다");
+
+    sql(`delete from public.notifications where topic = 'task_due';
+         update public.tasks set status = 'todo', due_date = date '2026-09-15' + 26
+          where id = (select id from public.tasks where couple_id = '${coupleId}' limit 1);`);
+
+    const res = await callJob("/api/jobs/task-due-notifications?today=2026-09-15");
+    const data = res.body?.data;
+
+    if (!data || data.blocked !== null) throw new Error(`막혔다: ${JSON.stringify(res.body).slice(0, 200)}`);
+    if (data.sent < 1) throw new Error(`한 건도 안 보냈다: ${JSON.stringify(data)}`);
+
+    const stored = sql(`select count(*) from public.notifications
+                         where topic = 'task_due' and template_key = 'task_due.remind';`);
+
+    if (stored === "0") throw new Error("알림 행이 안 남았다");
+
+    return `sent=${data.sent} · 저장 ${stored}건 · 지점 26`;
+  });
+
+  await step("**두 번 돌려도 두 번 보내지 않는다** — 멱등 열쇠가 지점을 갖는다", null, async () => {
+    const before = sql(`select count(*) from public.notifications where topic = 'task_due';`);
+
+    const res = await callJob("/api/jobs/task-due-notifications?today=2026-09-15");
+    const data = res.body?.data;
+
+    const after = sql(`select count(*) from public.notifications where topic = 'task_due';`);
+
+    if (data.sent !== 0) throw new Error(`재실행에서 ${data.sent}건이 또 나갔다`);
+    if (data.duplicate < 1) throw new Error("중복으로 세지 않았다 — 열쇠가 안 걸렸다");
+    if (before !== after) throw new Error(`행이 늘었다: ${before} → ${after}`);
+
+    return `sent=0 duplicate=${data.duplicate} · 행 ${after} 그대로`;
+  });
+
+  await step("**끝낸 항목에는 안 보낸다** — 다 한 일을 재촉하지 않는다", null, async () => {
+    sql(`delete from public.notifications where topic = 'task_due';
+         update public.tasks set status = 'done' where due_date = date '2026-09-15' + 26;`);
+
+    const res = await callJob("/api/jobs/task-due-notifications?today=2026-09-15");
+    const data = res.body?.data;
+
+    if (data.sent !== 0) throw new Error(`완료 항목에 ${data.sent}건 보냈다`);
+    if ((data.skipped?.done ?? 0) < 1) throw new Error("done 으로 세지 않았다");
+
+    return `sent=0 · done=${data.skipped.done}`;
+  });
+
+  await step("**기한을 모르는 상품에는 안 보낸다** — 네 갈래가 알림에서도 산다(D-225)", null, async () => {
+    const productId = sql(`select ci.product_id from public.cart_items ci limit 1;`);
+    if (!productId) throw new Error("장바구니 픽스처가 없다");
+
+    // 업체가 안 적은 상태 — `not_declared`
+    sql(`update public.products set lead_time_days = null, lead_time_note = null
+          where id = '${productId}';`);
+
+    const blocked = await callJob("/api/jobs/task-due-notifications?today=2027-03-06");
+    const notDeclared = blocked.body?.data?.skipped?.lead_time_not_declared ?? 0;
+
+    if (notDeclared < 1) throw new Error("안 적은 기한을 건너뛰지 않았다");
+
+    // 업체가 "따로 기한 없음"(0) 이라 적은 상태 — `no_deadline`
+    sql(`update public.products set lead_time_days = 0, lead_time_note = '재고 상품이에요'
+          where id = '${productId}';`);
+
+    const noDeadline = await callJob("/api/jobs/task-due-notifications?today=2027-03-06");
+    const zero = noDeadline.body?.data?.skipped?.no_order_deadline ?? 0;
+
+    if (zero < 1) throw new Error("0 을 '기한 없음' 으로 세지 않았다");
+
+    return `not_declared=${notDeclared} · no_order_deadline=${zero}`;
+  });
+
+  await step("**주문 기한이 다가오면 보낸다** — C-4b 의 리드타임이 알림까지 온다", null, async () => {
+    const productId = sql(`select ci.product_id from public.cart_items ci limit 1;`);
+
+    sql(`delete from public.notifications where topic = 'task_due';
+         update public.products set lead_time_days = 30, lead_time_note = '제작에 4주가 걸려요.'
+          where id = '${productId}';`);
+
+    // 예식일 2027-05-15 − 30 = 주문 기한 2027-04-15. 지점 40 → 2027-03-06.
+    const res = await callJob("/api/jobs/task-due-notifications?today=2027-03-06");
+    const data = res.body?.data;
+
+    if (data.sent < 1) throw new Error(`주문 기한 알림이 안 갔다: ${JSON.stringify(data)}`);
+
+    const payload = sql(`select payload_json::text from public.notifications
+                          where template_key = 'task_due.order' limit 1;`);
+
+    if (!payload.includes(productId)) throw new Error(`payload 에 상품 참조가 없다: ${payload}`);
+    // **이름·금액을 담지 않는다**(§7.3).
+    if (/[가-힣]/.test(payload)) throw new Error(`payload 에 한글이 들어갔다: ${payload}`);
+
+    return `sent=${data.sent} · payload=${payload.slice(0, 70)}`;
+  });
+
+  await step("**증적이 남는다** — 배치가 무엇을 했는지 기록한다(FIX-72 · D-173)", null, async () => {
+    const audits = sql(`select count(*) from public.audit_logs where action like 'task_due_batch%';`);
+    const runs = sql(`select count(*) from public.job_runs where job_name = 'task-due-notifications';`);
+    const humanless = sql(`select count(*) from public.audit_logs
+                            where action like 'task_due_batch%' and actor_id is not null;`);
+
+    if (Number(audits) < 1) throw new Error("감사 기록이 없다");
+    if (Number(runs) < 1) throw new Error("실행 기록이 없다");
+    // **배치에는 사람이 없다**(D-173) — uuid 를 지어내면 FK 가 거절해 증적이 사라진다.
+    if (humanless !== "0") throw new Error(`행위자를 지어냈다: ${humanless}건`);
+
+    return `audit_logs ${audits} · job_runs ${runs} · 행위자 없음`;
+  });
+
+  await step("**알림에서 화면으로 간다** — 링크를 눌러 닿는다(B-1 이 지목한 결함)", consumer, async () => {
+    const info = await goto(consumer, "/notifications");
+    if (info.notFound || info.errorState) {
+      throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+    }
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const links = [...document.querySelectorAll('[data-testid="notification-link"]')];
+      return JSON.stringify({
+        count: links.length,
+        hrefs: links.map((a) => a.getAttribute("href")).slice(0, 3),
+      });
+    })()`));
+
+    if (seen.count === 0) throw new Error("알림에 링크가 하나도 없다");
+
+    // **없는 화면으로 보내지 않는다**(D-98) — 실제로 눌러 본다.
+    const target = seen.hrefs[0];
+    const landed = await goto(consumer, target);
+
+    if (landed.notFound) throw new Error(`링크가 404 로 간다: ${target}`);
+    if (landed.errorState) throw new Error(`링크가 오류 화면으로 간다: ${target}`);
+
+    return `링크 ${seen.count}개 · ${target} 열림`;
   });
 
   // ── 9. 하이드레이션·콘솔 ──────────────────────────────────────────────────

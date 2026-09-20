@@ -38,4 +38,6 @@ export const JOB_ROUTE_NAMES = [
   "purge-documents",
   "settlement-aggregate",
   "sla-escalation",
+  // C-4d. 체크리스트 항목·상품 주문 기한 알림.
+  "task-due-notifications",
 ] as const;

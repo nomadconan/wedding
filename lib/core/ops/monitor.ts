@@ -56,6 +56,17 @@ export const BATCH_SPECS: readonly BatchSpec[] = [
     legalDuty: false,
   },
   {
+    // C-4d. **`dday` 와 나눈다** — 저쪽은 예식일 하나, 이쪽은 항목마다 자기 기한에서
+    // 역산한다. `job_runs` 가 배치 단위라 묶으면 무엇이 실패했는지 못 가른다.
+    name: "task-due-notifications",
+    schedule: "매일 09:30 KST",
+    cron: "30 0 * * *",
+    purpose: "체크리스트 항목과 담은 상품의 주문 기한이 다가오면 알린다",
+    consequence:
+      "준비 항목 기한이 조용히 지나간다. 체크리스트가 '무엇을 할지' 만 말하고 '언제까지인지' 를 안 알려 주는 상태로 돌아간다. 발송 파라미터가 비어 있으면 배치는 skipped 로 끝나고 아무것도 안 보낸다(§7.4).",
+    legalDuty: false,
+  },
+  {
     name: "price-index-refresh",
     schedule: "주 1회",
     cron: "0 1 * * 1",

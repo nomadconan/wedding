@@ -89,8 +89,8 @@ describe("buildBatchRows", () => {
       expect(spec.consequence.length).toBeGreaterThan(15);
       expect(spec.purpose.length).toBeGreaterThan(5);
     }
-    // §4.5 의 열 종 + FIX-14 가 더한 `escrow-release`.
-    expect(BATCH_SPECS).toHaveLength(11);
+    // §4.5 의 열 종 + FIX-14 가 더한 `escrow-release` + C-4d 의 `task-due-notifications`.
+    expect(BATCH_SPECS).toHaveLength(12);
   });
 
   it("상태가 넷이다", () => {

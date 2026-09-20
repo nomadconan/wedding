@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -46,6 +47,14 @@ export type NotificationItem = {
   failedAt: string | null;
   failureReason: string | null;
   createdAt: string;
+  /**
+   * 이 알림에서 가는 곳 (C-4d).
+   *
+   * **없으면 `null` 이고 링크를 그리지 않는다** — 알림에서 나가는 링크가 하나도
+   * 없던 것이 B-1 이 지목한 결함이지만, 그렇다고 **없는 화면으로 보내지는 않는다**
+   * (D-98). 아직 링크가 없는 템플릿은 C-4e 가 채운다.
+   */
+  link: { href: string; label: string } | null;
 };
 
 export type NotificationsViewProps = {
@@ -144,6 +153,19 @@ export function NotificationsView({ items, unreadCount, prefs }: NotificationsVi
                       </div>
 
                       <p className="text-sm text-foreground">{item.body ?? BODY_UNAVAILABLE_TEXT}</p>
+
+                      {/* **알림이 일을 알려 주기만 하고 그 자리로 잇지 않으면 잔소리다**
+                          (B-1 조사 4-3). 경로는 레지스트리가 갖는다 — 없는 화면으로
+                          보내지 않기 위해서다(D-98). */}
+                      {item.link ? (
+                        <Link
+                          href={item.link.href}
+                          className="inline-block text-caption font-medium text-brand-600"
+                          data-testid="notification-link"
+                        >
+                          {item.link.label}
+                        </Link>
+                      ) : null}
 
                       {/* 발송·도달·열람을 나눠 적는다(D-23). 하나로 합치면 셋 다 증명 못 한다. */}
                       <p className="text-caption text-muted-foreground" data-testid="delivery-trail">

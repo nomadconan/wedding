@@ -396,6 +396,15 @@ async function seedDemoAiLimits() {
     // lead time at all - an unset cap read as "no cap" would let the value
     // inflate with nothing to catch it (D-49 shape).
     ["products.max_lead_time_days", 365, "days"],
+    // C-4d. Same split again: 0083 owns the keys (value null), this owns the
+    // local numbers. Without them `task-due-notifications` ends as `skipped`
+    // with `blocked:params_unset` and sends nothing - an unset schedule read as
+    // "every day" or "the day of" would be the code answering a policy question.
+    //
+    // 40 is the first number the user named ("40일이나 35일"); 14 keeps the
+    // cadence at four nudges per item (40 / 26 / 12 / 0) instead of seven.
+    ["notify.task_due_lead_days", 40, "days"],
+    ["notify.task_due_interval_days", 14, "days"],
   ];
 
   let touched = 0;
