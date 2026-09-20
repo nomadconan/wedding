@@ -51,6 +51,7 @@ export function ChecklistView({
   enabledViews,
   hasWeddingDate,
   generated,
+  missingTemplates,
 }: {
   initialTasks: AnnotatedTask[];
   edges: TaskEdge[];
@@ -60,6 +61,14 @@ export function ChecklistView({
   hasWeddingDate: boolean;
   /** 이미 자동 생성한 적이 있는가. 버튼 문구가 달라진다. */
   generated: boolean;
+  /**
+   * 아직 내 목록에 없는 준비 항목 (C-4a).
+   *
+   * **소급하지 않기로 했으므로 이 목록이 유일한 통로다.** 준비 항목이 늘어도
+   * 이미 만든 사람에게 말없이 끼워 넣지 않는다(S7-08) — 대신 **무엇이 들어올지를
+   * 이름으로 먼저 보이고** 넣을지는 사용자가 정한다.
+   */
+  missingTemplates: { code: string; title: string }[];
 }) {
   const router = useRouter();
 
@@ -125,8 +134,42 @@ export function ChecklistView({
             ? "예식일에서 역산해 준비 순서까지 함께 만들어요. 이미 있는 항목은 건드리지 않습니다."
             : "예식일이 아직 없어요. 목록은 만들되 기한은 비워 둡니다 — 없는 날짜를 지어내지 않아요."}
         </p>
-        <Button type="button" size="sm" disabled={busy} onClick={() => void generate()}>
-          {busy ? "만드는 중…" : generated ? "빠진 것만 채우기" : "일정 만들기"}
+
+        {/*
+          **무엇이 들어올지 먼저 보인다**(C-4a). 준비 항목이 늘어도 이미 만든 사람의
+          목록에 말없이 끼우지 않기로 했고(S7-08), 그러면 버튼만으로는 무엇이 생길지
+          모른 채 누르게 된다 — **지웠던 항목이 돌아오는 경우**도 여기서 드러난다.
+        */}
+        {generated ? (
+          missingTemplates.length === 0 ? (
+            <p className="text-caption text-muted-foreground" data-testid="missing-none">
+              빠진 준비 항목이 없어요.
+            </p>
+          ) : (
+            <div className="space-y-1" data-testid="missing-templates">
+              <p className="text-caption text-foreground">
+                내 목록에 없는 준비 항목 {missingTemplates.length}개
+              </p>
+              <p className="text-caption text-muted-foreground">
+                {missingTemplates.map((template) => template.title).join(" · ")}
+              </p>
+            </div>
+          )
+        ) : null}
+
+        <Button
+          type="button"
+          size="sm"
+          // **넣을 것이 없으면 누르지 못한다.** 누르고 "0건을 만들었어요" 를 받으면
+          // 사용자는 무엇이 잘못됐는지 되짚게 된다.
+          disabled={busy || (generated && missingTemplates.length === 0)}
+          onClick={() => void generate()}
+        >
+          {busy
+            ? "만드는 중…"
+            : generated
+              ? `빠진 ${missingTemplates.length}개 넣기`
+              : "일정 만들기"}
         </Button>
       </section>
 

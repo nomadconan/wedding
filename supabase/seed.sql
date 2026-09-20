@@ -194,7 +194,7 @@ on conflict (code) do update set
 
 
 -- =============================================================================
--- task_templates · task_template_dependencies — 역산 템플릿 19종 (S7-08, §2.1 F-C-04)
+-- task_templates · task_template_dependencies — 역산 템플릿 25종 (S7-08 · C-4a, §2.1 F-C-04)
 -- =============================================================================
 -- **진실은 `lib/core/schedule/templates.ts` 다.** 이 블록은 그 목록의 사본이며
 -- 검출 룰(S7-01)과 같은 구조다 — 코드가 정의하고 시드가 옮기며 `db:rls` 가 대조한다.
@@ -205,6 +205,9 @@ on conflict (code) do update set
 --
 -- **오프셋은 추정이지 사실이 아니다.** 그래서 선행 미완을 잠그지 않는다 — 스드메를
 -- 먼저 계약하고 홀을 나중에 잡는 커플이 있고 그것이 틀린 것이 아니다(§3.2).
+--
+-- **양수 오프셋은 예식 뒤다**(C-4a). 축의금 정산·답례 인사·혼인신고 제출 셋이 그렇다.
+-- 전에는 목록이 전부 음수라 예식 뒤에 오는 일을 적을 자리가 없었다(B-1 조사 4-2).
 --
 -- 재실행 가능하다(`on conflict (code) do update`). 템플릿을 고치면 **코드를 먼저 고치고
 -- 이 블록을 다시 만든다.** 반대로 하지 않는다.
@@ -227,16 +230,23 @@ insert into public.task_templates (code, category, title, offset_days, vendor_ca
   ('T-doc-invitation', 'document', '청첩장 주문', -60, null),
   ('T-doc-invitation-send', 'document', '청첩장 전달', -30, null),
   ('T-doc-marriage', 'document', '혼인신고 서류 확인', -14, null),
+  ('T-doc-marriage-file', 'document', '혼인신고 제출', 30, null),
   ('T-honeymoon-plan', 'honeymoon', '허니문 일정·예산 정하기', -150, null),
   ('T-honeymoon-booking', 'honeymoon', '항공·숙소 예약', -120, null),
-  ('T-honeymoon-doc', 'honeymoon', '여권·비자 확인', -60, null)
+  ('T-honeymoon-doc', 'honeymoon', '여권·비자 확인', -60, null),
+  -- C-4a — 준비 항목 넷과 예식 후 셋
+  ('T-family-meeting', 'family', '상견례', -320, null),
+  ('T-family-settlement', 'family', '축의금 정산', 7, null),
+  ('T-attire-fitting', 'attire', '예복·한복 맞춤', -90, null),
+  ('T-gift-prepare', 'gift', '답례품 준비', -30, null),
+  ('T-gift-thanks', 'gift', '답례 인사', 14, null)
 on conflict (code) do update set
   category    = excluded.category,
   title       = excluded.title,
   offset_days = excluded.offset_days,
   vendor_category = excluded.vendor_category;
 
--- 간선 16개. **순환 방지 트리거가 이 삽입을 검사한다**(0042) — 시드가 순환을 담으면
+-- 간선 20개. **순환 방지 트리거가 이 삽입을 검사한다**(0042) — 시드가 순환을 담으면
 -- 그것이 모든 커플에게 복제되므로 상류에서 막는다.
 insert into public.task_template_dependencies (template_code, depends_on_code) values
 ('T-hall-contract', 'T-hall-tour'),
@@ -254,7 +264,14 @@ insert into public.task_template_dependencies (template_code, depends_on_code) v
   ('T-doc-invitation-send', 'T-hall-guest-count'),
   ('T-honeymoon-plan', 'T-hall-contract'),
   ('T-honeymoon-booking', 'T-honeymoon-plan'),
-  ('T-honeymoon-doc', 'T-honeymoon-plan')
+  ('T-honeymoon-doc', 'T-honeymoon-plan'),
+  -- C-4a. **상견례·축의금 정산에는 선행을 걸지 않았다** — 양가가 만나기 전에 홀을
+  -- 보러 다니는 커플이 있고, 축의금은 받는 순간부터 셀 수 있다(§3.2 — 없으면
+  -- 곤란한 것만 건다).
+  ('T-attire-fitting', 'T-hall-contract'),
+  ('T-gift-prepare', 'T-hall-guest-count'),
+  ('T-gift-thanks', 'T-gift-prepare'),
+  ('T-doc-marriage-file', 'T-doc-marriage')
 on conflict (template_code, depends_on_code) do nothing;
 
 -- =============================================================================

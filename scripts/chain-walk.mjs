@@ -1255,6 +1255,180 @@ try {
     return "seoul-gangnam 200 · zzz-nowhere 404";
   });
 
+  // ── 8c. 준비 항목 확장 · 예식 후 태스크 (C-4a) ───────────────────────────
+  //
+  // **완료 조건이 "역산·선행·표현 넷에서 전부 제자리에 뜬다" 라서** DB 검사만으로는
+  // 끝나지 않는다. 양수 오프셋은 **만들어지기는 하는데 어디에도 안 뜨는** 방식으로
+  // 실패할 수 있다 — 그 실패는 화면을 열어야 보인다.
+  await step("**체크리스트가 25종을 만든다** — 준비 항목이 늘었다(C-4a)", consumer, async () => {
+    const info = await goto(consumer, "/checklist");
+    if (info.notFound || info.errorState) {
+      throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+    }
+
+    // 아직 만들기 전이면 **무엇이 들어올지 화면이 먼저 말해야 한다**(소급하지 않는다).
+    const before = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="missing-templates"]');
+      return JSON.stringify({ listed: box ? box.innerText.replace(/\\s+/g, " ") : null });
+    })()`));
+
+    await click(consumer, "button", { text: "일정 만들기" });
+    await sleep(2500);
+
+    const made = Number(
+      sql(`select count(*) from public.tasks t
+             join public.couples c on c.id = t.couple_id
+            where t.template_code is not null;`),
+    );
+
+    if (made !== 25) throw new Error(`템플릿 태스크가 25가 아니다: ${made}`);
+
+    return `${made}건 · 만들기 전 안내 ${before.listed === null ? "없음(첫 생성)" : "있음"}`;
+  });
+
+  await step("**예식 뒤 항목이 예식 뒤 날짜를 갖는다** — 역산이 양수를 넘긴다", consumer, async () => {
+    const bad = sql(`select count(*) from public.tasks t
+                      join public.couples c on c.id = t.couple_id
+                      join public.task_templates tp on tp.code = t.template_code
+                     where tp.offset_days > 0 and (t.due_date is null or t.due_date <= c.wedding_date);`);
+
+    const post = sql(`select count(*) from public.tasks t
+                       join public.task_templates tp on tp.code = t.template_code
+                      where tp.offset_days > 0;`);
+
+    // **분모를 먼저 본다** — 0건이면 위 검사가 조용히 통과한다.
+    if (post !== "3") throw new Error(`예식 후 태스크가 셋이 아니다: ${post}`);
+    if (bad !== "0") throw new Error(`예식 뒤인데 기한이 예식 전이거나 빈 것이 ${bad}건`);
+
+    return `예식 후 ${post}건 · 전부 예식 뒤 날짜`;
+  });
+
+  await step("**타임라인에 '예식 후' 구간이 뜬다**(표현 A)", consumer, async () => {
+    const info = await goto(consumer, "/checklist");
+    if (info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="schedule-views"]');
+      const text = box ? box.innerText.replace(/\\s+/g, " ") : "";
+      return JSON.stringify({
+        hasBox: Boolean(box),
+        after: /예식 후/.test(text),
+        settlement: /축의금 정산/.test(text),
+        // 예식 전 구간도 함께 서 있어야 한다 — 축을 통째로 갈아엎은 것이 아니다.
+        before: /개월 전|주 전/.test(text),
+        stale: /예식 당일·이후/.test(text),
+      });
+    })()`));
+
+    if (!seen.hasBox) throw new Error("표현 영역이 없다");
+    if (!seen.after) throw new Error("'예식 후' 구간이 화면에 없다 — 양수 항목이 예식 전 칸에 섞였다");
+    if (!seen.settlement) throw new Error("축의금 정산이 타임라인에 없다");
+    if (!seen.before) throw new Error("예식 전 구간이 사라졌다 — 기존 표현이 깨졌다");
+    if (seen.stale) throw new Error("'예식 당일·이후' 가 남아 있다 — 두 자리가 같은 것을 주장한다");
+
+    return "예식 후 구간 · 축의금 정산 · 예식 전 구간 동시에";
+  });
+
+  await step("**새 카테고리가 한글 라벨로 뜬다**(표현 B) — 코드가 새지 않는다", consumer, async () => {
+    await evaluate(consumer, `(() => {
+      const tab = document.querySelector('[data-testid="schedule-view-progress"]');
+      if (tab) tab.click();
+      return true;
+    })()`);
+    await sleep(600);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="schedule-views"]');
+      const text = box ? box.innerText.replace(/\\s+/g, " ") : "";
+      return JSON.stringify({
+        labels: ["양가", "예복·한복", "답례"].filter((l) => text.includes(l)),
+        rawCodes: ["family", "attire", "gift"].filter((c) => text.includes(c)),
+      });
+    })()`));
+
+    if (seen.labels.length !== 3) {
+      throw new Error(`새 카테고리 라벨이 ${seen.labels.length}/3 만 보인다`);
+    }
+    if (seen.rawCodes.length > 0) {
+      throw new Error(`코드가 그대로 화면에 적혔다: ${seen.rawCodes.join(",")}`);
+    }
+
+    return `라벨 셋 · 코드 노출 0`;
+  });
+
+  await step("**나머지 표현 둘도 선다**(표현 C·D) — 넷 중 둘만 고치지 않았다", consumer, async () => {
+    const shown = [];
+
+    for (const view of ["next", "graph", "timeline"]) {
+      await evaluate(consumer, `(() => {
+        const tab = document.querySelector('[data-testid="schedule-view-${view}"]');
+        if (tab) tab.click();
+        return true;
+      })()`);
+      await sleep(500);
+
+      const ok = await evaluate(consumer, `(() => {
+        const box = document.querySelector('[data-testid="schedule-views"]');
+        return Boolean(box) && (box.innerText || "").trim().length > 0;
+      })()`);
+
+      if (ok !== "true" && ok !== true) throw new Error(`${view} 표현이 비었다`);
+      shown.push(view);
+    }
+
+    return shown.join(" · ");
+  });
+
+  await step("**다 넣고 나면 '빠진 것이 없다' 고 말한다** — 0건을 만들게 두지 않는다", consumer, async () => {
+    const info = await goto(consumer, "/checklist");
+    if (info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const none = document.querySelector('[data-testid="missing-none"]');
+      const btn = [...document.querySelectorAll("button")].find((b) =>
+        /넣기|일정 만들기/.test(b.textContent || ""),
+      );
+      return JSON.stringify({
+        none: Boolean(none),
+        disabled: btn ? btn.disabled : null,
+        label: btn ? (btn.textContent || "").trim() : null,
+      });
+    })()`));
+
+    if (!seen.none) throw new Error("'빠진 준비 항목이 없어요' 가 없다");
+    if (seen.disabled !== true) throw new Error(`버튼이 여전히 눌린다: ${seen.label}`);
+
+    return `안내 있음 · 버튼 잠김("${seen.label}")`;
+  });
+
+  await step("**하나 지우면 이름으로 되돌아온다** — 소급하지 않고 알린다", consumer, async () => {
+    // **소급 생성을 하지 않기로 했으므로**(S7-08) 늘어난 항목이 기존 커플에게 닿는
+    // 길은 이 안내 하나다. 그 길이 실제로 열리는지 지워서 만들어 본다.
+    sql(`delete from public.tasks where template_code = 'T-family-settlement';`);
+
+    const info = await goto(consumer, "/checklist");
+    if (info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="missing-templates"]');
+      const btn = [...document.querySelectorAll("button")].find((b) =>
+        /넣기/.test(b.textContent || ""),
+      );
+      return JSON.stringify({
+        text: box ? box.innerText.replace(/\\s+/g, " ") : null,
+        disabled: btn ? btn.disabled : null,
+      });
+    })()`));
+
+    if (seen.text === null) throw new Error("빠진 항목 안내가 없다");
+    if (!seen.text.includes("축의금 정산")) {
+      throw new Error(`무엇이 빠졌는지 이름으로 안 적었다: ${seen.text}`);
+    }
+    if (seen.disabled === true) throw new Error("넣을 것이 있는데 버튼이 잠겼다");
+
+    return seen.text.slice(0, 60);
+  });
+
   // ── 9. 하이드레이션·콘솔 ──────────────────────────────────────────────────
   await step("사슬 화면 어디에도 콘솔 오류가 없다", null, async () => {
     const noisy = steps.filter((s) => s.consoleErrors.length > 0);

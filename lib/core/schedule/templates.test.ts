@@ -32,11 +32,43 @@ describe("템플릿 목록 — 스스로 온전한가", () => {
     }
   });
 
-  it("오프셋이 D-360~D-0 안에 있다 (§2.1)", () => {
+  it("오프셋이 D-360 ~ 예식 후 1개월 안에 있다 (§2.1 · C-4a)", () => {
+    // **상한이 0 이 아니다.** 예식 뒤에 오는 일(축의금 정산·답례 인사·혼인신고
+    // 제출)이 생겼고, 그것이 C-4a 의 절반이다. DB CHECK(-1000~365)보다 좁게 잡아
+    // 목록 자체가 먼저 이상해지게 한다.
     for (const template of SCHEDULE_TEMPLATES) {
-      expect(template.offsetDays, template.code).toBeLessThanOrEqual(0);
+      expect(template.offsetDays, template.code).toBeLessThanOrEqual(30);
       expect(template.offsetDays, template.code).toBeGreaterThanOrEqual(-360);
     }
+  });
+
+  it("**예식 뒤에 오는 일이 실재한다** — 양수 오프셋이 목록에 있다 (C-4a)", () => {
+    const post = SCHEDULE_TEMPLATES.filter((template) => template.offsetDays > 0);
+
+    // 분모를 먼저 본다 — 0건이면 아래 검사가 전부 조용히 통과한다.
+    expect(post.length).toBeGreaterThan(0);
+    expect(post.map((template) => template.code).sort()).toEqual([
+      "T-doc-marriage-file",
+      "T-family-settlement",
+      "T-gift-thanks",
+    ]);
+  });
+
+  it("**요구받은 넷이 전부 목록에 있다** (B-1 조사 4-2)", () => {
+    const titles = SCHEDULE_TEMPLATES.map((template) => template.title).join(" ");
+
+    for (const word of ["답례품", "상견례", "예복", "축의금"]) {
+      expect(titles, word).toContain(word);
+    }
+  });
+
+  it("**서류 '확인' 과 '제출' 이 다른 항목이다** — 확인만 있고 제출이 없었다", () => {
+    const check = SCHEDULE_TEMPLATES.find((t) => t.code === "T-doc-marriage");
+    const file = SCHEDULE_TEMPLATES.find((t) => t.code === "T-doc-marriage-file");
+
+    expect(check?.offsetDays).toBeLessThan(0);
+    expect(file?.offsetDays).toBeGreaterThan(0);
+    expect(file?.dependsOn).toContain("T-doc-marriage");
   });
 
   it("판본이 붙어 있다 — 시드가 어긋나면 db:rls 가 알린다", () => {

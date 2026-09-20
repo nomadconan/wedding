@@ -72,9 +72,13 @@ async function ChecklistSection() {
     .eq("id", membership.coupleId)
     .maybeSingle();
 
+  const weddingDate = (couple as { wedding_date: string | null } | null)?.wedding_date ?? null;
+
   const view = await loadChecklist(supabase, {
     coupleId: membership.coupleId,
     today: new Date().toISOString().slice(0, 10),
+    // **예식 후 구간은 예식일이 있어야 선다**(C-4a) — 없으면 '예식 후' 라고 적을 근거가 없다.
+    weddingDate,
   });
 
   // O-16 이 못 주는 표현을 끄기로 하면 **행 하나로** 꺼진다(§7.5 · 0043).
@@ -96,8 +100,9 @@ async function ChecklistSection() {
         timeline={view.timeline}
         progress={view.progress}
         enabledViews={views}
-        hasWeddingDate={(couple as { wedding_date: string | null } | null)?.wedding_date != null}
+        hasWeddingDate={weddingDate !== null}
         generated={view.generatedCodes.length > 0}
+        missingTemplates={view.missingTemplates}
       />
     </div>
   );

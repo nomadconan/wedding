@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   NEXT_TASK_LIMIT,
+  TIMELINE_AFTER_BUCKETS,
   TIMELINE_BUCKETS,
   WAITING_NOTE,
   annotate,
@@ -186,6 +187,93 @@ describe("A. 역산 타임라인 — 기본 표현 (T-00g)", () => {
     expect(timeline).toHaveLength(1);
   });
 
+  // ── 예식 후 (C-4a) ────────────────────────────────────────────────────
+  //
+  // **오늘 기준으로는 예식 전과 후를 가를 수 없다.** 예식이 100일 남은 커플에게
+  // 축의금 정산(D+7)은 "107일 뒤" 이고, 그 수만 보면 "3개월 전" 칸에 들어가 예식
+  // **전** 일로 보인다. 그래서 예식 뒤 항목만 예식일 기준으로 따로 묶는다.
+  describe("예식 뒤에 오는 일 (C-4a)", () => {
+    const wedding = "2026-11-24"; // today = 2026-08-16 기준 100일 뒤
+
+    it("**예식 뒤 항목이 '예식 후' 구간에 뜬다** — 예식 전 칸에 섞이지 않는다", () => {
+      const tasks = annotate(
+        [
+          task({ id: "before", dueDate: "2026-11-01" }),
+          task({ id: "after7", dueDate: "2026-11-30" }), // 예식 +6
+          task({ id: "after30", dueDate: "2026-12-20" }), // 예식 +26
+          task({ id: "later", dueDate: "2027-03-01" }), // 예식 +97
+        ],
+        [],
+      );
+
+      const timeline = buildTimeline({
+        tasks,
+        today,
+        order: tasks.map((item) => item.id),
+        weddingDate: wedding,
+      });
+
+      const codes = timeline.map((bucket) => bucket.code);
+
+      // 예식 후 셋이 각자의 칸에 있고 **맨 뒤**다 — 축이 시간순이기 때문이다.
+      expect(codes.slice(-3)).toEqual(["a7", "a30", "a"]);
+      expect(timeline.find((b) => b.code === "a7")?.tasks.map((t) => t.id)).toEqual(["after7"]);
+      expect(timeline.find((b) => b.code === "a30")?.tasks.map((t) => t.id)).toEqual(["after30"]);
+      expect(timeline.find((b) => b.code === "a")?.tasks.map((t) => t.id)).toEqual(["later"]);
+
+      // 예식 전 항목은 여전히 오늘 기준 구간에 있다.
+      expect(codes).not.toEqual(["a7", "a30", "a"]);
+      expect(
+        timeline.some((b) => !b.code.startsWith("a") && b.tasks.some((t) => t.id === "before")),
+      ).toBe(true);
+    });
+
+    it("**예식 당일은 예식 후가 아니다** — 경계는 '뒤' 만 넘긴다", () => {
+      const tasks = annotate([task({ id: "onTheDay", dueDate: wedding })], []);
+
+      const timeline = buildTimeline({
+        tasks,
+        today,
+        order: ["onTheDay"],
+        weddingDate: wedding,
+      });
+
+      expect(timeline.every((bucket) => !bucket.code.startsWith("a"))).toBe(true);
+    });
+
+    it("**예식일을 모르면 '예식 후' 라고 적지 않는다** — 근거 없는 라벨을 만들지 않는다", () => {
+      const tasks = annotate([task({ id: "late", dueDate: "2027-03-01" })], []);
+
+      const timeline = buildTimeline({ tasks, today, order: ["late"], weddingDate: null });
+
+      expect(timeline.map((bucket) => bucket.code)).not.toContain("a");
+      // 그래도 사라지지 않는다 — 어딘가에는 뜬다.
+      expect(timeline.flatMap((bucket) => bucket.tasks).map((t) => t.id)).toEqual(["late"]);
+    });
+
+    it("빈 예식 후 구간은 내보내지 않는다 — 없는 자리를 그리지 않는다", () => {
+      const tasks = annotate([task({ id: "before", dueDate: "2026-11-01" })], []);
+
+      const timeline = buildTimeline({
+        tasks,
+        today,
+        order: ["before"],
+        weddingDate: wedding,
+      });
+
+      expect(timeline.some((bucket) => bucket.code.startsWith("a"))).toBe(false);
+    });
+
+    it("구간 표에 라벨이 다 있다 — 분모가 실재한다", () => {
+      expect(TIMELINE_AFTER_BUCKETS.length).toBeGreaterThan(0);
+      for (const bucket of TIMELINE_AFTER_BUCKETS) {
+        expect(bucket.label.trim().length).toBeGreaterThan(0);
+      }
+      // 마지막 칸이 나머지 전부를 받는다 — 어느 기한도 갈 곳이 없지 않다.
+      expect(TIMELINE_AFTER_BUCKETS.at(-1)?.untilDays).toBe(Number.POSITIVE_INFINITY);
+    });
+  });
+
   it("구간 안의 순서는 위상 정렬을 따른다", () => {
     const tasks = annotate(
       [
@@ -281,5 +369,32 @@ describe("템플릿 → 태스크", () => {
     });
 
     expect(edges).toEqual([]);
+  });
+});
+describe("역산 — 양수 오프셋은 예식 뒤 날짜가 된다 (C-4a)", () => {
+  it("음수는 앞, 양수는 뒤", () => {
+    const generated = generateFromTemplates({
+      templates: [
+        { code: "before", category: "hall", title: "앞", offsetDays: -30 },
+        { code: "onDay", category: "hall", title: "당일", offsetDays: 0 },
+        { code: "after", category: "family", title: "뒤", offsetDays: 7 },
+      ],
+      weddingDate: "2026-11-24",
+    });
+
+    const dueByCode = new Map(generated.map((t) => [t.templateCode, t.dueDate]));
+
+    expect(dueByCode.get("before")).toBe("2026-10-25");
+    expect(dueByCode.get("onDay")).toBe("2026-11-24");
+    expect(dueByCode.get("after")).toBe("2026-12-01");
+  });
+
+  it("예식일이 없으면 양수도 기한이 비어 있다 — 날짜를 지어내지 않는다", () => {
+    const generated = generateFromTemplates({
+      templates: [{ code: "after", category: "family", title: "뒤", offsetDays: 7 }],
+      weddingDate: null,
+    });
+
+    expect(generated[0].dueDate).toBeNull();
   });
 });

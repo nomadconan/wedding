@@ -18,7 +18,8 @@ import {
 // 빈 배열이면 아래 `every`·`filter` 가 전부 조용히 통과한다.
 describe("분모가 실재한다", () => {
   it("두 축 어휘가 비어 있지 않다", () => {
-    expect(TASK_CATEGORIES.length).toBe(6);
+    // 준비 축은 C-4a 에서 여섯 → 아홉이 됐다(family·attire·gift).
+    expect(TASK_CATEGORIES.length).toBe(9);
     expect(VENDOR_CATEGORIES.length).toBe(6);
   });
 
@@ -42,15 +43,32 @@ describe("두 축은 다른 것을 센다 — 합칠 수 없다는 근거", () =
     expect([...sdm.vendorCategories].sort()).toEqual(["dress", "makeup", "studio", "video"]);
   });
 
-  it("준비 축에만 있는 값이 다섯이다 — 그중 sdm 만 파는 곳이 있다", () => {
+  it("준비 축에만 있는 값이 여덟이다 — 그중 sdm 만 파는 곳이 있다", () => {
     const onlyPrep = (TASK_CATEGORIES as readonly string[]).filter(
       (c) => !(VENDOR_CATEGORIES as readonly string[]).includes(c),
     );
     // `sdm` 은 **이름이 파는 축에 없을 뿐** 대응하는 업체는 넷이나 있다.
-    // 나머지 넷은 이름도 없고 파는 것도 없다 — 둘을 같은 것으로 읽지 않는다.
-    expect([...onlyPrep].sort()).toEqual(["document", "honeymoon", "honsu", "sdm", "yedan"]);
+    // 나머지 일곱은 이름도 없고 파는 것도 없다 — 둘을 같은 것으로 읽지 않는다.
+    expect([...onlyPrep].sort()).toEqual([
+      "attire",
+      "document",
+      "family",
+      "gift",
+      "honeymoon",
+      "honsu",
+      "sdm",
+      "yedan",
+    ]);
     expect(PREP_TO_VENDOR.sdm.kind).toBe("sold");
-    for (const c of ["document", "honeymoon", "honsu", "yedan"] as const) {
+    for (const c of [
+      "document",
+      "honeymoon",
+      "honsu",
+      "yedan",
+      "family",
+      "attire",
+      "gift",
+    ] as const) {
       expect(PREP_TO_VENDOR[c].kind).toBe("not_sold");
     }
   });
@@ -208,6 +226,47 @@ describe("판정 함수", () => {
     for (const bad of [null, undefined, ""]) {
       expect(isTaskCategory(bad)).toBe(false);
       expect(isVendorCategory(bad)).toBe(false);
+    }
+  });
+});
+describe("C-4a 가 더한 셋 — 왜 다른 칸에 두었나", () => {
+  /**
+   * **넷을 기존 여섯에 우겨 넣지 않은 것이 판단이다.** 우겨 넣으면 매핑이 거짓말을
+   * 한다 — 예복·한복을 `sdm` 에 넣으면 그 칸은 `sold` 라서 화면이 "여기서 살 수
+   * 있어요" 라고 말하는데, 정작 한복을 파는 곳은 우리에게 없다.
+   */
+  it("셋 다 파는 곳이 없다 — 있다고 말하지 않는다", () => {
+    for (const c of ["family", "attire", "gift"] as const) {
+      expect(PREP_TO_VENDOR[c].kind).toBe("not_sold");
+    }
+  });
+
+  it("**양가는 '살 것이 아니다' 이고 예복·답례는 '아직 안 열었다' 다**", () => {
+    // 하나로 묶어 적으면 상견례·축의금까지 "언젠가 열리겠지" 로 읽힌다 —
+    // `document` 를 나머지와 갈라 둔 것과 같은 이유다.
+    const family = PREP_TO_VENDOR.family;
+    const attire = PREP_TO_VENDOR.attire;
+    const gift = PREP_TO_VENDOR.gift;
+
+    expect(family.kind === "not_sold" && family.why).toBe("not_a_purchase");
+    expect(attire.kind === "not_sold" && attire.why).toBe("not_yet_listed");
+    expect(gift.kind === "not_sold" && gift.why).toBe("not_yet_listed");
+  });
+
+  it("**예복·한복을 `dress` 로 보내지 않는다** — 그쪽은 신부 웨딩드레스다", () => {
+    const attire = PREP_TO_VENDOR.attire;
+    expect(attire.kind).toBe("not_sold");
+    // `sold` 였다면 화면이 드레스 업체 목록을 신랑 예복 자리에 그린다.
+    expect(VENDOR_TO_PREP.dress).not.toContain("attire");
+  });
+
+  it("셋 다 화면에 적을 문구가 있다 — 빈 칸으로 두지 않는다", () => {
+    for (const c of ["family", "attire", "gift"] as const) {
+      const view = prepLinkView(c);
+      expect(view.kind).toBe("none");
+      if (view.kind !== "none") return;
+      expect(view.title.trim().length).toBeGreaterThan(0);
+      expect(view.note.trim().length).toBeGreaterThan(0);
     }
   });
 });
