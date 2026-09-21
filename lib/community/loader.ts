@@ -138,11 +138,24 @@ async function decorate(
 export async function listPosts(
   client: SupabaseClient<Database>,
   publicClient: SupabaseClient<Database>,
-  options: { board: BoardType | null; sort: CommunitySort; viewerId: string | null },
+  options: {
+    board: BoardType | null;
+    sort: CommunitySort;
+    viewerId: string | null;
+    /**
+     * 준비 축 카테고리로 좁힌다 (C-4c).
+     *
+     * 체크리스트 다리가 `?prep=` 로 들어온다. `board_type` 과 **다른 축**이라
+     * 서로를 대신하지 못한다 — 하나는 *글의 성격*(자유·경험담·질문), 하나는
+     * *어느 준비 단계*다.
+     */
+    prep?: string | null;
+  },
 ): Promise<CommunityPostRow[]> {
   let query = client.from("community_posts").select(POST_COLUMNS).eq("status", "published");
 
   if (options.board !== null) query = query.eq("board_type", options.board);
+  if (options.prep) query = query.eq("category", options.prep);
 
   const { data } = await query.order("created_at", { ascending: false }).limit(50);
 

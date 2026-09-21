@@ -98,6 +98,9 @@ export async function POST(request: NextRequest) {
       board_type: parsed.data.boardType,
       title: parsed.data.title,
       body: parsed.data.body,
+      // 준비 축 (C-4c). null 이면 어느 준비 항목의 다리에도 안 잡히고, 그것이
+      // 정상이다 — 목록에는 그대로 뜬다.
+      category: parsed.data.prepCategory,
     })
     .select("id")
     .maybeSingle();

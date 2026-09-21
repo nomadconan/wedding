@@ -14156,6 +14156,232 @@ if (!vendorStaff || !adminUser) {
       sqlOrNull(`begin; update public.tasks set vendor_category = null; rollback;`) !== null,
   );
 
+  // ══════════════════════════════════════════════════════════════════════
+  // 준비 항목 → 정보·상품 다리 (C-4c · F-C-39)
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // 어휘가 **세 표**에 걸린다 — `tasks.vendor_category`(파는 축) ·
+  // `content_posts.prep_category`(준비 축) · `community_posts.category`(준비 축).
+  // 셋이 어긋나면 같은 태스크에서 나가는 다리가 서로 다른 곳을 가리킨다.
+
+  check(
+    "**커뮤니티 글의 준비 단계도 같은 어휘를 쓴다**(0084) — 쓰기가 열린 칸에 CHECK 이 없었다",
+    rejectedWith(/community_posts_prep_category_vocab|check constraint/, () =>
+      sql(`update public.community_posts set category = 'studio';`),
+    ),
+  );
+  check(
+    "**어휘 안의 값과 null 은 통과한다** — 늘 거절하는 CHECK 이 아니다",
+    sqlOrNull(`begin; update public.community_posts set category = 'gift'; rollback;`) !== null &&
+      sqlOrNull(`begin; update public.community_posts set category = null; rollback;`) !== null,
+  );
+  check(
+    "**세 칸이 같은 함수로 판정한다** — 어휘가 두 벌이면 어긋나고 어긋나면 조용하다",
+    sqlOrNull(
+      `select count(*) from pg_constraint
+        where conname in ('tasks_vendor_category_vocab', 'content_posts_prep_category_vocab',
+                          'community_posts_prep_category_vocab');`,
+    ) === "3" &&
+      sqlOrNull(
+        `select count(*) from pg_constraint
+          where conname in ('content_posts_prep_category_vocab', 'community_posts_prep_category_vocab')
+            and pg_get_constraintdef(oid) like '%is_prep_category%';`,
+      ) === "2",
+  );
+
+  // ── 다리가 실제로 갈 곳이 있는가 ───────────────────────────────────────
+  //
+  // **표를 세는 것으로 끝내지 않는다.** `db:reset` 뒤에도 값이 있어야 화면이
+  // 무언가를 보여 준다 — 시드가 넣지 않으면 모든 다리가 "아직 없어요" 가 되고,
+  // 그러면 "없을 때 말한다" 만 확인되고 **"있을 때 잇는다" 는 확인되지 않는다.**
+  {
+    const guideLinked = sqlOrNull(
+      `select count(*) from public.content_posts
+        where prep_category is not null and published_at is not null and published_at <= now();`,
+    );
+    const communityLinked = sqlOrNull(
+      `select count(*) from public.community_posts where category is not null and status = 'published';`,
+    );
+
+    check(
+      "**준비 단계가 붙은 발행 가이드가 실재한다** — 다리가 닿을 곳이 있다",
+      Number(guideLinked ?? "0") >= 2,
+      `guides=${guideLinked}`,
+    );
+    check(
+      "**준비 단계가 붙은 공개 커뮤니티 글이 실재한다**",
+      Number(communityLinked ?? "0") >= 1,
+      `posts=${communityLinked}`,
+    );
+    check(
+      "**전부에 붙이지는 않았다** — 특정 단계가 아닌 글은 null 이며 그것이 정상이다",
+      Number(
+        sqlOrNull(`select count(*) from public.content_posts where prep_category is null;`) ?? "0",
+      ) > 0,
+    );
+    check(
+      "**다리가 쓰는 색인이 실재한다** — 카테고리로 매번 거른다",
+      sqlOrNull(
+        `select count(*) from pg_indexes
+          where indexname in ('idx_community_posts_category', 'idx_content_posts_prep_category');`,
+      ) === "2",
+    );
+  }
+
+  // ── 권한 세 층 ─────────────────────────────────────────────────────────
+  //
+  // **`tasks` 가 표 단위 UPDATE 라는 사실 자체를 다시 본다.** `products` 와 같은
+  // 모양이라 새 칸을 더하면 커플이 **바로** 쓸 수 있다 — C-4c 가 `tasks` 에 칸을
+  // 더하지 않기로 한 근거의 절반이 여기 있다(나머지 절반은 "계산 가능한 값을
+  // 저장하지 않는다").
+  {
+    const tasksTableGrant = sqlOrNull(
+      `select count(*) from information_schema.table_privileges
+        where table_name = 'tasks' and grantee = 'authenticated' and privilege_type = 'UPDATE';`,
+    );
+    const tasksColumnGrant = sqlOrNull(
+      `select count(*) from information_schema.column_privileges
+        where table_name = 'tasks' and grantee = 'authenticated' and privilege_type = 'UPDATE';`,
+    );
+
+    check(
+      "**층1 — `tasks` 는 표 단위 UPDATE 다**(사실을 고정한다) — 새 칸이 자동으로 열린다",
+      tasksTableGrant === "1",
+      `table=${tasksTableGrant} columns=${tasksColumnGrant}`,
+    );
+    check(
+      "**층1 — 그래서 C-4c 는 `tasks` 에 칸을 더하지 않았다** — 연결 칸이 0개다",
+      sqlOrNull(
+        `select count(*) from information_schema.columns
+          where table_name = 'tasks'
+            and (column_name like '%product%' or column_name like '%content%'
+                 or column_name like '%post%' or column_name like '%link%'
+                 or column_name like '%slug%' or column_name like '%url%');`,
+      ) === "0",
+    );
+    check(
+      "**층1 — `community_posts` 는 칸 나열 권한이다** — 무엇을 열었는지 세어 둔다",
+      sqlOrNull(
+        `select count(*) from information_schema.column_privileges
+          where table_name = 'community_posts' and grantee = 'authenticated'
+            and privilege_type = 'UPDATE';`,
+      ) === "4" &&
+        sqlOrNull(
+          `select count(*) from information_schema.table_privileges
+            where table_name = 'community_posts' and grantee = 'authenticated'
+              and privilege_type = 'UPDATE';`,
+        ) === "0",
+    );
+    check(
+      "**층1 — `content_posts` 는 당사자가 못 쓴다** — 가이드는 운영자의 것이다",
+      sqlOrNull(
+        `select count(*) from information_schema.table_privileges
+          where table_name = 'content_posts' and grantee = 'authenticated'
+            and privilege_type in ('UPDATE', 'INSERT');`,
+      ) === "0" &&
+        sqlOrNull(
+          `select count(*) from information_schema.column_privileges
+            where table_name = 'content_posts' and grantee = 'authenticated'
+              and privilege_type in ('UPDATE', 'INSERT');`,
+        ) === "0",
+    );
+  }
+
+  {
+    const author = idOf("couple-linked-a@local.test");
+    const other = idOf("couple-a@local.test");
+
+    check("**커뮤니티 픽스처 사용자가 있다** — 없으면 아래 층2·층3 이 헛돈다", Boolean(author && other));
+
+    if (author && other) {
+      check(
+        "**층2 — 남의 글의 준비 단계를 못 고친다** (정책이 작성자를 직접 본다)",
+        asUser(
+          other,
+          `update public.community_posts set category = 'gift'
+            where author_id = '${author}' returning 1;`,
+        ) === "",
+      );
+      check(
+        "**층2 — 내 글은 고칠 수 있다** — 늘 0 을 돌려주는 검사가 아니다",
+        asUser(
+          author,
+          `update public.community_posts set category = 'gift'
+            where author_id = '${author}' and board_type = 'experience' returning 1;`,
+        ) === "1",
+      );
+      check(
+        "**층3 — 작성자가 어휘 밖 값으로 자리를 만들 수 없다**",
+        rejectedWith(/community_posts_prep_category_vocab|check constraint|permission denied/, () =>
+          asUser(
+            author,
+            `update public.community_posts set category = '내가만든칸' where author_id = '${author}';`,
+          ),
+        ),
+      );
+      check(
+        "**층3 — 작성자가 가이드의 준비 단계를 못 쓴다** — 다리의 다른 끝을 스스로 못 만든다",
+        rejectedWith(/permission denied|row-level security/, () =>
+          asUser(author, `update public.content_posts set prep_category = 'gift';`),
+        ),
+      );
+      check(
+        "**층3 — 작성자가 자기 글을 스스로 공개 상태로 못 바꾼다면 그 사실을 적는다**",
+        // status 는 칸 권한에 들어 있다(본인 글 숨기기). 어휘는 0038 CHECK 이 판정한다.
+        rejectedWith(/check constraint|invalid input|permission denied/, () =>
+          asUser(author, `update public.community_posts set status = '아무거나' where author_id = '${author}';`),
+        ),
+      );
+    }
+  }
+
+  // ── 다리가 화면과 API 양쪽에 붙어 있는가 ───────────────────────────────
+  {
+    const coreSrc = srcOf("lib/core/task/links.ts");
+    const viewSrc = srcOf("app/(consumer)/checklist/ChecklistView.tsx");
+    const pageSrc = srcOf("app/(consumer)/checklist/page.tsx");
+    const routeSrc = srcOf("app/api/tasks/links/route.ts");
+    const loaderSrc = srcOf("lib/tasks/links.ts");
+
+    check(
+      "**다리 모듈을 실제로 읽었다**",
+      /export function taskLinks[(]/.test(coreSrc) && coreSrc.length > 2000,
+      `bytes=${coreSrc.length}`,
+    );
+    check(
+      "**화면이 다리를 그린다** — 만든 자리가 도달 불가로 남지 않는다",
+      /data-testid="task-links"/.test(viewSrc) && /loadTaskLinks[(]/g.test(pageSrc),
+    );
+    check(
+      "**API 도 같은 판정을 쓴다** — 판정이 두 벌이면 화면과 API 가 다른 말을 한다",
+      /loadTaskLinks[(]/g.test(routeSrc) && /TASK_LINK_BASIS_NOTE/.test(routeSrc),
+    );
+    check(
+      "**판정 기준을 화면이 상시 적는다**(§2.2) — 추천이 아님을 화면이 증명한다",
+      /data-testid="task-links-basis"/.test(viewSrc) && /TASK_LINK_BASIS_NOTE/.test(viewSrc),
+    );
+    check(
+      "**커뮤니티 다리가 미검증 경고를 건너뛰지 않는다**(D-26)",
+      /data-testid="task-links-community-caution"/.test(viewSrc) &&
+        /caution/.test(coreSrc) &&
+        // 경고가 링크보다 **먼저** 그려진다 — 누르기 전에 읽어야 의미가 있다.
+        viewSrc.indexOf('data-testid="task-links-community-caution"') <
+          viewSrc.indexOf('data-testid="task-link-community"'),
+    );
+    check(
+      "**조회수·좋아요가 다리 질의에 없다**(D-03) — 순서를 매기지 않는다",
+      !/view_count|like_count/.test(loaderSrc),
+    );
+    check(
+      "**상품 수를 목록과 같은 조건으로 센다** — 세는 것과 보이는 것이 다르면 거짓말이다",
+      /status", "published"/.test(loaderSrc) && /vendors\.status", "active"/.test(loaderSrc),
+    );
+    check(
+      "**0 을 건수로 적지 않는다** — '아직 등록된 상품이 없어요' 가 따로 있다",
+      /productCount === 0/.test(viewSrc) && /아직 등록된 상품이 없어요/.test(viewSrc),
+    );
+  }
+
   // ── 시드가 실제로 값을 넣었는가 ─────────────────────────────────────────
   // `db:reset` 은 **마이그레이션을 먼저, seed.sql 을 나중에** 적용한다. 값 넣기를
   // 마이그레이션에 적으면 **빈 표를 훑고 성공**한다 — 조용히 헛도는 문장이 된다.

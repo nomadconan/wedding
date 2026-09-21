@@ -27,6 +27,14 @@ export type TaskNode = {
   dueDate: string | null;
   templateCode: string | null;
   completedOutOfOrder: boolean;
+  /**
+   * 이 태스크만의 **더 좁은** 파는 축 지정 (C-2a · `tasks.vendor_category`).
+   *
+   * 준비 축 `sdm` 한 칸이 파는 축 넷을 덮으므로 행마다 좁힐 자리가 필요하다.
+   * `null` 이면 준비 축 매핑이 답한다 — **"아직 안 했다" 가 아니라 "따로 지정하지
+   * 않았다"** 다(0075). C-4c 의 다리가 이 값을 먼저 본다.
+   */
+  vendorCategory: string | null;
 };
 
 /** 간선 하나. `dependsOn` 이 **먼저** 끝나야 하는 쪽이다. */

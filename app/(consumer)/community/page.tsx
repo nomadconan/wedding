@@ -18,6 +18,7 @@ import {
   type BoardType,
   type CommunitySort,
 } from "@/lib/core/community/community";
+import { isTaskCategory, prepCategoryLabel } from "@/lib/core/category/axes";
 import { COMMUNITY_FLAG, isFeatureEnabled } from "@/lib/flags";
 import { listPosts } from "@/lib/community/loader";
 import { createPublicClient } from "@/lib/explore/query";
@@ -48,7 +49,7 @@ export const metadata: Metadata = {
  */
 export default async function CommunityPage(
   props: {
-    searchParams: Promise<{ board?: string; sort?: string }>;
+    searchParams: Promise<{ board?: string; sort?: string; prep?: string }>;
   }
 ) {
   const searchParams = await props.searchParams;
@@ -60,6 +61,16 @@ export default async function CommunityPage(
   const sort = (COMMUNITY_SORTS as readonly string[]).includes(searchParams.sort ?? "")
     ? (searchParams.sort as CommunitySort)
     : "recent";
+
+  /**
+   * 준비 항목으로 좁혀 들어온 경우 (C-4c · 체크리스트 다리).
+   *
+   * **어휘 밖 값은 조용히 무시하지 않고 `null` 로 떨어뜨린다** — 그러면 전체
+   * 목록이 뜨고, 위 안내가 "좁혀서 보고 있다" 고 말하지 않으므로 사용자가 무엇을
+   * 보고 있는지 헷갈리지 않는다. 422 로 막지 않는 이유는 이것이 **읽기 화면**이고
+   * 링크가 낡아도 글은 보여야 하기 때문이다.
+   */
+  const prep = isTaskCategory(searchParams.prep) ? searchParams.prep : null;
 
   return (
     <ConsumerShell title="커뮤니티" activeTab="/home">
@@ -109,11 +120,25 @@ export default async function CommunityPage(
           글쓰기
         </Link>
 
+        {/*
+          좁혀 보고 있다는 사실을 화면이 말한다 (C-4c). 말하지 않으면 사용자는
+          **글이 적은 것**을 커뮤니티가 한산한 것으로 읽는다.
+        */}
+        {prep === null ? null : (
+          <p className="text-caption text-muted-foreground" data-testid="community-prep-filter">
+            <strong className="text-foreground">{prepCategoryLabel(prep)}</strong> 준비에 붙은 글만
+            보고 있어요.{" "}
+            <Link href="/community" className="text-brand-600 underline-offset-2 hover:underline">
+              전체 보기
+            </Link>
+          </p>
+        )}
+
         <Suspense
-          key={`${board ?? "all"}-${sort}`}
+          key={`${board ?? "all"}-${sort}-${prep ?? "all"}`}
           fallback={<LoadingState label="글을 불러오는 중" rows={4} variant="list" />}
         >
-          <PostList board={board} sort={sort} />
+          <PostList board={board} sort={sort} prep={prep} />
         </Suspense>
 
         <p className="text-caption text-muted-foreground">{UNVERIFIED_NOTE}</p>
@@ -136,21 +161,34 @@ function BoardTab({ href, label, active }: { href: string; label: string; active
   );
 }
 
-async function PostList({ board, sort }: { board: BoardType | null; sort: CommunitySort }) {
+async function PostList({
+  board,
+  sort,
+  prep,
+}: {
+  board: BoardType | null;
+  sort: CommunitySort;
+  prep: string | null;
+}) {
   const user = await getSessionUser();
   const supabase = await createClient();
 
   const posts = await listPosts(supabase, createPublicClient(), {
     board,
     sort,
+    prep,
     viewerId: user?.id ?? null,
   });
 
   if (posts.length === 0) {
     return (
       <EmptyState
-        title="아직 글이 없어요"
-        description="먼저 겪은 이야기를 남기면 다음 사람이 덜 헤맵니다."
+        title={prep === null ? "아직 글이 없어요" : "이 준비에 붙은 글이 아직 없어요"}
+        description={
+          prep === null
+            ? "먼저 겪은 이야기를 남기면 다음 사람이 덜 헤맵니다."
+            : "다른 준비의 글은 전체 목록에서 볼 수 있어요. 먼저 겪으셨다면 남겨 주세요."
+        }
       />
     );
   }

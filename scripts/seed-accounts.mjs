@@ -2137,9 +2137,10 @@ async function seedCommunityFixture(vendorId, authorUser, otherUser, vendorUser)
       id: POST_EXPERIENCE_ID,
       author_id: authorUser.id,
       board_type: "experience",
-      // `category` is nullable and nothing reads it yet - leaving it null is the
-      // honest state, not an oversight.
-      category: null,
+      // C-4c reads this column now (checklist -> community bridge) and 0084 put
+      // the prep-axis vocabulary on it. A hall tour post IS a `hall` post, so
+      // the bridge from a hall task has something real to land on.
+      category: "hall",
       title: "홀 투어 다녀온 후기 남겨요",
       body: "총액에 무엇이 들어가는지 미리 받아 보고 갔더니 상담이 훨씬 빨랐어요. 추가금 사전표를 꼭 확인하세요.",
       status: "published",
@@ -2151,6 +2152,9 @@ async function seedCommunityFixture(vendorId, authorUser, otherUser, vendorUser)
       id: POST_QNA_ID,
       author_id: (otherUser ?? authorUser).id,
       board_type: "qna",
+      // Stays null on purpose. A deposit-ratio question is not about one prep
+      // step, and forcing a category would make the bridge claim an unrelated
+      // post is "about this task". null means "not assigned", not "missing".
       category: null,
       title: "계약금 비율은 보통 어느 정도인가요?",
       body: "20% 정도로 안내받았는데 다른 곳도 비슷한지 궁금합니다.",

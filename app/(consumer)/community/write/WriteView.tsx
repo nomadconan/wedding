@@ -18,6 +18,11 @@ import {
   postProblem,
   type BoardType,
 } from "@/lib/core/community/community";
+import {
+  TASK_CATEGORIES,
+  TASK_CATEGORY_LABEL,
+  type TaskCategory,
+} from "@/lib/core/schedule/templates";
 
 /**
  * /community/write — 글쓰기 (F-C-32·33 · 명세서 §6.2)
@@ -34,6 +39,14 @@ export function WriteView({ vendors }: { vendors: { id: string; name: string }[]
   const router = useRouter();
 
   const [boardType, setBoardType] = useState<BoardType>("experience");
+  /**
+   * 어느 준비 단계의 이야기인가 (C-4c).
+   *
+   * **기본이 "따로 없음" 이다.** 고르게 강요하면 아무 칸이나 찍게 되고, 그러면
+   * 체크리스트 다리가 **관계없는 글을 "이 준비에 맞는 글" 이라고** 말한다 —
+   * 빈 값이 정상인 자리다(0084 가 `null` 을 그렇게 정의했다).
+   */
+  const [prepCategory, setPrepCategory] = useState<TaskCategory | "">("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [tagged, setTagged] = useState<string[]>([]);
@@ -60,6 +73,7 @@ export function WriteView({ vendors }: { vendors: { id: string; name: string }[]
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           boardType,
+          prepCategory: prepCategory === "" ? null : prepCategory,
           title: title.trim(),
           body: body.trim(),
           vendorIds: tagged,
@@ -104,6 +118,27 @@ export function WriteView({ vendors }: { vendors: { id: string; name: string }[]
         </div>
         <p className="text-caption text-muted-foreground">{BOARD_DESCRIPTION[boardType]}</p>
       </fieldset>
+
+      <label className="block space-y-1">
+        <span className="text-sm font-medium text-foreground">어느 준비 이야기인가요 (선택)</span>
+        <select
+          value={prepCategory}
+          onChange={(event) => setPrepCategory(event.target.value as TaskCategory | "")}
+          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          data-testid="community-prep-category"
+        >
+          <option value="">따로 없음</option>
+          {TASK_CATEGORIES.map((code) => (
+            <option key={code} value={code}>
+              {TASK_CATEGORY_LABEL[code]}
+            </option>
+          ))}
+        </select>
+        <p className="text-caption text-muted-foreground">
+          고르면 그 준비를 하는 사람의 체크리스트에서 이 글로 올 수 있어요. 특정 단계의
+          이야기가 아니면 비워 두세요.
+        </p>
+      </label>
 
       <label className="block space-y-1">
         <span className="text-sm font-medium text-foreground">제목</span>

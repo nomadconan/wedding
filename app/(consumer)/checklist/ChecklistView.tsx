@@ -17,6 +17,7 @@ import {
 import { TASK_CATEGORIES, TASK_CATEGORY_LABEL, type TaskCategory } from "@/lib/core/schedule/templates";
 import type { ScheduleView } from "@/lib/core/schedule/view";
 import { TASK_TITLE_MAX_LENGTH } from "@/lib/core/schemas/task";
+import { TASK_LINK_BASIS_NOTE, type TaskLinks } from "@/lib/core/task/links";
 import { cn } from "@/lib/utils";
 
 import { ScheduleViews } from "./ScheduleViews";
@@ -52,6 +53,8 @@ export function ChecklistView({
   hasWeddingDate,
   generated,
   missingTemplates,
+  taskLinks,
+  linkKeys,
 }: {
   initialTasks: AnnotatedTask[];
   edges: TaskEdge[];
@@ -69,6 +72,14 @@ export function ChecklistView({
    * 이름으로 먼저 보이고** 넣을지는 사용자가 정한다.
    */
   missingTemplates: { code: string; title: string }[];
+  /**
+   * 어디서 할지 (C-4c · F-C-39).
+   *
+   * **카테고리 단위다.** 같은 카테고리의 태스크가 같은 다리를 쓰므로 태스크마다
+   * 복사하지 않는다 — `linkKeys[taskId]` 로 찾는다.
+   */
+  taskLinks: Readonly<Record<string, TaskLinks>>;
+  linkKeys: Readonly<Record<string, string>>;
 }) {
   const router = useRouter();
 
@@ -218,7 +229,12 @@ export function ChecklistView({
         <ul className="space-y-2" data-testid="checklist-tasks">
           {tasks.map((task) => (
             <li key={task.id}>
-              <TaskRow task={task} busy={busy} onCall={call} />
+              <TaskRow
+                task={task}
+                busy={busy}
+                onCall={call}
+                links={taskLinks[linkKeys[task.id] ?? task.category] ?? null}
+              />
             </li>
           ))}
         </ul>
@@ -271,12 +287,16 @@ function TaskRow({
   task,
   busy,
   onCall,
+  links,
 }: {
   task: AnnotatedTask;
   busy: boolean;
   onCall: (body: unknown, method: "POST" | "PATCH") => Promise<unknown>;
+  /** 없으면(=서버가 못 만들었으면) 자리를 아예 그리지 않는다. 빈 카드를 남기지 않는다. */
+  links: TaskLinks | null;
 }) {
   const [editing, setEditing] = useState(false);
+  const [showLinks, setShowLinks] = useState(false);
   const done = task.status === "done";
 
   return (
@@ -354,6 +374,140 @@ function TaskRow({
           먼저 할 일 {task.blockedBy.length}건이 남아 있어요.
         </p>
       ) : null}
+
+      {/*
+        **어디서 할지** (C-4c · F-C-39 · B-1 조사 4-3).
+
+        접어 둔 이유는 카드가 스물다섯 장이기 때문이다 — 전부 펴면 목록이 아니라
+        벽이 된다. **접힘이 기본이되 있다는 사실은 늘 보인다**(버튼 문구가 그것을
+        말한다). AI 고지처럼 숨기면 안 되는 것이 아니라 **탐색을 돕는 자리**다.
+      */}
+      {links === null ? null : (
+        <div className="border-t border-border pt-2">
+          <button
+            type="button"
+            onClick={() => setShowLinks((prev) => !prev)}
+            className="text-caption font-medium text-brand-600 underline-offset-2 hover:underline"
+            data-testid="task-links-toggle"
+            aria-expanded={showLinks}
+          >
+            {showLinks ? "어디서 할지 접기" : "어디서 할지 보기"}
+          </button>
+
+          {showLinks ? <TaskLinksPanel links={links} /> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 준비 항목 하나에서 나가는 세 다리 (C-4c).
+ *
+ * **추천이 아니라 대응이다**(D-03). 업체·상품을 고르지 않고 **카테고리 목록**으로
+ * 보내며, 그 사실을 `TASK_LINK_BASIS_NOTE` 가 화면에 상시 적는다 — §2.2 가
+ * 정렬 기준을 화면에 노출하라고 한 것과 같은 규칙이다.
+ *
+ * **없으면 빈 목록이 아니라 이유다.** 다섯 상태를 서로 다른 문장으로 말한다:
+ * 파는 카테고리가 있고 상품도 있다 / 카테고리는 있는데 상품이 아직 없다 /
+ * 아직 그 카테고리를 열지 않았다 / 애초에 살 것이 아니다 / 분류를 못 했다(우리 결함).
+ */
+function TaskLinksPanel({ links }: { links: TaskLinks }) {
+  return (
+    <div className="mt-2 space-y-3" data-testid="task-links">
+      <p className="text-caption text-muted-foreground" data-testid="task-links-basis">
+        {TASK_LINK_BASIS_NOTE}
+      </p>
+
+      {/* ── 상품·탐색 ──────────────────────────────────────────────────── */}
+      <section className="space-y-1">
+        <h4 className="text-caption font-medium text-foreground">상품 찾아보기</h4>
+
+        {links.explore.kind === "categories" ? (
+          <ul className="space-y-1" data-testid="task-links-explore">
+            {links.explore.categories.map((item) => (
+              <li key={item.code} className="flex flex-wrap items-center gap-2">
+                <a
+                  href={item.href}
+                  className="text-caption text-brand-600 underline-offset-2 hover:underline"
+                  data-testid="task-link-explore"
+                >
+                  {item.label} 보기
+                </a>
+                {/*
+                  **0 을 건수로 적지 않는다.** "0개" 는 *찾아봤는데 없다* 로 읽히지만
+                  실제로는 *카테고리는 열려 있는데 아직 아무도 안 올렸다* 다 —
+                  카테고리 자체가 없는 것과 다른 상태이고 고객이 할 일이 다르다.
+                */}
+                <span className="text-caption text-muted-foreground">
+                  {item.productCount === 0
+                    ? "아직 등록된 상품이 없어요"
+                    : `${item.productCount}개`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div data-testid="task-links-explore-none">
+            <p className="text-caption font-medium text-foreground">{links.explore.title}</p>
+            <p className="text-caption text-muted-foreground">{links.explore.note}</p>
+          </div>
+        )}
+      </section>
+
+      {/* ── 가이드 ─────────────────────────────────────────────────────── */}
+      <section className="space-y-1">
+        <h4 className="text-caption font-medium text-foreground">읽어 볼 것</h4>
+
+        {links.guides.kind === "guides" ? (
+          <ul className="space-y-1" data-testid="task-links-guides">
+            {links.guides.guides.map((guide) => (
+              <li key={guide.slug}>
+                <a
+                  href={guide.href}
+                  className="text-caption text-brand-600 underline-offset-2 hover:underline"
+                  data-testid="task-link-guide"
+                >
+                  {guide.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div data-testid="task-links-guides-none">
+            <p className="text-caption font-medium text-foreground">{links.guides.title}</p>
+            <p className="text-caption text-muted-foreground">{links.guides.note}</p>
+          </div>
+        )}
+      </section>
+
+      {/* ── 커뮤니티 ───────────────────────────────────────────────────── */}
+      <section className="space-y-1">
+        <h4 className="text-caption font-medium text-foreground">다른 사람은 어떻게 했을까</h4>
+
+        {/*
+          **주의 문구를 링크보다 먼저 그린다**(D-26). 커뮤니티 글은 미검증
+          경험담이고, 체크리스트에서 곧장 들어가면 그 사실을 못 보고 읽는다 —
+          목적지 화면에도 라벨이 있지만 **누르기 전에** 읽어야 의미가 있다.
+        */}
+        <p className="text-caption text-muted-foreground" data-testid="task-links-community-caution">
+          {links.community.caution}
+        </p>
+
+        <a
+          href={links.community.href}
+          className="text-caption text-brand-600 underline-offset-2 hover:underline"
+          data-testid="task-link-community"
+        >
+          {links.community.label}
+        </a>
+
+        <p className="text-caption text-muted-foreground">
+          {links.community.postCount === 0
+            ? "아직 올라온 글이 없어요"
+            : `글 ${links.community.postCount}건`}
+        </p>
+      </section>
     </div>
   );
 }
