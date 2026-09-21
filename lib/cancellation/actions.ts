@@ -18,6 +18,7 @@ import { sendNotification } from "@/lib/notify/send";
 import { applyRefund } from "@/lib/payments/charge";
 import { addAdjustment } from "@/lib/settlements/actions";
 import { loadPenaltyRuleSet } from "@/lib/pricing/penalty-rule-set";
+import { mustWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/types/database";
 
@@ -400,18 +401,23 @@ export async function confirmCancellation(input: {
   const nextStatus =
     decision === "agreed" ? (fault === "undecided" ? "disputed" : "agreed") : decision === "disputed" ? "disputed" : "requested";
 
-  await admin
-    .from("contract_cancellations")
-    .update({
-      couple_agreed: coupleAgreed,
-      vendor_agreed: vendorAgreed,
-      couple_claim: coupleClaim,
-      vendor_claim: vendorClaim,
-      fault: nextStatus === "agreed" ? fault : "undecided",
-      status: nextStatus,
-      disputed_at: nextStatus === "disputed" ? now.toISOString() : null,
-    })
-    .eq("id", row.id);
+  // 못 적으면 **상대의 동의가 사라진다** — 다시 눌러야 하고, 그 사이 정산이
+  // 'requested' 로 멈춘다(FIX-73).
+  await mustWrite(
+    "contract_cancellations.update:record-decision",
+    admin
+      .from("contract_cancellations")
+      .update({
+        couple_agreed: coupleAgreed,
+        vendor_agreed: vendorAgreed,
+        couple_claim: coupleClaim,
+        vendor_claim: vendorClaim,
+        fault: nextStatus === "agreed" ? fault : "undecided",
+        status: nextStatus,
+        disputed_at: nextStatus === "disputed" ? now.toISOString() : null,
+      })
+      .eq("id", row.id),
+  );
 
   await recordEvent({
     entityType: "contract_cancellation",
@@ -473,17 +479,22 @@ export async function resolveCancellation(input: {
     return failure(422, "CANCEL_DECISION_REQUIRED", "귀책을 정해야 정산할 수 있어요.");
   }
 
-  await admin
-    .from("contract_cancellations")
-    .update({
-      admin_decision: input.decision,
-      fault: input.decision,
-      resolved_by: input.adminId,
-      resolution_note: input.note.slice(0, 1000),
-      status: "agreed",
-      disputed_at: null,
-    })
-    .eq("id", row.id);
+  // **운영자의 결론이다.** 못 적으면 조율이 끝났는데 표는 `disputed` 로 남고,
+  // 그 상태에서는 정산이 안 돈다(FIX-73).
+  await mustWrite(
+    "contract_cancellations.update:admin-resolve",
+    admin
+      .from("contract_cancellations")
+      .update({
+        admin_decision: input.decision,
+        fault: input.decision,
+        resolved_by: input.adminId,
+        resolution_note: input.note.slice(0, 1000),
+        status: "agreed",
+        disputed_at: null,
+      })
+      .eq("id", row.id),
+  );
 
   await recordEvent({
     entityType: "contract_cancellation",
@@ -535,10 +546,15 @@ async function settleCancellationRecord(input: {
   if (allocation.shortfall > 0) {
     // 배분하지 못한 금액을 삼키지 않는다. 조율로 보낸다 — 계산과 장부가 어긋난
     // 상태에서 일부만 돌려주면 나중에 무엇이 맞는지 알 수 없다.
-    await admin
-      .from("contract_cancellations")
-      .update({ status: "disputed", disputed_at: input.now.toISOString() })
-      .eq("id", input.cancellationId);
+    // **삼키지 않기로 한 판단이 여기서 실패하면 삼킨 것과 같다.** 못 적으면
+    // 조율로 안 가고 다음 시도가 같은 부족분을 또 만난다(FIX-73).
+    await mustWrite(
+      "contract_cancellations.update:shortfall-dispute",
+      admin
+        .from("contract_cancellations")
+        .update({ status: "disputed", disputed_at: input.now.toISOString() })
+        .eq("id", input.cancellationId),
+    );
 
     await recordEvent({
       entityType: "contract_cancellation",
@@ -567,17 +583,26 @@ async function settleCancellationRecord(input: {
   // 0028 의 비율 합 트리거가 "합이 10000bp 가 아니다" 로 커밋을 막는다(void 를 합에서
   // 빼기 때문이다). 그리고 건드릴 이유도 없다 — 계약이 `cancelled` 가 되는 순간
   // 0030 의 승인 트리거가 그 회차의 결제를 막는다.
-  await admin
-    .from("contracts")
-    .update({
-      status: "cancelled",
-      cancelled_at: input.now.toISOString(),
-      cancel_reason: `해지 정산 완료 · ${settlement.appliedRule}`.slice(0, 200),
-    })
-    .eq("id", context.contractId);
+  // **가장 위험한 두 줄이다.** 돈은 이미 움직였는데 계약이 `active` 로 남으면
+  // 결제 회차가 계속 살아 있고(0030 의 승인 트리거가 안 막는다) 예약 자리도
+  // 안 돌아온다 — 그 뒤에 남는 것은 **정산은 끝났는데 계약은 진행 중**인 표다.
+  await mustWrite(
+    "contracts.update:cancel",
+    admin
+      .from("contracts")
+      .update({
+        status: "cancelled",
+        cancelled_at: input.now.toISOString(),
+        cancel_reason: `해지 정산 완료 · ${settlement.appliedRule}`.slice(0, 200),
+      })
+      .eq("id", context.contractId),
+  );
 
   // 예약을 취소하면 트리거가 자리를 되돌린다(0031).
-  await admin.from("bookings").update({ status: "cancelled" }).eq("id", context.bookingId);
+  await mustWrite(
+    "bookings.update:cancel",
+    admin.from("bookings").update({ status: "cancelled" }).eq("id", context.bookingId),
+  );
 
   // ── 3) 정산 되돌리기 ──────────────────────────────────────────────────────
   const reversal = await reversePlannerSettlement({
@@ -602,25 +627,30 @@ async function settleCancellationRecord(input: {
     });
   }
 
-  await admin
-    .from("contract_cancellations")
-    .update({
-      status: "settled",
-      settled_at: input.now.toISOString(),
-      fault: input.fault,
-      paid_amount: quote.paidAmount,
-      penalty_standard: quote.penalty.standardPenalty,
-      penalty_contract: quote.penalty.contractPenalty,
-      penalty_applied: settlement.penaltyAmount,
-      refund_amount: settlement.refundAmount,
-      balance_due: settlement.balanceDue,
-      band_code: quote.penalty.bandCode,
-      band_label: quote.penalty.bandLabel,
-      basis_ref: quote.penalty.basisRef,
-      rule_version: quote.penalty.ruleVersion,
-      is_draft_rules: quote.penalty.isDraftRules,
-    })
-    .eq("id", input.cancellationId);
+  // 정산 결과 자체다. 못 적으면 **금액·근거가 통째로 사라지고** 같은 해지를
+  // 다시 정산하게 된다(FIX-73).
+  await mustWrite(
+    "contract_cancellations.update:settle",
+    admin
+      .from("contract_cancellations")
+      .update({
+        status: "settled",
+        settled_at: input.now.toISOString(),
+        fault: input.fault,
+        paid_amount: quote.paidAmount,
+        penalty_standard: quote.penalty.standardPenalty,
+        penalty_contract: quote.penalty.contractPenalty,
+        penalty_applied: settlement.penaltyAmount,
+        refund_amount: settlement.refundAmount,
+        balance_due: settlement.balanceDue,
+        band_code: quote.penalty.bandCode,
+        band_label: quote.penalty.bandLabel,
+        basis_ref: quote.penalty.basisRef,
+        rule_version: quote.penalty.ruleVersion,
+        is_draft_rules: quote.penalty.isDraftRules,
+      })
+      .eq("id", input.cancellationId),
+  );
 
   await recordEvent({
     entityType: "contract_cancellation",
@@ -672,7 +702,11 @@ async function reversePlannerSettlement(input: {
   });
 
   if (row && reversal.planner === "void") {
-    await admin.from("planner_settlements").update({ status: "void" }).eq("id", row.id);
+    // 못 무효화하면 **취소된 거래의 수수료가 플래너에게 지급된다**(FIX-73).
+    await mustWrite(
+      "planner_settlements.update:void",
+      admin.from("planner_settlements").update({ status: "void" }).eq("id", row.id),
+    );
 
     await recordEvent({
       entityType: "planner_settlement",

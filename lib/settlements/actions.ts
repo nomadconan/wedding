@@ -16,6 +16,7 @@ import {
   type SettlementStatus,
 } from "@/lib/core/settlement/settlement";
 import { sendNotification } from "@/lib/notify/send";
+import { mustWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { canRetryPayout, resolvePayoutAdapterName, type PayoutAdapter } from "./payout-adapter";
@@ -292,20 +293,29 @@ export async function runSettlement(input: {
   }
 
   // 건별 명세는 매번 다시 만든다 — 집계 결과가 바뀌면 근거도 함께 바뀌어야 한다.
-  await admin.from("settlement_items").delete().eq("settlement_id", settlementId);
+  //
+  // **지우기가 실패했는데 넣기가 성공하면 명세가 두 벌이 된다** — 합계가 두 배로
+  // 보이고, 그 숫자가 업체에게 가는 정산서다(FIX-73).
+  await mustWrite(
+    "settlement_items.delete:rebuild",
+    admin.from("settlement_items").delete().eq("settlement_id", settlementId),
+  );
 
   if (build.status === "draft" && build.items.length > 0) {
-    await admin.from("settlement_items").insert(
-      build.items.map((item) => ({
-        settlement_id: settlementId,
-        booking_id: item.bookingId,
-        amount: item.amount,
-        fee_rate_bp: item.feeRateBp,
-        fee_amount: item.feeAmount,
-        coupon_deduction: item.couponDeduction,
-        net_amount: item.netAmount,
-        adjustment: 0,
-      })),
+    await mustWrite(
+      "settlement_items.insert:rebuild",
+      admin.from("settlement_items").insert(
+        build.items.map((item) => ({
+          settlement_id: settlementId,
+          booking_id: item.bookingId,
+          amount: item.amount,
+          fee_rate_bp: item.feeRateBp,
+          fee_amount: item.feeAmount,
+          coupon_deduction: item.couponDeduction,
+          net_amount: item.netAmount,
+          adjustment: 0,
+        })),
+      ),
     );
   }
 
@@ -552,10 +562,14 @@ export async function confirmSettlement(input: {
   if (error) return failure(500, "SETTLEMENT_CONFIRM_FAILED", "정산서를 확정하지 못했습니다.");
 
   for (const applied of application.applied) {
-    await admin
-      .from("settlement_adjustments")
-      .update({ applied_settlement_id: row.id, applied_at: now.toISOString() })
-      .eq("id", applied.id);
+    // 못 적으면 **같은 상계가 다음 정산에도 또 걸린다** — 업체가 두 번 깎인다.
+    await mustWrite(
+      "settlement_adjustments.update:mark-applied",
+      admin
+        .from("settlement_adjustments")
+        .update({ applied_settlement_id: row.id, applied_at: now.toISOString() })
+        .eq("id", applied.id),
+    );
   }
 
   await recordEvent({
@@ -671,14 +685,18 @@ export async function paySettlement(input: {
   });
 
   if (!result.ok) {
-    await admin
-      .from("settlement_payouts")
-      .update({
-        status: "failed",
-        failed_at: now.toISOString(),
-        failure_reason: result.failureReason,
-      })
-      .eq("id", payoutId);
+    // 실패를 실패로 못 적으면 행이 pending 으로 남아 **재시도가 또 긁는다**(FIX-73).
+    await mustWrite(
+      "settlement_payouts.update:mark-failed",
+      admin
+        .from("settlement_payouts")
+        .update({
+          status: "failed",
+          failed_at: now.toISOString(),
+          failure_reason: result.failureReason,
+        })
+        .eq("id", payoutId),
+    );
 
     await recordEvent({
       entityType: "settlement_payout",
@@ -695,15 +713,23 @@ export async function paySettlement(input: {
 
   // ── 3) 성공 — 지급 기록이 먼저, 정산서 상태가 나중 ────────────────────────
   // 순서가 중요하다: 0033 의 트리거가 **성공한 지급 행 없이 paid 로 가는 것**을 막는다.
-  await admin
-    .from("settlement_payouts")
-    .update({ status: "paid", paid_at: result.paidAt, provider_ref: result.providerRef })
-    .eq("id", payoutId);
+  // **돈은 이미 나갔다.** 못 적으면 지급된 정산이 pending 으로 남아 **다시
+  // 지급된다** — 이 파일에서 가장 위험한 두 줄이다(FIX-73).
+  await mustWrite(
+    "settlement_payouts.update:mark-paid",
+    admin
+      .from("settlement_payouts")
+      .update({ status: "paid", paid_at: result.paidAt, provider_ref: result.providerRef })
+      .eq("id", payoutId),
+  );
 
-  await admin
-    .from("settlements")
-    .update({ status: "paid", paid_at: result.paidAt })
-    .eq("id", row.id);
+  await mustWrite(
+    "settlements.update:mark-paid",
+    admin
+      .from("settlements")
+      .update({ status: "paid", paid_at: result.paidAt })
+      .eq("id", row.id),
+  );
 
   await recordEvent({
     entityType: "settlement_payout",

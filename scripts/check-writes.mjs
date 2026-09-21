@@ -32,7 +32,7 @@ const SKIP = new Set([
 ]);
 
 /** 닫은 도메인 — **0 이어야 한다.** */
-const CLOSED = ["lib/payments"];
+const CLOSED = ["lib/payments", "lib/cancellation", "lib/settlements", "lib/escrow"];
 
 /**
  * 아직 안 닫은 곳의 상한. **늘면 실패한다.**
@@ -40,7 +40,7 @@ const CLOSED = ["lib/payments"];
  * 기준값은 `fix/FIX-73a` 회차에 실측한 수다(그때 전체 93 자리 중 `lib/payments`
  * 열아홉을 닫아 일흔넷이 남았다).
  */
-const BUDGET = 74;
+const BUDGET = 59;
 
 const WRITE = /\.(insert|update|upsert|delete)\s*\(/;
 
