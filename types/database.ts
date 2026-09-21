@@ -5895,6 +5895,7 @@ export type Database = {
       is_rsvp_status: { Args: { p_value: string }; Returns: boolean }
       is_share_resource_type: { Args: { p_value: string }; Returns: boolean }
       is_tagged_vendor_member: { Args: { p_post_id: string }; Returns: boolean }
+      is_task_status: { Args: { p_value: string }; Returns: boolean }
       is_vendor_category: { Args: { p_value: string }; Returns: boolean }
       is_vendor_member: { Args: { p_vendor_id: string }; Returns: boolean }
       is_vendor_member_of_category: {

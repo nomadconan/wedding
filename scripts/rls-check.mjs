@@ -14254,7 +14254,7 @@ if (!vendorStaff || !adminUser) {
     // `task_templates.code`(식별자)처럼 **자유 문자열이 맞는 칸**이 섞여 있다.
     // 그래서 0 을 목표로 두지 않고 **늘지 않는 것**을 목표로 둔다.
     {
-      const FREE_TEXT_CEILING = 43;
+      const FREE_TEXT_CEILING = 42;
       const vocabShaped = sqlOrNull(
         `with cols as (
            select c.table_name, c.column_name
@@ -14287,16 +14287,132 @@ if (!vendorStaff || !adminUser) {
         Number(vocabShaped ?? "999") <= FREE_TEXT_CEILING,
         `${vocabShaped} / 상한 ${FREE_TEXT_CEILING}`,
       );
+      // **`tasks.status` 는 FIX-86 이 닫았다.** 직전 회차가 "구멍이 아직 있다" 를
+      // 여기 고정해 뒀고, 그 검사가 떨어지면서 이 자리로 바뀌었다 — 예고한 대로다.
       check(
-        "**`tasks.status` 는 아직 어휘가 없다**(FIX-86) — 고치면 이 검사가 알려 준다",
-        // **알고 있다는 사실을 고정한다.** 고친 날 이 검사가 떨어지고, 그때
-        // 상한을 함께 내린다 — 조용히 해결되거나 조용히 잊히지 않는다.
+        "**`tasks.status` 에 어휘 CHECK 이 있다**(FIX-86 해소) — 되돌아가면 떨어진다",
         sqlOrNull(
           `select count(*) from pg_constraint
             where conrelid = 'public.tasks'::regclass and contype = 'c'
-              and pg_get_constraintdef(oid) like '%status%';`,
-        ) === "0",
+              and conname = 'tasks_status_vocab' and convalidated;`,
+        ) === "1",
       );
+    }
+
+    // ── 준비 항목 상태 어휘 (FIX-86) ──────────────────────────────────────
+    //
+    // 어휘가 **두 곳**에 산다 — 코드(`TASK_STATUSES`)와 DB(`is_task_status()`).
+    // 사본은 어긋나고 **어긋나면 조용하다**: DB 가 더 넓으면 못 막고, 더 좁으면
+    // 정상 저장이 실패한다. 그래서 **양방향으로** 센다(0075 가 두 축에 한 것과 같다).
+    {
+      const statusSrc = srcOf("lib/core/schedule/graph.ts");
+      const listed = statusSrc.match(/export const TASK_STATUSES = \[([^\]]+)\]/);
+      const codes = listed === null
+        ? []
+        : [...listed[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+
+      check(
+        "**코드의 상태 어휘를 실제로 읽었다** — 빈 목록으로 통과하지 않는다",
+        codes.length >= 3,
+        codes.join(","),
+      );
+      /**
+       * **양방향으로 센다 — 집합을 비교한다.**
+       *
+       * 처음엔 "코드의 값이 전부 통과하는가 + 아는 오답 셋이 막히는가" 로 짰는데,
+       * 되돌려 보니 **DB 만 넓어지는 경우를 못 잡았다**(DB 에 `blocked` 를 더해도
+       * 코드 값은 다 통과하고 오답 셋도 여전히 막힌다). 그 방향이 더 위험하다 —
+       * **DB 가 넓으면 CHECK 이 못 막는다.**
+       *
+       * 그래서 함수 정의에서 목록을 뽑아 **집합끼리** 견준다. 값을 하나씩 찔러
+       * 보는 방식으로는 "없는 값" 을 셀 수 없다.
+       */
+      const fnDef = sqlOrNull(
+        `select pg_get_functiondef('public.is_task_status(text)'::regprocedure);`,
+      );
+      // **`in (...)` 안에서만 뽑는다.** 함수 정의에는 `set search_path = public` 도
+      // 들어 있어서, 따옴표만 보고 세면 `public` 이 어휘로 딸려 온다(실제로 겪었다).
+      const listSql = fnDef === null ? null : fnDef.match(/ins*(([^)]*))/);
+      const dbCodes = listSql === null
+        ? []
+        : [...listSql[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+
+      check(
+        "**DB 함수의 어휘도 실제로 읽었다** — 빈 목록으로 통과하지 않는다",
+        dbCodes.length >= 3,
+        dbCodes.join(","),
+      );
+      check(
+        "**코드의 상태 어휘와 DB `is_task_status()` 가 같다** (사본이 벌어지면 조용히 틀린다)",
+        codes.length > 0 &&
+          dbCodes.length > 0 &&
+          [...codes].sort().join(",") === [...dbCodes].sort().join(","),
+        `code=[${[...codes].sort().join(",")}] db=[${[...dbCodes].sort().join(",")}]`,
+      );
+      check(
+        "**아는 오답이 막힌다** — 대소문자·공백·번역어",
+        sqlOrNull(`select public.is_task_status('완료');`) === "f" &&
+          sqlOrNull(`select public.is_task_status('Done');`) === "f" &&
+          sqlOrNull(`select public.is_task_status('done ');`) === "f",
+      );
+      check(
+        "**어휘 밖 상태를 표가 거절한다** — 함수만 맞고 CHECK 이 안 걸린 상태가 아니다",
+        rejectedWith(/tasks_status_vocab|check constraint/, () =>
+          sql(`update public.tasks set status = '완료';`),
+        ),
+      );
+      check(
+        "**어휘 안의 값은 통과한다** — 늘 거절하는 CHECK 이 아니다",
+        codes.every(
+          (code) =>
+            sqlOrNull(`begin; update public.tasks set status = '${code}'; rollback;`) !== null,
+        ),
+      );
+      check(
+        "**기존 행이 전부 어휘 안이다** — `validate` 가 확인한 사실을 값으로도 본다",
+        sqlOrNull(`select count(*) from public.tasks where not public.is_task_status(status);`) === "0" &&
+          Number(sqlOrNull(`select count(*) from public.tasks;`) ?? "0") > 0,
+        `행 ${sqlOrNull(`select count(*) from public.tasks;`)}`,
+      );
+
+      // ── 쓰기를 걷지 않았다 ──────────────────────────────────────────────
+      //
+      // 커플이 **자기 할 일을 완료 처리하는 것은 정상**이다. 막은 것은 어휘 밖
+      // 값이지 쓰기 자체가 아니며, 그 구분을 검사로 남긴다.
+      const taskOwner = idOf("couple-linked-a@local.test");
+
+      check("**태스크 픽스처 사용자가 있다** — 없으면 아래가 헛돈다", Boolean(taskOwner));
+
+      if (taskOwner) {
+        check(
+          "**층3 — 커플은 자기 할 일을 완료 처리할 수 있다**(쓰기를 걷지 않았다)",
+          asUser(
+            taskOwner,
+            `update public.tasks set status = 'done'
+              where couple_id in (select couple_id from public.couple_members where user_id = '${taskOwner}')
+              returning 1;`,
+          ) !== "",
+        );
+        check(
+          "**층3 — 그래도 어휘 밖 값은 못 넣는다** — 쓸 수 있는 것과 아무거나 쓰는 것은 다르다",
+          rejectedWith(/tasks_status_vocab|check constraint|permission denied/, () =>
+            asUser(
+              taskOwner,
+              `update public.tasks set status = '내가만든상태'
+                where couple_id in (select couple_id from public.couple_members where user_id = '${taskOwner}');`,
+            ),
+          ),
+        );
+        check(
+          "**층2 — 남의 할 일은 못 고친다** (정책이 커플 소속을 직접 본다)",
+          asUser(
+            taskOwner,
+            `update public.tasks set status = 'done'
+              where couple_id not in (select couple_id from public.couple_members where user_id = '${taskOwner}')
+              returning 1;`,
+          ) === "",
+        );
+      }
     }
 
     check(
