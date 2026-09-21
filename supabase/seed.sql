@@ -292,7 +292,10 @@ on conflict (template_code, depends_on_code) do nothing;
 -- 재실행 가능하다(`on conflict (slug) do update`).
 -- =============================================================================
 
-insert into public.content_posts (slug, type, title, body_md, seo_json, published_at) values
+-- **`prep_category` 는 두 편에만 붙는다**(C-4c). 나머지는 특정 준비 단계가 아니라
+-- 준비 전반에 걸리는 글이라 `null` 이며, 그것이 정상이다 — 억지로 붙이면 체크리스트
+-- 다리가 **관계없는 글을 "이 준비에 맞는 가이드" 라고** 말하게 된다.
+insert into public.content_posts (slug, type, title, body_md, seo_json, published_at, prep_category) values
 (
   'hall-contract-checklist',
   'guide',
@@ -336,7 +339,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 | 해지 위약금 | 계약서 해지 조항 |
 | 일정 변경 | 계약서 특약 |$md$,
   '{"description": "웨딩홀 계약서에 서명하기 전에 확인하면 좋은 다섯 가지를 정리했습니다. 총액, 보증인원, 추가금, 해지 조건, 계약서 검토.", "keywords": ["웨딩홀", "웨딩홀 계약", "보증인원", "위약금"], "tools": ["explore", "penalty", "reports"], "region_code": "seoul", "category": "hall"}'::jsonb,
-  now() - interval '20 days'
+  now() - interval '20 days',
+  'hall'
 ),
 (
   'sdm-total-price',
@@ -363,7 +367,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 지역, 예산, 예식일이 정해졌다면 조건으로 좁히는 편이 빠릅니다. [조건으로 찾기](/search)$md$,
   '{"description": "스드메 패키지 가격에 보통 빠져 있는 항목과, 필수 추가금과 선택 추가금을 나눠 보는 방법.", "keywords": ["스드메", "스튜디오", "드레스", "메이크업", "추가금"], "tools": ["estimates", "search", "explore"], "category": "sdm"}'::jsonb,
-  now() - interval '14 days'
+  now() - interval '14 days',
+  'sdm'
 ),
 (
   'cancel-and-penalty',
@@ -391,7 +396,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 계약금 반환 여부는 위약금과 별개로 정해지는 경우가 많습니다. 계약서에 계약금 반환 조항이 따로 있는지 확인하세요.$md$,
   '{"description": "계약 해지 시 위약금이 어떻게 정해지는지, 계약서와 참고 기준을 어떻게 견주는지 정리했습니다.", "keywords": ["위약금", "계약 해지", "소비자분쟁해결기준", "계약금"], "tools": ["penalty", "reports"]}'::jsonb,
-  now() - interval '9 days'
+  now() - interval '9 days',
+  null
 ),
 (
   'estimate-compare-basics',
@@ -417,7 +423,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 [준비 순서 보기](/checklist) · [예산 짜기](/budget)$md$,
   '{"description": "양식이 다른 견적서를 같은 기준으로 맞춰 비교하는 방법. 빈 칸을 0으로 읽지 않기, 같은 카테고리끼리 견주기.", "keywords": ["견적서", "견적 비교", "웨딩 견적"], "tools": ["estimates", "checklist", "budget"]}'::jsonb,
-  now() - interval '5 days'
+  now() - interval '5 days',
+  null
 ),
 (
   'glossary-guarantee-count',
@@ -439,7 +446,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 [총액 공개 업체 보기](/explore)$md$,
   '{"description": "보증인원은 예식장 계약에서 정하는 최소 식사 인원입니다. 실제 하객이 적어도 그만큼 식대를 냅니다.", "keywords": ["보증인원", "식대", "웨딩홀 용어"], "tools": ["explore"]}'::jsonb,
-  now() - interval '18 days'
+  now() - interval '18 days',
+  null
 ),
 (
   'glossary-vat-separate',
@@ -457,7 +465,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 [총액 공개 업체 보기](/explore)$md$,
   '{"description": "부가세 별도는 적힌 금액에 부가가치세가 포함되지 않았다는 뜻입니다. 견적을 견줄 때는 포함 여부를 통일합니다.", "keywords": ["부가세 별도", "VAT", "웨딩 견적 용어"], "tools": ["explore", "estimates"]}'::jsonb,
-  now() - interval '16 days'
+  now() - interval '16 days',
+  null
 ),
 (
   'glossary-deposit',
@@ -479,7 +488,8 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 [위약금 계산해 보기](/tools/penalty)$md$,
   '{"description": "계약금은 계약을 맺을 때 먼저 내는 금액입니다. 반환 조건은 계약서에 따릅니다.", "keywords": ["계약금", "잔금", "위약금"], "tools": ["penalty", "reports"]}'::jsonb,
-  now() - interval '12 days'
+  now() - interval '12 days',
+  null
 ),
 (
   'draft-not-published-example',
@@ -489,14 +499,16 @@ insert into public.content_posts (slug, type, title, body_md, seo_json, publishe
 
 `published_at` 이 미래이므로 RLS(0005 [58])가 걸러야 하고, 목록·상세·사이트맵 어디에도 나오면 안 됩니다.$md$,
   '{"description": "발행 예약이 실제로 막히는지 확인하는 로컬 픽스처입니다.", "keywords": [], "tools": []}'::jsonb,
-  now() + interval '30 days'
+  now() + interval '30 days',
+  null
 )
 on conflict (slug) do update set
-  type         = excluded.type,
-  title        = excluded.title,
-  body_md      = excluded.body_md,
-  seo_json     = excluded.seo_json,
-  published_at = excluded.published_at;
+  type          = excluded.type,
+  title         = excluded.title,
+  body_md       = excluded.body_md,
+  seo_json      = excluded.seo_json,
+  published_at  = excluded.published_at,
+  prep_category = excluded.prep_category;
 
 -- =============================================================================
 -- CMS 픽스처 (S8-08 · F-A-05)

@@ -1472,6 +1472,176 @@ try {
     return seen.text.slice(0, 60);
   });
 
+  // ── 8c-2. 태스크 → 상품·가이드·커뮤니티 (C-4c) ───────────────────────────
+  //
+  // **"무엇을 할지" 다음에 "어디서 할지" 가 나오는가.** 레지스트리에 적혀 있는 것과
+  // 눌러서 닿는 것은 다르다 — 여기서는 실제로 펴고 눌러 본다.
+
+  await step("**태스크에서 어디로 갈지 펴 본다** — 카드에서 나가는 링크가 0개였다(B-1 4-3)", consumer, async () => {
+    const info = await goto(consumer, "/checklist");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const toggles = Number(await evaluate(consumer, `document.querySelectorAll('[data-testid="task-links-toggle"]').length`));
+
+    if (toggles === 0) throw new Error("어디서 할지 버튼이 하나도 없다");
+
+    await click(consumer, '[data-testid="task-links-toggle"]');
+
+    /**
+     * **한 번만 읽지 않는다.** 펴는 것은 클라이언트 상태 변경이고, 바로 읽으면
+     * 아직 안 그려졌을 수 있다(C-4d 회차가 CI 에서만 떨어진 그 모양). 끝내 안
+     * 뜨면 여전히 FAIL 이다 — 기다림을 넣는 것이지 통과시키는 것이 아니다.
+     */
+    const until = Date.now() + ms(15000);
+    for (;;) {
+      const panel = Number(await evaluate(consumer, `document.querySelectorAll('[data-testid="task-links"]').length`));
+
+      if (panel > 0) break;
+      if (Date.now() > until) throw new Error("펴도 다리가 안 뜬다");
+      await sleep(500);
+    }
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const box = document.querySelector('[data-testid="task-links"]');
+      return JSON.stringify({
+        basis: (box.querySelector('[data-testid="task-links-basis"]') || {}).innerText || "",
+        explore: [...box.querySelectorAll('[data-testid="task-link-explore"]')].map((a) => a.getAttribute("href")),
+        guides: [...box.querySelectorAll('[data-testid="task-link-guide"]')].map((a) => a.getAttribute("href")),
+        community: (box.querySelector('[data-testid="task-link-community"]') || {}).getAttribute
+          ? box.querySelector('[data-testid="task-link-community"]').getAttribute("href")
+          : null,
+        caution: (box.querySelector('[data-testid="task-links-community-caution"]') || {}).innerText || "",
+        text: box.innerText.replace(/\\s+/g, " ").slice(0, 200),
+      });
+    })()`));
+
+    // **판정 기준이 화면에 있다**(§2.2) — 추천이 아님을 화면이 증명해야 한다.
+    if (!seen.basis.includes("추천하지 않")) throw new Error(`판정 기준이 없다: ${seen.basis}`);
+    // **미검증 경고를 건너뛰지 않는다**(D-26).
+    if (!seen.caution.includes("확인한 내용이 아니")) throw new Error(`미검증 경고가 없다: ${seen.caution}`);
+    if (seen.community === null) throw new Error("커뮤니티로 가는 자리가 없다");
+
+    return `버튼 ${toggles}개 · 탐색 ${seen.explore.length} · 가이드 ${seen.guides.length} · 커뮤니티 ${seen.community}`;
+  });
+
+  await step("**세 다리를 눌러 닿는다** — 없는 화면으로 보내지 않는다", consumer, async () => {
+    // 카테고리를 `hall` 로 좁혀서 **셋이 다 차 있는** 태스크를 고른다.
+    const hrefs = JSON.parse(await evaluate(consumer, `(() => {
+      const boxes = [...document.querySelectorAll('[data-testid="task-links"]')];
+      const out = { explore: null, guide: null, community: null };
+      for (const box of boxes) {
+        out.explore = out.explore || (box.querySelector('[data-testid="task-link-explore"]') || {}).getAttribute?.call(box.querySelector('[data-testid="task-link-explore"]'), "href") || null;
+        const g = box.querySelector('[data-testid="task-link-guide"]');
+        out.guide = out.guide || (g ? g.getAttribute("href") : null);
+        const c = box.querySelector('[data-testid="task-link-community"]');
+        out.community = out.community || (c ? c.getAttribute("href") : null);
+      }
+      return JSON.stringify(out);
+    })()`));
+
+    const landed = [];
+
+    for (const [name, href] of Object.entries(hrefs)) {
+      if (!href) throw new Error(`${name} 다리가 비었다 — 분모가 없으면 눌러 볼 것도 없다`);
+
+      const page = await goto(consumer, href);
+
+      if (page.notFound) throw new Error(`${name} 이 404 로 간다: ${href}`);
+      if (page.errorState) throw new Error(`${name} 이 오류 화면으로 간다: ${href}`);
+
+      landed.push(`${name}=${href}`);
+    }
+
+    return landed.join(" · ");
+  });
+
+  await step("**살 것이 없는 준비에는 그렇게 적는다** — 빈 목록으로 접지 않는다", consumer, async () => {
+    // 혼인신고 제출은 `document` 이고 매핑이 `not_a_purchase` 다 — **카테고리를
+    // 늘려도 팔 것이 생기지 않는** 자리라 "아직 없어요" 와 다른 말을 해야 한다.
+    await goto(consumer, "/checklist");
+
+    const found = JSON.parse(await evaluate(consumer, `(() => {
+      const rows = [...document.querySelectorAll('[data-testid="checklist-task"]')];
+      const hit = rows.find((row) => row.innerText.includes("혼인신고") || row.innerText.includes("서류"));
+      if (!hit) return JSON.stringify({ ok: false, why: "서류 태스크를 못 찾았다" });
+      const btn = hit.querySelector('[data-testid="task-links-toggle"]');
+      if (!btn) return JSON.stringify({ ok: false, why: "버튼이 없다" });
+      btn.click();
+      return JSON.stringify({ ok: true });
+    })()`));
+
+    if (!JSON.parse(JSON.stringify(found)).ok) throw new Error(found.why);
+
+    const until = Date.now() + ms(15000);
+    let note = "";
+    for (;;) {
+      note = String(await evaluate(consumer, `(() => {
+        const rows = [...document.querySelectorAll('[data-testid="checklist-task"]')];
+        const hit = rows.find((row) => row.innerText.includes("혼인신고") || row.innerText.includes("서류"));
+        const box = hit && hit.querySelector('[data-testid="task-links-explore-none"]');
+        return box ? box.innerText.replace(/\\s+/g, " ") : "";
+      })()`));
+
+      if (note.trim()) break;
+      if (Date.now() > until) throw new Error("살 것이 없다는 말이 안 뜬다");
+      await sleep(500);
+    }
+
+    // **"아직 없어요"(언젠가 열린다) 와 섞이면 안 된다.**
+    if (!note.includes("여기서 살 수 있는 것은 없어요")) {
+      throw new Error(`문장이 'not_yet_listed' 와 섞였다: ${note}`);
+    }
+
+    return note.slice(0, 90);
+  });
+
+  await step("**커뮤니티가 준비 단계로 좁혀 열린다** — 좁혀 본다는 사실을 말한다", consumer, async () => {
+    const page = await goto(consumer, "/community?prep=hall");
+    if (page.notFound || page.errorState) throw new Error(`화면 상태 이상: ${page.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const banner = document.querySelector('[data-testid="community-prep-filter"]');
+      const list = document.querySelector('[data-testid="community-list"]');
+      return JSON.stringify({
+        banner: banner ? banner.innerText.replace(/\\s+/g, " ") : null,
+        rows: list ? list.children.length : 0,
+        body: document.body.innerText.replace(/\\s+/g, " ").slice(0, 200),
+      });
+    })()`));
+
+    if (seen.banner === null) throw new Error("좁혀 보고 있다는 안내가 없다");
+    if (seen.rows === 0) throw new Error(`hall 글이 0건이다 — 분모가 비었다: ${seen.body}`);
+
+    // **어휘 밖 값으로 좁히면 전체가 뜬다** — 늘 같은 화면을 그리는 것이 아니다.
+    const bad = await goto(consumer, "/community?prep=nope");
+    const badBanner = await evaluate(consumer, `document.querySelectorAll('[data-testid="community-prep-filter"]').length`);
+
+    if (bad.notFound) throw new Error("어휘 밖 값이 404 다 — 읽기 화면은 열려야 한다");
+    if (Number(badBanner) !== 0) throw new Error("어휘 밖 값인데 좁혔다고 말한다");
+
+    return `hall ${seen.rows}건 · 안내 있음 · 어휘 밖은 전체`;
+  });
+
+  await step("**API 도 같은 답을 준다** — 화면과 API 가 다른 말을 하지 않는다", consumer, async () => {
+    const raw = await evaluate(consumer, `fetch("/api/tasks/links").then((r) => r.text())`);
+    const body = JSON.parse(String(raw));
+
+    if (!body.ok) throw new Error(`API 실패: ${String(raw).slice(0, 150)}`);
+    if (!String(body.data.basis).includes("추천하지 않")) throw new Error("API 응답에 판정 기준이 없다");
+
+    const keys = Object.keys(body.data.links);
+    if (keys.length === 0) throw new Error("다리가 하나도 없다");
+
+    const hall = body.data.links.hall;
+    if (!hall || hall.explore.kind !== "categories") throw new Error("hall 이 카테고리를 못 준다");
+    if (hall.community.caution.length < 10) throw new Error("API 가 미검증 경고를 안 싣는다");
+
+    const doc = body.data.links.document;
+    if (!doc || doc.explore.kind !== "none") throw new Error("document 가 '없다' 를 안 말한다");
+
+    return `다리 ${keys.length}종 · hall=${hall.explore.categories.length}칸 · document=none`;
+  });
+
   // ── 8d. 기한 알림 (C-4d) ─────────────────────────────────────────────────
   //
   // **배치는 서버가 있어야 돈다.** `db:rls` 는 표가 그 모양을 받는지까지만 보고,

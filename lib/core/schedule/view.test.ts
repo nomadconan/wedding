@@ -25,6 +25,7 @@ const task = (over: Partial<TaskNode> & { id: string }): TaskNode => ({
   dueDate: null,
   templateCode: null,
   completedOutOfOrder: false,
+  vendorCategory: null,
   ...over,
 });
 

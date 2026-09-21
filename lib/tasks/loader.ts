@@ -60,10 +60,11 @@ type TaskRow = {
   template_code: string | null;
   completed_out_of_order: boolean;
   assignee_id: string | null;
+  vendor_category: string | null;
 };
 
 const TASK_COLUMNS =
-  "id, category, title, status, due_date, template_code, completed_out_of_order, assignee_id";
+  "id, category, title, status, due_date, template_code, completed_out_of_order, assignee_id, vendor_category";
 
 function toNode(row: TaskRow): TaskNode {
   return {
@@ -74,6 +75,7 @@ function toNode(row: TaskRow): TaskNode {
     dueDate: row.due_date,
     templateCode: row.template_code,
     completedOutOfOrder: row.completed_out_of_order,
+    vendorCategory: row.vendor_category,
   };
 }
 

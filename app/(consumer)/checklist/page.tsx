@@ -8,6 +8,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { enabledViews } from "@/lib/core/schedule/view";
 import { findMyCouple } from "@/lib/couple/membership";
 import { SCHEDULE_VIEWS_FLAG, featureRollout } from "@/lib/flags";
+import { linkKeyFor, loadTaskLinks } from "@/lib/tasks/links";
 import { loadChecklist } from "@/lib/tasks/loader";
 import { requireUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -85,6 +86,19 @@ async function ChecklistSection() {
   // 지금은 넷 다 켜져 있고, 판정은 지표가 붙는 S8-01 이후다.
   const views = enabledViews(await featureRollout(SCHEDULE_VIEWS_FLAG));
 
+  /**
+   * 어디서 할지 (C-4c · F-C-39).
+   *
+   * **카테고리 단위로 한 번씩만 읽는다.** 태스크가 스물다섯 개 넘고 그중 다수가
+   * 같은 카테고리라, 태스크마다 물으면 같은 답을 스물다섯 번 센다.
+   *
+   * `/api/tasks/links` 와 **같은 함수**를 부른다 — 판정이 두 벌이면 화면과 API 가
+   * 다른 말을 하고, 그때 어느 쪽이 맞는지 아무도 모른다.
+   */
+  const taskLinks = await loadTaskLinks(
+    view.tasks.map((task) => ({ category: task.category, vendorCategory: task.vendorCategory })),
+  );
+
   return (
     <div className="space-y-4">
       {/* 순환이 남아 있으면 숨기지 않는다 — 조용히 임의 순서를 그리면 그것이 순서로 믿긴다. */}
@@ -103,6 +117,13 @@ async function ChecklistSection() {
         hasWeddingDate={weddingDate !== null}
         generated={view.generatedCodes.length > 0}
         missingTemplates={view.missingTemplates}
+        taskLinks={taskLinks}
+        linkKeys={Object.fromEntries(
+          view.tasks.map((task) => [
+            task.id,
+            linkKeyFor({ category: task.category, vendorCategory: task.vendorCategory }),
+          ]),
+        )}
       />
     </div>
   );

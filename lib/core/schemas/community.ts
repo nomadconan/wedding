@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { TASK_CATEGORIES } from "../schedule/templates";
 import {
   BOARD_TYPES,
   COMMENT_BODY_MAX_LENGTH,
@@ -24,6 +25,17 @@ export const PostCreateSchema = z
     body: z.string().trim().min(1, "내용을 적어 주세요.").max(POST_BODY_MAX_LENGTH),
     /** 태그할 업체. **승인된 업체만** 붙는다(0038 트리거). */
     vendorIds: z.array(z.string().uuid()).max(POST_TAG_MAX_COUNT).default([]),
+    /**
+     * 어느 준비 단계의 이야기인가 (C-4c · `community_posts.category`).
+     *
+     * **선택이다.** 특정 단계에 붙지 않는 잡담이 정상이고, `null` 은 "아직 안
+     * 했다" 가 아니라 **"따로 지정하지 않았다"** 다(0075·0084). 값이 있으면
+     * 체크리스트의 해당 준비 항목에서 이 글로 오는 다리가 생긴다.
+     *
+     * **어휘는 준비 축이다** — `board_type`(글의 성격)과 다른 축이라 서로를
+     * 대신하지 못한다. DB CHECK 이 같은 어휘를 한 번 더 판정한다(0084).
+     */
+    prepCategory: z.enum(TASK_CATEGORIES).nullable().default(null),
   })
   .strict();
 

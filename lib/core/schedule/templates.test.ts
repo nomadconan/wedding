@@ -133,6 +133,7 @@ describe("간선", () => {
       dueDate: null,
       templateCode: template.code,
       completedOutOfOrder: false,
+      vendorCategory: null,
     }));
 
     const edges = templateEdges().map((edge) => ({
@@ -155,6 +156,7 @@ describe("간선", () => {
       dueDate: null,
       templateCode: template.code,
       completedOutOfOrder: false,
+      vendorCategory: null,
     }));
 
     const result = topoSort(
