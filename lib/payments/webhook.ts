@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { recordEvent } from "@/lib/audit/record";
 import { decideWebhook, minimizeWebhook, webhookDedupeKey } from "@/lib/core/payment/payment";
 import { payloadDigest } from "@/lib/contract/hash";
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { applyRefund, cancelPendingPayment } from "./charge";
@@ -30,7 +31,9 @@ import type { Json } from "@/types/database";
  */
 export type WebhookOutcome =
   | { status: "processed"; eventId: string; action: string }
-  | { status: "duplicate"; eventId: string }
+  // `reason` 은 **쓰기가 실패했을 때만** 붙는다(FIX-73) — 처리 결과가 아니라
+  // "기록을 못 남겼다" 를 운영에 알리는 자리다.
+  | { status: "duplicate"; eventId: string; reason?: string }
   | { status: "ignored"; eventId: string; reason: string }
   | { status: "rejected"; reason: "bad_signature" | "no_secret" };
 
@@ -114,9 +117,16 @@ export async function handleWebhook(input: {
     if ((insertError as { code?: string }).code === "23505") {
       // PG 재시도는 정상 동작이다. 오류가 아니라 **센다** — 우리 처리 실패를
       // 알아보는 신호가 된다(0028 attempt_count).
-      await bumpAttempt(input.provider, eventId);
+      // **세었는지도 값으로 받는다.** `tryWrite` 의 boolean 을 버리면
+      // `check:writes` 가 잡는다 — 그게 "삼키는 것이 아니다" 를 코드로 지키는
+      // 방법이고, 여기서는 못 센 사실을 응답에 적어 운영이 볼 수 있게 한다.
+      const bumped = await bumpAttempt(input.provider, eventId);
 
-      return { status: "duplicate", eventId };
+      return {
+        status: "duplicate",
+        eventId,
+        reason: bumped ? undefined : "재시도 횟수를 갱신하지 못했습니다.",
+      };
     }
 
     return { status: "ignored", eventId, reason: "수신 기록을 남기지 못했습니다." };
@@ -126,12 +136,22 @@ export async function handleWebhook(input: {
 
   // (3) 상태 전이.
   if (!(HANDLED_EVENTS as readonly string[]).includes(eventType)) {
-    await admin
-      .from("payment_webhook_events")
-      .update({ status: "ignored", last_error: null })
-      .eq("id", eventRowId);
+    // **여기서는 던지지 않는다**(FIX-73). 던지면 라우트가 5xx 를 내고 PG 가
+    // 재전송하는데, 재전송이 같은 이유로 또 실패하면 **무한 재시도**가 된다.
+    // 값으로 받아 응답에 적는다 — 삼키는 것이 아니다.
+    const marked = await tryWrite(
+      "payment_webhook_events.update:ignore-unhandled",
+      admin
+        .from("payment_webhook_events")
+        .update({ status: "ignored", last_error: null })
+        .eq("id", eventRowId),
+    );
 
-    return { status: "ignored", eventId, reason: `다루지 않는 이벤트입니다: ${eventType}` };
+    return {
+      status: "ignored",
+      eventId,
+      reason: `다루지 않는 이벤트입니다: ${eventType}${marked ? "" : " (수신 기록 갱신 실패)"}`,
+    };
   }
 
   const paymentKey = (snapshot.paymentKey as string | undefined) ?? null;
@@ -154,18 +174,30 @@ export async function handleWebhook(input: {
   if (!payment) {
     // 웹훅이 우리 승인 응답보다 먼저 도착할 수 있다. 그래도 **기록은 남긴다** —
     // 나중에 "그 이벤트를 받았는가" 를 답할 수 있어야 한다(0028 근거).
-    await admin
-      .from("payment_webhook_events")
-      .update({ status: "ignored", last_error: "매칭되는 결제를 찾지 못했습니다." })
-      .eq("id", eventRowId);
+    const marked = await tryWrite(
+      "payment_webhook_events.update:ignore-unmatched",
+      admin
+        .from("payment_webhook_events")
+        .update({ status: "ignored", last_error: "매칭되는 결제를 찾지 못했습니다." })
+        .eq("id", eventRowId),
+    );
 
-    return { status: "ignored", eventId, reason: "매칭되는 결제를 찾지 못했습니다." };
+    return {
+      status: "ignored",
+      eventId,
+      reason: `매칭되는 결제를 찾지 못했습니다.${marked ? "" : " (수신 기록 갱신 실패)"}`,
+    };
   }
 
-  await admin
-    .from("payment_webhook_events")
-    .update({ payment_id: payment.id })
-    .eq("id", eventRowId);
+  // 연결을 못 걸어도 처리는 이어 간다 — 이벤트 행에 `payment_id` 가 비는 것은
+  // **조회가 불편해지는 일**이지 돈이 틀어지는 일이 아니다. 대신 아래 증적에 적는다.
+  const linked = await tryWrite(
+    "payment_webhook_events.update:link-payment",
+    admin
+      .from("payment_webhook_events")
+      .update({ payment_id: payment.id })
+      .eq("id", eventRowId),
+  );
 
   let action = eventType;
 
@@ -192,12 +224,33 @@ export async function handleWebhook(input: {
   }
 
   // 정규화 스냅샷만 담는다. 원문이 아니다(§7.3 · payments_webhook_no_pii CHECK).
-  await admin.from("payments").update({ raw_webhook_json: snapshot }).eq("id", payment.id);
+  const snapped = await tryWrite(
+    "payments.update:webhook-snapshot",
+    admin.from("payments").update({ raw_webhook_json: snapshot }).eq("id", payment.id),
+  );
 
-  await admin
-    .from("payment_webhook_events")
-    .update({ status: "processed", processed_at: new Date().toISOString() })
-    .eq("id", eventRowId);
+  /**
+   * **이 줄이 이 함수에서 가장 위험하다.**
+   *
+   * 못 적으면 이벤트가 `received` 로 남고, PG 가 재전송하면 **취소·환불을 다시
+   * 탄다.** 그쪽이 멱등 가드를 갖고 있어(`canCancelPayment` · 환불 누계 판정)
+   * 실제 중복 청구로 이어지지는 않지만, **그 가드가 마지막 방어선이 된다.**
+   * 그래서 던지지 않되(무한 재전송) **증적에 반드시 적는다** — FIX-72 가
+   * `audit_lost:1` 을 밖으로 낸 것과 같은 모양이다.
+   */
+  const finished = await tryWrite(
+    "payment_webhook_events.update:mark-processed",
+    admin
+      .from("payment_webhook_events")
+      .update({ status: "processed", processed_at: new Date().toISOString() })
+      .eq("id", eventRowId),
+  );
+
+  const writeFlags = [
+    linked ? null : "linkFailed=1",
+    snapped ? null : "snapshotFailed=1",
+    finished ? null : "markProcessedFailed=1",
+  ].filter((flag) => flag !== null);
 
   await recordEvent({
     entityType: "payment",
@@ -205,13 +258,13 @@ export async function handleWebhook(input: {
     eventType: "payment_webhook_processed",
     actor: { id: input.actorId },
     source: "system",
-    memo: `event=${eventType}`,
+    memo: [`event=${eventType}`, ...writeFlags].join(" "),
   });
 
   return { status: "processed", eventId, action };
 }
 
-async function bumpAttempt(provider: string, eventId: string): Promise<void> {
+async function bumpAttempt(provider: string, eventId: string): Promise<boolean> {
   const admin = createAdminClient();
 
   const { data } = await admin
@@ -222,10 +275,16 @@ async function bumpAttempt(provider: string, eventId: string): Promise<void> {
     .maybeSingle();
 
   const row = data as { id: string; attempt_count: number } | null;
-  if (!row) return;
+  // 행이 없으면 셀 것도 없다 — 실패가 아니다.
+  if (!row) return true;
 
-  await admin
-    .from("payment_webhook_events")
-    .update({ attempt_count: row.attempt_count + 1 })
-    .eq("id", row.id);
+  // 횟수를 못 올려도 **처리 자체를 막지 않는다.** 던지면 재전송 경로가 통째로
+  // 끊긴다 — 세는 일이 못 세는 것보다 낫지만, 그것 때문에 처리를 잃지는 않는다.
+  return tryWrite(
+    "payment_webhook_events.update:bump-attempt",
+    admin
+      .from("payment_webhook_events")
+      .update({ attempt_count: row.attempt_count + 1 })
+      .eq("id", row.id),
+  );
 }

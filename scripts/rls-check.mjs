@@ -14244,6 +14244,61 @@ if (!vendorStaff || !adminUser) {
         where table_name = 'tasks' and grantee = 'authenticated' and privilege_type = 'UPDATE';`,
     );
 
+    // ── 층1 전수 — 어휘 없는 자유 문자열 칸 (FIX-73a 회차가 셌다) ─────────
+    //
+    // FIX-75(파는 축)·FIX-82(준비 축)·FIX-85(커뮤니티)가 **같은 모양으로 세 번**
+    // 나왔다: *어휘가 있어야 할 칸이 CHECK 없는 `text` 다.* 한 번씩 찾아 고치는
+    // 대신 **전수를 세어 상한으로 고정한다** — 새로 생기면 떨어진다.
+    //
+    // 전부가 결함은 아니다. `*_reason`(PG·PG사 문구) · `couple_invites.code`(난수) ·
+    // `task_templates.code`(식별자)처럼 **자유 문자열이 맞는 칸**이 섞여 있다.
+    // 그래서 0 을 목표로 두지 않고 **늘지 않는 것**을 목표로 둔다.
+    {
+      const FREE_TEXT_CEILING = 43;
+      const vocabShaped = sqlOrNull(
+        `with cols as (
+           select c.table_name, c.column_name
+             from information_schema.columns c
+            where c.table_schema = 'public'
+              and c.data_type in ('text','character varying')
+              and c.column_name ~ '(^|_)(category|type|kind|status|state|code|role|reason|scope|channel|source|level|grade|tier|method|provider|topic|action|result|verdict|decision|direction|unit|period|basis)$'
+         ), constrained as (
+           select distinct cl.relname as table_name, a.attname as column_name
+             from pg_constraint k
+             join pg_class cl on cl.oid = k.conrelid
+             join unnest(k.conkey) ck(attnum) on true
+             join pg_attribute a on a.attrelid = cl.oid and a.attnum = ck.attnum
+            where k.contype in ('c','f') and cl.relnamespace = 'public'::regnamespace
+         )
+         select count(*) from cols
+          where not exists (
+            select 1 from constrained x
+             where x.table_name = cols.table_name and x.column_name = cols.column_name
+          );`,
+      );
+
+      check(
+        "**어휘 모양의 칸을 실제로 찾았다** — 0개로 세고 통과하지 않는다",
+        Number(vocabShaped ?? "0") > 0,
+        `free=${vocabShaped}`,
+      );
+      check(
+        "**어휘 없는 자유 문자열 칸이 늘지 않았다**(FIX-75·82·85 와 같은 모양)",
+        Number(vocabShaped ?? "999") <= FREE_TEXT_CEILING,
+        `${vocabShaped} / 상한 ${FREE_TEXT_CEILING}`,
+      );
+      check(
+        "**`tasks.status` 는 아직 어휘가 없다**(FIX-86) — 고치면 이 검사가 알려 준다",
+        // **알고 있다는 사실을 고정한다.** 고친 날 이 검사가 떨어지고, 그때
+        // 상한을 함께 내린다 — 조용히 해결되거나 조용히 잊히지 않는다.
+        sqlOrNull(
+          `select count(*) from pg_constraint
+            where conrelid = 'public.tasks'::regclass and contype = 'c'
+              and pg_get_constraintdef(oid) like '%status%';`,
+        ) === "0",
+      );
+    }
+
     check(
       "**층1 — `tasks` 는 표 단위 UPDATE 다**(사실을 고정한다) — 새 칸이 자동으로 열린다",
       tasksTableGrant === "1",

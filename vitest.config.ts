@@ -58,6 +58,8 @@ export default defineConfig({
       // 보게 되고, 그러면 **DB 가 거절해도 부르는 쪽은 성공으로 읽는다** — FIX-71 이
       // 그렇게 한 배치의 증적을 통째로 잃고도 초록불이었다.
       "lib/audit/**/*.test.ts",
+      // 쓰기 실패 채널(FIX-73). 프레임워크를 모르는 순수 모듈이라 여기서 돈다.
+      "lib/db/**/*.test.ts",
     ],
     exclude: ["node_modules/**", ".next/**", "tmp/**", "_local_reports/**"],
     coverage: {

@@ -17,6 +17,7 @@ import {
 import { feeBasisOf, paymentIdempotencyKey } from "@/lib/core/payment/payment";
 import { holdEscrow } from "@/lib/escrow/actions";
 import { sendNotification } from "@/lib/notify/send";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { MAX_PAYMENT_ATTEMPTS, canRetryPayment } from "./adapter";
@@ -382,14 +383,19 @@ export async function chargeInstallment(input: {
       maxAttempts: MAX_PAYMENT_ATTEMPTS,
     });
 
-    await admin
-      .from("payments")
-      .update({
-        status: "failed",
-        failed_at: now.toISOString(),
-        failure_reason: result.failureReason,
-      })
-      .eq("id", paymentId);
+    // **실패를 실패로 적는 일이 실패하면 안 된다.** 이 줄이 조용히 실패하면
+    // 재시도 배치가 그 행을 '아직 시도 전' 으로 보고 다시 긁는다(FIX-73).
+    await mustWrite(
+      "payments.update:mark-failed",
+      admin
+        .from("payments")
+        .update({
+          status: "failed",
+          failed_at: now.toISOString(),
+          failure_reason: result.failureReason,
+        })
+        .eq("id", paymentId),
+    );
 
     await recordEvent({
       entityType: "payment",
@@ -420,20 +426,28 @@ export async function chargeInstallment(input: {
   // ── 3) 승인 · 회차 완료 ───────────────────────────────────────────────────
   const paidAt = result.approvedAt;
 
-  await admin
-    .from("payments")
-    .update({
-      status: "paid",
-      paid_at: paidAt,
-      toss_payment_key: result.providerRef,
-      failure_reason: null,
-    })
-    .eq("id", paymentId);
+  // **PG 는 이미 승인했다.** 여기서 못 적으면 돈은 나갔는데 표에는 미납으로
+  // 남고, 다음 배치가 같은 회차를 또 긁는다 — 던져서 호출부가 알게 한다(FIX-73).
+  await mustWrite(
+    "payments.update:mark-paid",
+    admin
+      .from("payments")
+      .update({
+        status: "paid",
+        paid_at: paidAt,
+        toss_payment_key: result.providerRef,
+        failure_reason: null,
+      })
+      .eq("id", paymentId),
+  );
 
-  await admin
-    .from("payment_schedules")
-    .update({ status: "paid", paid_at: paidAt })
-    .eq("id", context.scheduleId);
+  await mustWrite(
+    "payment_schedules.update:mark-paid",
+    admin
+      .from("payment_schedules")
+      .update({ status: "paid", paid_at: paidAt })
+      .eq("id", context.scheduleId),
+  );
 
   await recordEvent({
     entityType: "payment",
@@ -608,18 +622,33 @@ export async function cancelPendingPayment(input: {
   // **실패하면 상태를 바꾸지 않는다.** 거두지 못했는데 cancelled 로 적으면 있지도
   // 않은 취소가 기록되고, 그 기록이 분쟁의 근거가 된다(S4-08 과 같은 판단).
   if (!result.ok) {
-    await admin
-      .from("payments")
-      .update({ failure_reason: result.failureReason })
-      .eq("id", payment.id);
+    // 사유를 못 적어도 **취소 실패라는 결론은 그대로**다. 여기서 던지면 이미
+    // 만들어진 502 응답이 500 으로 뒤바뀌어 부르는 쪽이 원인을 잃는다 —
+    // 사유는 곁가지이므로 `tryWrite` 로 세고 넘어간다(FIX-73).
+    const noted = await tryWrite(
+      "payments.update:cancel-failure-reason",
+      admin
+        .from("payments")
+        .update({ failure_reason: result.failureReason })
+        .eq("id", payment.id),
+    );
 
-    return failure(502, "PAY_CANCEL_FAILED", result.failureReason);
+    return failure(
+      502,
+      "PAY_CANCEL_FAILED",
+      noted ? result.failureReason : `${result.failureReason} (사유 기록 실패)`,
+    );
   }
 
-  await admin
-    .from("payments")
-    .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
-    .eq("id", payment.id);
+  // **PG 에서는 이미 거뒀다.** 여기서 못 적으면 취소된 결제가 표에 pending 으로
+  // 남아 재시도 대상이 된다(FIX-73).
+  await mustWrite(
+    "payments.update:mark-cancelled",
+    admin
+      .from("payments")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+      .eq("id", payment.id),
+  );
 
   await recordEvent({
     entityType: "payment",
@@ -694,22 +723,30 @@ export async function applyRefund(input: {
     return failure(502, "PAY_REFUND_FAILED", result.failureReason);
   }
 
-  await admin
-    .from("payments")
-    .update({ status: decision.nextStatus, refunded_amount: decision.refundedTotal })
-    .eq("id", payment.id);
+  // **돈은 이미 나갔다.** 환불 누계를 못 적으면 다음 환불이 한도를 잘못 계산해
+  // **같은 금액을 두 번 돌려줄 수 있다**(FIX-73).
+  await mustWrite(
+    "payments.update:refund-total",
+    admin
+      .from("payments")
+      .update({ status: decision.nextStatus, refunded_amount: decision.refundedTotal })
+      .eq("id", payment.id),
+  );
 
   // 환불 원장. `refunds`(0003)는 S5-08 이 위약금과 함께 채우지만, 금액이 실제로
   // 움직인 사실은 지금 남겨야 한다 — 나중에 적으면 그 사이 기록이 비어 있다.
-  await admin.from("refunds").insert({
-    payment_id: payment.id,
-    cancellation_id: input.cancellationId ?? null,
-    amount: input.amount,
-    reason_code: input.reason.slice(0, 60),
-    status: "completed",
-    // 상태와 시각의 짝은 DB CHECK 가 요구한다(0031) — 결제에 건 규칙과 같다.
-    completed_at: new Date().toISOString(),
-  });
+  await mustWrite(
+    "refunds.insert:completed",
+    admin.from("refunds").insert({
+      payment_id: payment.id,
+      cancellation_id: input.cancellationId ?? null,
+      amount: input.amount,
+      reason_code: input.reason.slice(0, 60),
+      status: "completed",
+      // 상태와 시각의 짝은 DB CHECK 가 요구한다(0031) — 결제에 건 규칙과 같다.
+      completed_at: new Date().toISOString(),
+    }),
+  );
 
   await recordEvent({
     entityType: "payment",
