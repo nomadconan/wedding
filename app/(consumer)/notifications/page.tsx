@@ -34,7 +34,15 @@ export default async function NotificationsPage() {
 }
 
 async function NotificationsSection() {
-  await requireUser("/notifications");
+  /**
+   * **역할을 쓴다**(C-4e).
+   *
+   * 이 화면은 미인증만 막고 역할은 가르지 않는다(미들웨어 `/notifications`) —
+   * 업체 멤버도 **여기서** 자기 알림을 읽는다. 상담 확정·새 메시지처럼 **양쪽에
+   * 가는 알림**은 도착지가 면마다 다르고, 한쪽 경로를 양쪽에 주면 다른 쪽은 권한
+   * 거부 화면을 본다. 그래서 링크 판정에 읽는 사람의 역할을 넘긴다.
+   */
+  const viewer = await requireUser("/notifications");
 
   const supabase = await createClient();
 
@@ -80,15 +88,16 @@ async function NotificationsSection() {
     // **저장된 문장이 아니다.** 틀 + 참조로 지금 다시 만든다(§7.3).
     body: row.template_key ? renderBody(row.template_key, row.payload_json ?? {}) : null,
     /**
-     * 어디로 가는가 (C-4d · D-98).
+     * 어디로 가는가 (C-4d 가 열고 C-4e 가 채웠다 · D-98).
      *
      * **경로를 여기서 조립하지 않는다** — 레지스트리가 갖는다. 참조가 모자라거나
-     * 아직 링크가 없는 템플릿이면 `null` 이고 화면은 문장만 그린다. **잘못된 곳으로
-     * 보내는 것보다 안 보내는 편이 낫다.**
+     * 가는 곳이 없다고 정한 템플릿이면 `null` 이고 화면은 문장만 그린다. **잘못된
+     * 곳으로 보내는 것보다 안 보내는 편이 낫다.**
      */
     link: notificationLink(
       row.template_key,
       (row.payload_json ?? {}) as Record<string, unknown>,
+      viewer.role,
     ),
     sentAt: row.sent_at,
     deliveredAt: row.delivered_at,

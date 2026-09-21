@@ -143,8 +143,12 @@ describe("이동 링크 — 없는 화면으로 보내지 않는다 (D-98)", () 
     expect(notificationLink("task_due.order", { vendorId: "", productId: "p1" })).toBeNull();
   });
 
-  it("아직 링크가 없는 템플릿은 null 이다 — 던지지 않는다", () => {
-    expect(notificationLink("dday.remind", {})).toBeNull();
+  /**
+   * **C-4e 가 나머지를 채웠다.** 이 회차에는 `dday.remind` 도 링크가 없어서 여기
+   * 예시로 적혀 있었는데, 지금은 체크리스트로 간다 — 전수 검사는 `links.test.ts`
+   * 가 갖고 여기서는 **모르는 키가 던지지 않는다**만 본다.
+   */
+  it("모르는 키는 null 이다 — 던지지 않는다", () => {
     expect(notificationLink("nope.nope", { a: 1 })).toBeNull();
     expect(notificationLink(null, null)).toBeNull();
   });

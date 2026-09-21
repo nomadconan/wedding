@@ -713,7 +713,11 @@ async function notify(
     channel: "in_app",
     templateKey,
     // 참조만. 금액·사유는 담지 않는다(§7.3).
-    params,
+    //
+    // **예약 참조를 함께 싣는다**(C-4e). 해지 화면이 `/bookings/[id]/cancel` 이라
+    // 알림에서 그리로 가려면 예약 ID 가 있어야 한다. 해지 ID 만으로는 경로를 만들 수
+    // 없고, 없으면 링크가 조용히 사라진다 — 그건 누른 사람만 아는 고장이다.
+    params: { ...params, bookingId: context.bookingId },
     dedupeKey: `${templateKey}:${String(params.cancellationId)}`,
   });
 }

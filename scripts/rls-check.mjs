@@ -16473,23 +16473,97 @@ if (!vendorStaff || !adminUser) {
           where table_name = 'notifications' and column_name in ('body', 'message', 'text');`,
       ) === "0",
     );
+
+    /**
+     * **payload 어휘를 발송부 소스에서 본다** (C-4e).
+     *
+     * 앞의 검사는 `topic = 'task_due'` 로 좁혀 있었고 **자기 픽스처만** 봤다.
+     * C-4e 가 화면 이동을 위해 **발송부 셋에 참조를 더했는데**(해지·안전거래·결제),
+     * 참조를 더하는 손이 다음에 이름이나 금액을 더하지 않으리라는 보장이 없다.
+     *
+     * **표를 세지 않는다.** `db:reset` 직후 `notifications` 는 **0행**이라 표를
+     * 세는 금지 검사는 전부 조용히 통과한다(§7.0b — 보안 검사 15개가 빈 표 덕분에
+     * 통과하던 그 모양이다). 그래서 **보내는 쪽 코드를 읽는다** — 거기엔 시드와
+     * 무관하게 늘 값이 있다.
+     */
+    const ALLOWED_KEYS = new Set([
+      "days", "seq", "rateBp", "overdue",
+      "taskId", "productId", "vendorId", "coupleId", "roomId",
+      "inquiryId", "targetId", "consultationId", "inviteId",
+      "contractId", "cancellationId", "scheduleId", "holdId", "settlementId", "bookingId",
+      // 전달만 하는 자리 — 실제 키는 호출부가 정하고 그쪽을 따로 읽는다.
+      "...params", "params",
+    ]);
+    const SENDERS = [
+      "lib/notify/task-due.ts", "lib/notify/dday.ts", "lib/notify/sla.ts",
+      "lib/chat/notify.ts", "lib/inquiry/notify.ts", "lib/consultation/notify.ts",
+      "lib/contract/actions.ts", "lib/cancellation/actions.ts", "lib/escrow/actions.ts",
+      "lib/payments/charge.ts", "lib/settlements/actions.ts", "lib/vendor/invites.ts",
+    ];
+    const payloadKeys = new Map();
+
+    for (const file of SENDERS) {
+      const src = srcOf(file);
+
+      for (const m of src.matchAll(/params:\s*\{([^{}]*)\}/g)) {
+        for (const part of m[1].split(",")) {
+          const key = part.trim().replace(/:.*$/s, "").trim();
+
+          if (key !== "") payloadKeys.set(key, file);
+        }
+      }
+    }
+
+    const strayKeys = [...payloadKeys.keys()].filter((key) => !ALLOWED_KEYS.has(key));
+
+    check(
+      "**발송부를 실제로 읽었다** — payload 키를 0개로 세고 통과하지 않는다",
+      payloadKeys.size >= 12,
+      `keys=${payloadKeys.size}`,
+    );
+    check(
+      "**발송부가 싣는 payload 키가 전부 참조·숫자다**(§7.3) — 이름·금액·본문이 없다",
+      strayKeys.length === 0,
+      strayKeys.map((key) => `${key}@${payloadKeys.get(key)}`).join(",") || "none",
+    );
+    check(
+      "**C-4e 가 더한 참조가 실제로 그 어휘 안에 있다**",
+      payloadKeys.has("bookingId"),
+    );
   }
 
-  // ── 이동 링크 — 없는 화면으로 보내지 않는다 (D-98) ──────────────────────
+  // ── 이동 링크 — 없는 화면으로 보내지 않는다 (D-98 · C-4e 가 전수로 넓혔다) ─
   {
     const linkSrc = srcOf("lib/core/notify/links.ts");
-    const hrefs = [...linkSrc.matchAll(/href: "(\/[a-z-]+)"/g)].map((m) => m[1]);
+    /**
+     * **두 단 경로를 읽는다.** C-4d 는 `/[a-z-]+` 만 봤는데 그때는 도착지가
+     * `/checklist` 하나뿐이었다. C-4e 가 `/vendor/inquiries` 처럼 **면이 앞에 붙는**
+     * 경로를 더했고, 옛 정규식은 그것들을 **조용히 빼고** 나머지만 확인했다 —
+     * 늘어난 자리를 안 보는 검사는 아무것도 지키지 않는다.
+     */
+    const linkCode = linkSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const hrefs = [
+      ...new Set([...linkCode.matchAll(/"(\/[a-z][a-z0-9\-/]*)"/g)].map((m) => m[1])),
+    ];
+    const screenExists = (href) =>
+      ["(consumer)", "(vendor)", "(admin)", "(planner)", "(auth)", "(marketing)", ""].some(
+        (group) => existsSync(`app/${group}${href}/page.tsx`),
+      );
 
     check(
       "**링크 레지스트리를 실제로 읽었다**",
-      /NOTIFICATION_LINKS/.test(linkSrc) && hrefs.length > 0,
+      /NOTIFICATION_LINKS/.test(linkSrc) && hrefs.length >= 8,
       `static=${hrefs.length}`,
     );
     check(
+      "**업체 쪽 도착지를 빠뜨리지 않고 읽었다** — 옛 정규식은 이것들을 못 봤다",
+      hrefs.filter((href) => href.startsWith("/vendor/")).length >= 4,
+      `vendor=${hrefs.filter((href) => href.startsWith("/vendor/")).length}`,
+    );
+    check(
       "**정적 경로가 실재한다** — 디스크에 화면 파일이 있다",
-      hrefs.every((href) =>
-        existsSync(`app/(consumer)${href}/page.tsx`) || existsSync(`app${href}/page.tsx`),
-      ),
+      hrefs.length > 0 && hrefs.every(screenExists),
+      hrefs.filter((href) => !screenExists(href)).join(",") || "all-exist",
     );
     check(
       "**동적 경로도 실재한다** — 상품 상세 화면이 있다",
@@ -16506,6 +16580,86 @@ if (!vendorStaff || !adminUser) {
         srcOf("app/(consumer)/notifications/NotificationsView.tsx"),
       ) && /notificationLink\(/.test(srcOf("app/(consumer)/notifications/page.tsx")),
     );
+
+    // ── 전수인가 (C-4e 완료 조건) ─────────────────────────────────────────
+    //
+    // **두 파일을 각각 세어 맞춰 본다.** 레지스트리 안에서만 세면 "내가 적은 것은
+    // 내가 적었다" 를 확인할 뿐이다.
+    const tmplSrc = srcOf("lib/core/schemas/notification.ts");
+    const tmplKeys = [
+      ...tmplSrc
+        .slice(tmplSrc.indexOf("export const NOTIFICATION_TEMPLATES"))
+        .matchAll(/^  "([a-z_]+\.[a-z_]+)": \{$/gm),
+    ].map((m) => m[1]);
+    /**
+     * **레지스트리 객체 안에서만 센다.**
+     *
+     * 처음엔 파일 전체를 훑었는데 `LINK_REQUIRED_REFS` 의 항목까지 같은 모양이라
+     * **41개로 셌다**(31 + 10). 그러면 레지스트리에서 빠진 템플릿이 그 표에만
+     * 있어도 "전부 덮였다" 가 된다 — **센 것이 세려던 것이 아니었다.**
+     */
+    const linkBody = linkSrc.slice(
+      linkSrc.indexOf("export const NOTIFICATION_LINKS"),
+      linkSrc.indexOf("export function notificationLink"),
+    );
+    const linkKeys = [...linkBody.matchAll(/^  "([a-z_]+\.[a-z_]+)":/gm)].map((m) => m[1]);
+    const uncovered = tmplKeys.filter((key) => !linkKeys.includes(key));
+    const orphan = linkKeys.filter((key) => !tmplKeys.includes(key));
+
+    check(
+      "**목록을 실제로 읽었다** — 템플릿을 0종으로 세고 통과하지 않는다",
+      tmplKeys.length >= 31 && linkKeys.length >= 31,
+      `templates=${tmplKeys.length} links=${linkKeys.length}`,
+    );
+    check(
+      "**템플릿 전부에 가는 곳이거나 없다는 사실이 적혀 있다**",
+      uncovered.length === 0,
+      uncovered.join(",") || "none",
+    );
+    check(
+      "**사라진 템플릿의 링크가 남아 있지 않다** — 양방향으로 센다",
+      orphan.length === 0,
+      orphan.join(",") || "none",
+    );
+    check(
+      "**없다고 정한 자리에는 이유가 적혀 있다** — 빈 문자열이 아니다",
+      /kind: "none",\s*\r?\n\s*reason:\s*\r?\n?\s*"[^"]{20,}"/.test(linkSrc),
+    );
+    check(
+      "**초대 토큰이 경로에 들어가지 않는다** — 알림이 접근 열쇠가 되면 안 된다",
+      !/\/vendor\/invite/.test(linkSrc) && !/token/.test(linkSrc.replace(/^.*토큰.*$/gm, "")),
+    );
+    check(
+      "**읽는 사람에 따라 갈린다** — 한쪽 경로를 양쪽에 주면 다른 쪽은 거부 화면을 본다",
+      /isVendorViewer\(role\) \? vendor : consumer/.test(linkSrc) &&
+        /viewer\.role/.test(srcOf("app/(consumer)/notifications/page.tsx")),
+    );
+
+    // ── 발송부가 링크에 필요한 참조를 싣는가 ──────────────────────────────
+    //
+    // **레지스트리만 맞아서는 소용없다.** 발송부가 참조를 안 실으면 링크는 조용히
+    // 사라지고, 그건 누른 사람만 아는 고장이다.
+    check(
+      "**해지 알림이 예약 참조를 싣는다** — 화면이 `/bookings/[id]/cancel` 이다",
+      /bookingId: context\.bookingId/.test(srcOf("lib/cancellation/actions.ts")),
+    );
+    check(
+      "**안전거래 알림이 예약 참조를 싣는다**",
+      /params: \{ \.\.\.params, bookingId \}/.test(srcOf("lib/escrow/actions.ts")),
+    );
+    {
+      const chargeSrc = srcOf("lib/payments/charge.ts");
+      const dedupeLines = (chargeSrc.match(/^\s*dedupeKey:.*$/gm) ?? []).join("\n");
+
+      check(
+        "**결제 성공·실패 알림이 예약 참조를 싣는다** — 두 곳 다",
+        (chargeSrc.match(/bookingId: context\.bookingId,/g) ?? []).length >= 2,
+      );
+      check(
+        "**결제 멱등 열쇠가 payload 모양에 매이지 않는다** — 참조 하나 더 실었다고 다시 보내면 안 된다",
+        dedupeLines.length > 0 && !dedupeLines.includes("JSON.stringify"),
+      );
+    }
   }
 
   // ── 증적 ─────────────────────────────────────────────────────────────────
