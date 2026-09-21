@@ -7,6 +7,7 @@ import {
   VendorProfileUpdateSchema,
   diffProfileFields,
 } from "@/lib/core/schemas/vendor-profile";
+import { mustWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -187,19 +188,26 @@ export async function PUT(request: NextRequest) {
   }
 
   for (const item of media.updateAlt) {
-    await supabase
-      .from("vendor_media")
-      .update({ alt_text: item.altText })
-      .eq("vendor_id", vendorId)
-      .eq("id", item.id);
+    await mustWrite(
+      "vendor_media.update:profile-alt-text",
+      supabase
+        .from("vendor_media")
+        .update({ alt_text: item.altText })
+        .eq("vendor_id", vendorId)
+        .eq("id", item.id),
+    );
   }
 
+  // 상품 사진과 같다 — **루프 중간에 실패하면 순서가 반만 바뀐다**(FIX-73).
   for (const [index, id] of media.order.entries()) {
-    await supabase
-      .from("vendor_media")
-      .update({ sort_order: index })
-      .eq("vendor_id", vendorId)
-      .eq("id", id);
+    await mustWrite(
+      "vendor_media.update:profile-sort-order",
+      supabase
+        .from("vendor_media")
+        .update({ sort_order: index })
+        .eq("vendor_id", vendorId)
+        .eq("id", id),
+    );
   }
 
   const admin = createAdminClient();

@@ -11,6 +11,7 @@ import {
   productMediaPath,
   productMediaProblem,
 } from "@/lib/core/product/media";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -157,9 +158,21 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   if (signError || !signed) {
     // 주소를 못 만들면 **행을 남기지 않는다** — 파일 없는 사진이 목록에 뜬다.
-    await supabase.from("vendor_media").delete().eq("id", row.id);
+    //
+    // **이미 실패를 돌려주려는 참이다.** 던지면 `VENDOR_MEDIA_URL_FAILED` 가
+    // 일반 500 으로 뒤바뀌어 원인을 잃는다 — 값으로 받아 응답에 적는다(FIX-73).
+    const cleaned = await tryWrite(
+      "vendor_media.delete:rollback-no-upload-url",
+      supabase.from("vendor_media").delete().eq("id", row.id),
+    );
 
-    return fail(500, "VENDOR_MEDIA_URL_FAILED", "업로드 주소를 만들지 못했습니다.");
+    return fail(
+      500,
+      "VENDOR_MEDIA_URL_FAILED",
+      cleaned
+        ? "업로드 주소를 만들지 못했습니다."
+        : "업로드 주소를 만들지 못했습니다. (빈 자리가 남았을 수 있어요)",
+    );
   }
 
   await recordAudit({
@@ -212,20 +225,28 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     return fail(422, "VENDOR_MEDIA_UNKNOWN_ID", "이 상품의 사진이 아닌 항목이 있습니다.");
   }
 
+  // **루프 중간에 실패하면 순서가 반만 바뀐다.** 남은 절반은 옛 번호라 목록이
+  // 뒤죽박죽이 되고, 업체는 저장했다고 믿는다(FIX-73).
   for (const [index, mediaId] of (parsed.data.order ?? []).entries()) {
-    await supabase
-      .from("vendor_media")
-      .update({ sort_order: index })
-      .eq("id", mediaId)
-      .eq("product_id", id);
+    await mustWrite(
+      "vendor_media.update:sort-order",
+      supabase
+        .from("vendor_media")
+        .update({ sort_order: index })
+        .eq("id", mediaId)
+        .eq("product_id", id),
+    );
   }
 
   for (const item of parsed.data.updateAlt ?? []) {
-    await supabase
-      .from("vendor_media")
-      .update({ alt_text: item.altText })
-      .eq("id", item.id)
-      .eq("product_id", id);
+    await mustWrite(
+      "vendor_media.update:alt-text",
+      supabase
+        .from("vendor_media")
+        .update({ alt_text: item.altText })
+        .eq("id", item.id)
+        .eq("product_id", id),
+    );
   }
 
   return ok({ photos: await loadProductPhotos(supabase, id) });

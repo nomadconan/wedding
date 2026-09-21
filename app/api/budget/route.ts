@@ -8,6 +8,7 @@ import { BudgetUpdateSchema } from "@/lib/core/schemas/budget";
 import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { mustWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -106,11 +107,16 @@ export async function PUT(request: NextRequest) {
     const upserting = input.allocations.filter((item) => item.plannedAmount !== null);
 
     if (removing.length > 0) {
-      await supabase
-        .from("budget_items")
-        .delete()
-        .eq("budget_id", budgetId)
-        .in("category", removing.map((item) => item.category));
+      // **지우는 것이 본 작업이다.** 실패하면 지운 줄 아는 계획이 남아 예산 합계가
+      // 사용자가 보는 것과 달라진다(FIX-73).
+      await mustWrite(
+        "budget_items.delete:clear-plan",
+        supabase
+          .from("budget_items")
+          .delete()
+          .eq("budget_id", budgetId)
+          .in("category", removing.map((item) => item.category)),
+      );
     }
 
     if (upserting.length > 0) {
@@ -178,22 +184,25 @@ export async function PUT(request: NextRequest) {
       if (error) return fail(500, "BUDGET_PLAN_FAILED", "계획을 저장하지 못했어요.");
     }
 
-    // **권장의 근거를 스냅샷으로 남긴다**(D-16·D-23 과 같은 이유) — 지수가 갱신돼도
-    // "그때 무엇을 근거로 권했나" 를 답할 수 있어야 한다.
-    await supabase
-      .from("budgets")
-      .update({
-        allocation_json: {
-          applied_at_region: view.regionCode,
-          items: indexed.map((item) => ({
-            category: item.category,
-            amount: item.amount,
-            sample_size: item.sampleSize,
-            source: item.sourceLabel,
-          })),
-        },
-      })
-      .eq("id", budgetId);
+    // **권장의 근거다.** 못 남기면 응답은 권장을 돌려주는데 DB 에는 그 근거가
+    // 없다 — "그때 무엇을 보고 권했나" 를 답할 수 없다(D-16·D-23 · FIX-73).
+    await mustWrite(
+      "budgets.update:allocation-snapshot",
+      supabase
+        .from("budgets")
+        .update({
+          allocation_json: {
+            applied_at_region: view.regionCode,
+            items: indexed.map((item) => ({
+              category: item.category,
+              amount: item.amount,
+              sample_size: item.sampleSize,
+              source: item.sourceLabel,
+            })),
+          },
+        })
+        .eq("id", budgetId),
+    );
 
     await recordEvent({
       entityType: "couple",
