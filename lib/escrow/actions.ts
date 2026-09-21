@@ -9,6 +9,7 @@ import {
   type EscrowStatus,
 } from "@/lib/core/escrow/escrow";
 import { sendNotification } from "@/lib/notify/send";
+import { mustWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { resolveEscrowAdapterName, type EscrowAdapter } from "./adapter";
@@ -237,7 +238,12 @@ export async function confirmFulfillment(input: {
     now,
   });
 
-  await admin.from("escrow_holds").update(patch).eq("id", hold.id);
+  // 이행 확인의 결과다. 못 적으면 **확인했는데 안 한 것으로 남고**, 기한이 지나면
+  // 배치가 반대쪽으로 판정한다(FIX-73).
+  await mustWrite(
+    "escrow_holds.update:confirm",
+    admin.from("escrow_holds").update(patch).eq("id", hold.id),
+  );
 
   await recordEvent({
     entityType: "escrow_hold",
@@ -540,10 +546,15 @@ async function moveToDisputed(
 ): Promise<void> {
   const admin = createAdminClient();
 
-  await admin
-    .from("escrow_holds")
-    .update({ status: "disputed", disputed_at: now.toISOString() })
-    .eq("id", holdId);
+  // 조율 대기로 못 옮기면 **held 로 남아 자동 해제 대상**이 된다 — 이의가 있었는데
+  // 기계가 업체에게 전달한다(FIX-73).
+  await mustWrite(
+    "escrow_holds.update:dispute",
+    admin
+      .from("escrow_holds")
+      .update({ status: "disputed", disputed_at: now.toISOString() })
+      .eq("id", holdId),
+  );
 
   await recordEvent({
     entityType: "escrow_hold",
