@@ -18,8 +18,13 @@
 // 두 갈래를 다 보려는 것**이며(O-15 는 여전히 미결) 끝에서 원래대로 돌린다.
 //
 // 실행 (서버가 떠 있어야 한다):
-//   npm run build && npm start        (다른 창)
+//   npm run dev                       (다른 창)
 //   npm run check:settlement
+//
+// **개발 서버여야 한다**(FIX-89). 머리글이 한동안 `npm start` 를 적고 있었고 그렇게
+// 돌리면 **20/21** 이다 — `escrow-release` 가 양측 확인된 홀드를 안 넘기는 것처럼
+// 보이지만, 진짜 이유는 `NODE_ENV=production` 에서 결제 어댑터가 `noop`(일부러 실패)
+// 로 바뀜기 때문이다. 릴리즈가 안 끝나니 정산이 받을 것도 없다.
 //
 // **DB 를 더럽힌다.** 정산서를 만들고 회차를 완납으로 옮긴다. 끝나면
 // `npm run db:reset && npm run seed:accounts` 로 되돌린다(`audit:api` 와 같다).

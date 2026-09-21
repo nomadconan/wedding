@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * `docs/PROJECT_STATUS.md` 의 수치 칸을 **기계로 대조한다** (D-238)
@@ -58,7 +59,7 @@ const tasksDoc = readFileSync(path.join(ROOT, "docs/TASKS.md"), "utf8");
 const decisionsDoc = readFileSync(path.join(ROOT, "docs/DECISIONS.md"), "utf8");
 
 /** 태스크 행 — ID 칸 + 상태 칸을 가진 행만 센다. */
-function taskRows() {
+export function taskRows() {
   const seen = new Map();
   for (const line of tasksDoc.split(/\r?\n/)) {
     const m = line.match(
@@ -70,7 +71,7 @@ function taskRows() {
 }
 
 /** FIX 표 — 등급과 상태를 함께 본다. **"미해소" 안에 "해소" 가 있다.** */
-function fixRows() {
+export function fixRows() {
   const lines = tasksDoc.split(/\r?\n/);
   const start = lines.findIndex((l) => l.trim() === "| ID | 등급 | 내용 | 상태 | 발견/해소 |");
   if (start < 0) throw new Error(`${DOC} 대조 불가: FIX 표 머리를 못 찾았다`);
@@ -89,12 +90,30 @@ function fixRows() {
   const done = (r) => /^해소/.test(r.state) || /^해소/.test(r.grade);
 
   return {
+    // **수만 돌려주면 부르는 쪽이 다시 센다.** 회차 보고는 "어느 항목이 남았나" 를
+    // 적어야 하는데, 그것만 따로 세다가 **같은 규칙의 사본**이 생긴다 — 실제로
+    // 그 사본이 "부분 해소" 를 해소로 세다 두 회차 연속 틀렸다. 행과 판정을 함께
+    // 내준다 — `isDone` 이 여기 하나뿐이면 갈릴 수가 없다.
+    rows,
+    isDone: done,
     must: rows.filter((r) => !done(r) && /실서비스 전 필수/.test(r.grade)).length,
     noted: rows.filter((r) => !done(r) && /^기록$/.test(r.grade)).length,
     done: rows.filter(done).length,
   };
 }
 
+// ── 여기부터는 **직접 돌렸을 때만** 돌린다 ──────────────────────────
+//
+// 집계 규칙을 두 벌 두지 않게 하려고 `fixRows`·`taskRows` 를 내보냈다 — 회차 보고가
+// FIX 를 셀 때 사본을 만들어 써서 **두 회차 연속 「부분 해소」를 해소로 셀다.**
+// 그런데 이 파일은 마지막에 `process.exit` 를 부른다 — 가려 두지 않으면 불러 쓰는 쪽은
+// 임포트만 했는데 **프로세스가 그 자리에서 죽는다.**
+const isEntry =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntry) main();
+
+function main() {
 const tasks = taskRows();
 const fixes = fixRows();
 
@@ -182,3 +201,4 @@ console.log(
 );
 
 process.exit(failed ? 1 : 0);
+}

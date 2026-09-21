@@ -1,5 +1,7 @@
 import {
+  DOCUMENT_BUCKET,
   PURGE_JOB_NAME,
+  documentObjectKey,
   type PurgeCandidate,
   type PurgeOutcome,
   type PurgeSummary,
@@ -28,16 +30,25 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * ── 순서가 규칙이다 (D-58) ─────────────────────────────────────────────────
  * **Storage 삭제 → `purged_at`** 이다. 뒤집으면 파기 실패한 문서가 '파기됨' 으로 적혀
  * **감사(F-A-08)가 찾아내야 할 것을 못 찾는다.**
+ *
+ * ── 버킷을 경로에서 읽지 않는다 (FIX-87) ───────────────────────────────────
+ * 여기 `splitStoragePath(path)` 가 있어서 `documents.storage_path` 의 **첫 조각을
+ * 버킷으로 읽었다.** 그런데 그 값을 적는 쪽(`lib/reports/storage.ts` 의
+ * `documentPath()`)은 `<커플id>/<문서id>` 를 적는다 — **버킷 접두어가 없다.**
+ * 그래서 배치는 `<커플id>` 라는 **없는 버킷**에서 지우려 했고,
+ * `storage.remove()` 는 없는 버킷에도 **오류를 안 낸다**(실측: `error:null data:[]`).
+ * 결과가 이랬다:
+ *
+ *     {"processed":2,"purged":2,"failed":0,"status":"succeeded"}   ← 원문은 그대로 있다
+ *
+ * 게다가 `purged_at` 이 찍히는 순간 아래 조회의 `is('purged_at', null)` 에서
+ * **영영 빠진다.** 24시간 파기(§5.1)가 아니라 **영구 보존**이 되고, 감사 화면은
+ * "파기됨" 이라고 말한다. `purged_at` 의 뜻이 통째로 뒤집혀 있었다.
+ *
+ * **경로는 `contracts-raw` 안의 키다.** 버킷은 상수이며 추측하지 않는다.
+ * 그리고 `remove()` 가 **오류를 안 내므로 지워진 개수를 본다** — 0 은 성공이 아니다.
  */
 export type PurgeRunResult = PurgeSummary & { jobRunId: string | null; ranAt: string };
-
-/** `contracts-raw/foo.pdf` → 버킷과 키로 가른다. 버킷이 없으면 지울 수 없다. */
-function splitStoragePath(path: string): { bucket: string; key: string } | null {
-  const slash = path.indexOf("/");
-  if (slash <= 0 || slash === path.length - 1) return null;
-
-  return { bucket: path.slice(0, slash), key: path.slice(slash + 1) };
-}
 
 export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
   const admin = createAdminClient();
@@ -82,22 +93,52 @@ export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
   const due = selectDuePurges(candidates, now);
   const outcomes: PurgeOutcome[] = [];
 
-  for (const candidate of due) {
-    const parts = splitStoragePath(candidate.storagePath);
+  /**
+   * **버킷이 있는지 먼저 본다** (FIX-87 · §7.0b "0 으로 통과하는 검사를 만들지 않는다").
+   *
+   * 아래에서 "지워진 개수 0" 을 `already_gone` 으로 읽는데, **버킷 자체가 없어도
+   * 0 이 나온다.** 그 둘을 못 가르면 버킷 이름을 잘못 적은 날 배치가 **전건을
+   * '이미 없다' 로 찍고** 원문을 통째로 남긴다 — 바로 그 일이 있었다.
+   * 확인은 실행당 한 번이고, 실패하면 **아무것도 찍지 않고** 통째로 실패로 닫는다.
+   */
+  if (due.length > 0) {
+    const { error: bucketError } = await admin.storage.getBucket(DOCUMENT_BUCKET);
 
-    if (!parts) {
+    if (bucketError) {
+      const summary = summarizePurgeRun(
+        due.map((candidate) => ({
+          id: candidate.id,
+          result: "failed" as const,
+          reason: "bucket_missing",
+        })),
+      );
+      await closeRun(admin, jobRunId, summary);
+
+      return { ...summary, jobRunId, ranAt };
+    }
+  }
+
+  for (const candidate of due) {
+    const key = documentObjectKey(candidate.storagePath);
+
+    if (key === null) {
       // 경로가 망가졌으면 지울 수 없다. **`purged_at` 을 찍지 않는다** — 원문이
       // 어딘가 남아 있을 수 있는데 '파기됨' 으로 적으면 감사가 눈을 감는다.
       outcomes.push({ id: candidate.id, result: "failed", reason: "bad_path" });
       continue;
     }
 
-    const { error: removeError } = await admin.storage.from(parts.bucket).remove([parts.key]);
+    const removed = await admin.storage.from(DOCUMENT_BUCKET).remove([key]);
 
-    if (removeError) {
+    if (removed.error) {
       outcomes.push({ id: candidate.id, result: "failed", reason: "storage_error" });
       continue;
     }
+
+    // **개수를 본다.** 버킷이 살아 있는데 0 건이 지워졌다면 객체가 이미 없다는 뜻이고
+    // (`already_gone`), 그건 파기 목적이 달성된 상태다 — 안 찍으면 매시간 다시 집는다.
+    // 버킷 자체가 없는 경우는 위의 사전 확인이 이미 걸렀다.
+    const deleted = (removed.data ?? []).length;
 
     // Storage 를 지운 **뒤에** 표시한다(D-58).
     const { error: markError } = await admin
@@ -108,7 +149,9 @@ export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
     outcomes.push(
       markError
         ? { id: candidate.id, result: "failed", reason: "mark_failed" }
-        : { id: candidate.id, result: "purged" },
+        : deleted > 0
+          ? { id: candidate.id, result: "purged" }
+          : { id: candidate.id, result: "already_gone" },
     );
   }
 

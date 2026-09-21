@@ -43,6 +43,7 @@
     "check:escrow": "node --env-file=.env.local scripts/check-escrow-release.mjs",
     "check:settlement": "node --env-file=.env.local scripts/check-settlement-aggregate.mjs",
     "check:no-store": "node --env-file=.env.local scripts/check-no-store.mjs",
+    "check:purge": "node --env-file=.env.local scripts/check-purge.mjs",
     "check:writes": "node scripts/check-writes.mjs",
     "check:status-numbers": "node scripts/check-status-numbers.mjs"
   },

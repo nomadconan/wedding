@@ -225,6 +225,20 @@ jobs:
       - name: vendor:walk
         run: npm run vendor:walk
 
+      # 원문 파기 — **진짜 버킷에 진짜 파일을 올려 배치를 부른다**(FIX-87 · §5.1).
+      #
+      # 이 건이 CI 에 들어오는 이유가 있다. 배치가 `storage_path` 의 앞 조각을
+      # 버킷으로 읽고 있었는데 **시드 픽스처가 그 모양으로 적혀 있어** 단위 시험도
+      # 라우트 점검도 전부 통과했다. 진짜 문서는 한 건도 안 지워졌는데도 그랬다.
+      # **저장소와 DB 사이의 약속은 둘을 다 실제로 두드려 봐야 보인다.**
+      #
+      # 앞선 주행이 남긴 것과 섞이지 않게 되돌리고 돌린다.
+      - name: reseed before purge check
+        run: npm run db:reseed
+
+      - name: check:purge
+        run: npm run check:purge
+
       - name: dev server log (on failure)
         if: failure()
         run: tail -100 /tmp/dev.log || true

@@ -13,10 +13,12 @@ import {
   statusAfter,
 } from "./deletion";
 import {
+  DOCUMENT_BUCKET,
   PURGE_CRITICAL_HOURS,
   PURGE_JOB_NAME,
   type PurgeAudit,
   type PurgeOutcome,
+  documentObjectKey,
   purgeAlerts,
   selectDuePurges,
   summarizePurgeRun,
@@ -27,10 +29,40 @@ const UUID = "00000000-0000-0000-0000-0000000000a1";
 
 const doc = (over: Partial<Parameters<typeof selectDuePurges>[0][number]> = {}) => ({
   id: "d1",
-  storagePath: "contracts-raw/x.pdf",
+  // 앱이 실제로 적는 모양이다 — 버킷 접두어가 없다(FIX-87).
+  storagePath: "c0a1/d001",
   purgeScheduledAt: "2026-08-27T11:00:00.000Z",
   purgedAt: null,
   ...over,
+});
+
+// ── 경로 → 객체 키 (FIX-87) ──────────────────────────────────
+//
+// **이 넣은 것을 그대로 돌려주는 시험이 아니다.** 고치기 전에는 배치가 경로의 앞
+// 조각을 버킷으로 읽었고, 그래서 `없는버킷/문서` 에서 지우며 "지웠다" 고 답했다.
+// 여기서 고정하는 것은 **저장된 값이 곷 키라는 약속**과, 알 수 없는 모양은
+// 추측하지 않고 **거절한다**는 것이다.
+
+describe("documentObjectKey", () => {
+  it("앱이 적는 모양은 그대로 키다", () => {
+    expect(documentObjectKey("c0a1/d001")).toBe("c0a1/d001");
+  });
+
+  it("**버킷 이름으로 시작하는 경로는 거절한다** — 두 뜻 중 어느 쪽인지 모른다", () => {
+    expect(documentObjectKey(`${DOCUMENT_BUCKET}/x.pdf`)).toBeNull();
+    expect(documentObjectKey(DOCUMENT_BUCKET)).toBeNull();
+  });
+
+  it("빈 값·절대경로·상위 탐색은 거절한다", () => {
+    expect(documentObjectKey("")).toBeNull();
+    expect(documentObjectKey("   ")).toBeNull();
+    expect(documentObjectKey("/c0a1/d001")).toBeNull();
+    expect(documentObjectKey("c0a1/../other/d001")).toBeNull();
+  });
+
+  it("버킷은 경로가 아니라 **상수**다", () => {
+    expect(DOCUMENT_BUCKET).toBe("contracts-raw");
+  });
 });
 
 // ── 파기 대상 고르기 ────────────────────────────────────────────────────────

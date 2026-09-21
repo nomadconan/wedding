@@ -783,7 +783,9 @@ async function seedMetricsFixture(vendorId, coupleId, ownerUser, partnerUser) {
     id: METRIC_DOCUMENT_ID,
     couple_id: coupleId,
     doc_type: "contract",
-    storage_path: "local-demo/never-uploaded.pdf",
+    // `<coupleId>/<documentId>` - the shape `documentPath()` writes (FIX-87).
+    // This one is deliberately never uploaded, so the object does not exist.
+    storage_path: `${coupleId}/${METRIC_DOCUMENT_ID}`,
     purge_scheduled_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
   });
 
@@ -1042,12 +1044,23 @@ async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
       body: JSON.stringify(row),
     });
 
+  // storage_path is `<coupleId>/<documentId>` - NO bucket prefix. That is exactly
+  // what `documentPath()` in lib/reports/storage.ts writes, and the purge batch
+  // treats the whole value as the object key inside `contracts-raw`.
+  //
+  // These fixtures used to read "contracts-raw/local-demo-overdue.pdf", a shape the
+  // app never produces. The batch happened to agree with the fixture (it split the
+  // first segment off as the bucket), so every check passed while real documents
+  // were never deleted at all - FIX-87. A fixture that matches the code under test
+  // instead of the code under production is not a fixture, it is a blindfold.
+  const docKey = (documentId) => `${coupleId}/${documentId}`;
+
   // Overdue: scheduled 8h ago, never purged. Past PURGE_CRITICAL_HOURS on purpose.
   await upsert("documents", {
     id: PRIVACY_OVERDUE_DOC_ID,
     couple_id: coupleId,
     doc_type: "contract",
-    storage_path: "contracts-raw/local-demo-overdue.pdf",
+    storage_path: docKey(PRIVACY_OVERDUE_DOC_ID),
     purge_scheduled_at: hoursAgo(8),
     purged_at: null,
   });
@@ -1056,7 +1069,7 @@ async function seedPrivacyFixture(adminUser, coupleId, consumerUser) {
     id: PRIVACY_PURGED_DOC_ID,
     couple_id: coupleId,
     doc_type: "estimate",
-    storage_path: "contracts-raw/local-demo-purged.pdf",
+    storage_path: docKey(PRIVACY_PURGED_DOC_ID),
     purge_scheduled_at: hoursAgo(30),
     purged_at: hoursAgo(29),
   });

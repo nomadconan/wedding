@@ -10,6 +10,7 @@ import {
 } from "@/lib/core/report/pipeline";
 import { DETECT_RULES_VERSION, DETECT_RULE_CODES } from "@/lib/core/rules/detect-rules";
 import { scanDocument, verifyCitation } from "@/lib/core/rules/scan";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import { logAiCall } from "@/lib/quality/log";
 import { loadDetectRuleSet, ruleSetSummary } from "@/lib/rules/detect-rule-set";
 import type { Finding, Report } from "@/lib/core/schemas/report";
@@ -86,7 +87,19 @@ async function fail(
 ): Promise<AnalyzeOutcome> {
   const admin = createAdminClient();
 
-  await admin.from("document_analyses").update({ status: "failed" }).eq("id", analysisId);
+  /**
+   * **`tryWrite` 다 — 던지면 더 잃는다**(D-237).
+   *
+   * `runAnalysis` 는 `void runAnalysis(...).catch(() => {})` 로 불린다
+   * (`app/api/reports/route.ts` · `app/api/reports/[id]/route.ts`). 여기서 던지면
+   * 예외는 **그 빈 catch 가 통째로 삼키고**, 바로 아래 증적까지 건너뛴다 — 상태도
+   * 안 적히고 **왜 실패했는지가 어디에도 안 남는다.** 못 적었으면 그 사실을
+   * 증적 메모에 적는다. 그래야 F-A-08 이 "상태는 running 인데 실패로 끝났다" 를 본다.
+   */
+  const marked = await tryWrite(
+    "document_analyses.update:mark-failed",
+    admin.from("document_analyses").update({ status: "failed" }).eq("id", analysisId),
+  );
 
   await recordEvent({
     entityType: "document_analysis",
@@ -95,7 +108,7 @@ async function fail(
     actor: { id: actorId },
     afterState: "failed",
     // **사유 코드만.** 문서 내용·경로·잔존 값은 넣지 않는다(§7.3 · §5.3).
-    memo: `reason:${reason}`,
+    memo: `reason:${reason}${marked ? "" : " status_write_failed"}`,
   });
 
   return { status: "failed", source: null, failureReason: reason };
@@ -107,16 +120,51 @@ async function fail(
  * Storage 객체를 먼저 지우고 `purged_at` 을 찍는다. 순서가 반대면 "지웠다고
  * 기록했는데 파일이 남은" 상태가 생기고, 그건 개인정보 감사(F-A-08)가 찾아내야 할
  * 것을 못 찾게 만든다.
+ *
+ * ── 순서만으로는 부족했다 (FIX-87) ──────────────────────────────────────────
+ * 순서는 맞는데 **삭제 결과를 안 봤다.** `remove()` 가 실패해도 `purged_at` 을 찍었고,
+ * 찍히는 순간 배치의 `is('purged_at', null)` 에서 **영영 빠진다** — 파기 배치라는
+ * 안전망이 스스로 눈을 감는 셈이다. 지웠을 때만 찍는다.
+ *
+ * **`remove()` 는 없는 객체에도 오류를 안 낸다**(로컬 실측: `error:null data:[]`).
+ * 그래서 오류만 보면 안 되고 **지워진 개수**를 본다. 여기서 0 이면 방금 내려받은
+ * 파일이 사라졌다는 뜻이므로 `purged_at` 을 찍지 않고 배치에 넘긴다.
  */
 async function purge(document: DocumentRow, actorId: string): Promise<void> {
   const admin = createAdminClient();
 
-  await admin.storage.from(DOCUMENT_BUCKET).remove([document.storage_path]);
+  const removed = await admin.storage.from(DOCUMENT_BUCKET).remove([document.storage_path]);
+  const gone = removed.error === null && (removed.data ?? []).length > 0;
 
-  await admin
-    .from("documents")
-    .update({ purged_at: new Date().toISOString() })
-    .eq("id", document.id);
+  if (!gone) {
+    // **못 지웠으면 아무것도 찍지 않는다.** `purge_scheduled_at` 이 그대로 남아
+    // 매시간 배치가 다시 집는다(§5.1 — 24시간 안에 지우면 된다). 경로·오류 문구는
+    // 남기지 않는다(§5.3).
+    await recordEvent({
+      entityType: "document",
+      entityId: document.id,
+      eventType: "document_purge_failed",
+      actor: { id: actorId },
+      beforeState: "stored",
+      afterState: "stored",
+      memo: "reason:storage_remove_failed",
+    });
+
+    return;
+  }
+
+  /**
+   * **`tryWrite` 다 — 던지면 더 잃는다**(D-237).
+   *
+   * `purge()` 는 실패 경로에서 `return fail(...)` **직전**에 불린다. 여기서 던지면
+   * `fail()` 이 아예 안 돌아 상태도 증적도 안 남고, 부르는 쪽은 빈 catch 라
+   * 예외마저 사라진다. 반대로 못 찍는 것은 **배치가 되돌린다** — 객체는 이미
+   * 없으므로 배치가 `already_gone` 으로 찍어 마무리한다.
+   */
+  const marked = await tryWrite(
+    "documents.update:purged-at",
+    admin.from("documents").update({ purged_at: new Date().toISOString() }).eq("id", document.id),
+  );
 
   await recordEvent({
     entityType: "document",
@@ -124,7 +172,9 @@ async function purge(document: DocumentRow, actorId: string): Promise<void> {
     eventType: "document_purged",
     actor: { id: actorId },
     beforeState: "stored",
-    afterState: "purged",
+    // **원문은 실제로 없어졌다.** 다만 표시를 못 찍었으면 그렇게 적는다 —
+    // 배치가 마저 찍을 때까지 감사 화면에는 '파기 예정' 으로 보인다.
+    afterState: marked ? "purged" : "purge_unmarked",
   });
 }
 
@@ -264,10 +314,28 @@ export async function runAnalysis(input: {
   }
 
   // ── 8단계. 저장 ───────────────────────────────────────────────────────────
-  await admin.from("findings").delete().eq("analysis_id", input.analysisId);
+  //
+  // **여기 셋은 전부 `mustWrite` 다** — 이 쓰기가 곧 본 작업이고, 실패한 채로
+  // 다음 줄이 돌면 **틀린 리포트가 화면에 뜬다.**
+  //
+  // 던져서 잃는 것은 **즉시 파기**뿐이다(맨 아래 `purge`). 그건 잃어도 된다 —
+  // `purge_scheduled_at` 이 살아 있어 배치가 §5.1 의 24시간 안에 지우고, 오히려
+  // 원문이 남아 있어야 폴링이 **재개해서 다시 분석**할 수 있다.
+
+  // 재개하면 앞선 실행이 넣은 것이 남아 있다. 못 지우고 넣으면 **같은 지적이 두 번**
+  // 뜨고, 그 수로 계산한 위험도와 화면이 어긋난다.
+  await mustWrite(
+    "findings.delete:before-reinsert",
+    admin.from("findings").delete().eq("analysis_id", input.analysisId),
+  );
 
   if (report.findings.length > 0) {
-    await admin.from("findings").insert(
+    // **가장 위험한 줄이다.** 못 넣었는데 아래에서 `done` 으로 닫으면 화면은
+    // 지적 0건짜리 완료 리포트를 그린다 — 사용자는 그것을 **"위험 없음"** 으로 읽는다
+    // (§8 "부분 결과를 노출하지 않는다").
+    await mustWrite(
+      "findings.insert:report",
+      admin.from("findings").insert(
       report.findings.map((finding) => ({
         analysis_id: input.analysisId,
         rule_code: finding.rule_code,
@@ -280,23 +348,30 @@ export async function runAnalysis(input: {
         // 여기까지 온 finding 은 전부 인용 대조를 통과했다.
         citation_verified: true,
       })),
+      ),
     );
   }
 
-  await admin
-    .from("document_analyses")
-    .update({
-      status: "done",
-      risk_score: report.risk_score,
-      // 판본은 **코드가 진실**이다(S7-01) — DB 는 사본이고 어긋나면 `drift` 가 알린다.
-      rule_version: DETECT_RULES_VERSION,
-      prompt_version: ai.promptVersion,
-      model: ai.used ? ai.model : null,
-      latency_ms: Date.now() - startedAt,
-      token_in: ai.used ? ai.tokenIn : null,
-      token_out: ai.used ? ai.tokenOut : null,
-    })
-    .eq("id", input.analysisId);
+  // 지적은 들어갔는데 `done` 을 못 찍으면 상태는 `running` 에 머물고, 폴링이 재개해
+  // **다시 분석**한다 — 그때 원문은 이미 없으므로 `document_missing` 으로 끝나
+  // **끝난 분석을 통째로 잃는다.**
+  await mustWrite(
+    "document_analyses.update:mark-done",
+    admin
+      .from("document_analyses")
+      .update({
+        status: "done",
+        risk_score: report.risk_score,
+        // 판본은 **코드가 진실**이다(S7-01) — DB 는 사본이고 어긋나면 `drift` 가 알린다.
+        rule_version: DETECT_RULES_VERSION,
+        prompt_version: ai.promptVersion,
+        model: ai.used ? ai.model : null,
+        latency_ms: Date.now() - startedAt,
+        token_in: ai.used ? ai.tokenIn : null,
+        token_out: ai.used ? ai.tokenOut : null,
+      })
+      .eq("id", input.analysisId),
+  );
 
   // 품질·비용 원천(F-A-04 · §5.8). **문서 내용은 담기지 않는다.**
   //
@@ -304,7 +379,11 @@ export async function runAnalysis(input: {
   // finding 수. 폐기 수는 그 호출이 끝나면 **다시 셀 수 없다**(폐기된 행은 저장되지
   // 않는다). 그전까지 유일한 흔적이 `entity_events.memo` 의 문자열이었고, 그것으로
   // 지표를 만들면 memo 형식을 바꾸는 날 폐기율이 조용히 0이 된다.
-  await logAiCall({
+  //
+  // **못 남긴 것을 세어 둔다**(FIX-88). 이 줄이 조용히 실패하면 품질 화면의 분모가
+  // 그만큼 작아지고, 실패한 호출만 못 들어가는 날에는 **실패율이 0% 로 보인다** —
+  // 그것이 S8-07 이 막으려던 "측정하지 않은 것이 0 으로 보인다" 그대로다.
+  const logged = await logAiCall({
     feature: "report",
     model: ai.used ? ai.model : null,
     promptVersion: ai.promptVersion,
@@ -327,7 +406,7 @@ export async function runAnalysis(input: {
     actor: { id: input.actorId },
     afterState: "done",
     // 셀 수 있는 값과 코드만. 조항·인용은 넣지 않는다(§7.3).
-    memo: `source:${source} findings:${report.findings.length} discarded:${discardedCount} rules:${summary.source}${summary.drift ? " drift" : ""}`,
+    memo: `source:${source} findings:${report.findings.length} discarded:${discardedCount} rules:${summary.source}${summary.drift ? " drift" : ""}${logged ? "" : " ai_log_failed"}`,
   });
 
   // ── 8단계. 파기 — 분석이 끝났으니 원문은 더 필요하지 않다 ─────────────────

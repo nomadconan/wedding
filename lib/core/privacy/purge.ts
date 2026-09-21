@@ -9,6 +9,39 @@
 /** `job_runs.job_name`. 화면·배치·검사가 같은 문자열을 봐야 한다. */
 export const PURGE_JOB_NAME = "purge-documents";
 
+/**
+ * 계약서 원문이 사는 버킷. **경로에서 읽지 않고 상수로 안다**(FIX-87).
+ *
+ * `lib/reports/storage.ts` 의 `DOCUMENT_BUCKET` 과 같은 값이며, 그쪽은 Supabase
+ * 클라이언트를 import 하므로 `lib/core` 가 그것을 부를 수 없다(§3.1). 두 벌이 갈리지
+ * 않게 **`lib/reports/storage.ts` 가 이 상수를 쓴다** — 진실은 여기 하나다.
+ */
+export const DOCUMENT_BUCKET = "contracts-raw";
+
+/**
+ * `documents.storage_path` → **버킷 안의 객체 키**.
+ *
+ * ── 왜 함수인가 ─────────────────────────────────────────────────────────────
+ * 전에는 배치가 `path.split("/")` 의 앞 조각을 **버킷으로** 읽었다. 값을 적는 쪽
+ * (`documentPath()`)은 `<커플id>/<문서id>` 를 적으므로 그 앞 조각은 **커플 id** 이고,
+ * 배치는 없는 버킷을 지우며 "지웠다" 고 답했다(FIX-87). 경로의 뜻을 **한 군데서**
+ * 정하고 시험으로 고정한다.
+ *
+ * ── `contracts-raw/…` 를 추측하지 않는다 ────────────────────────────────────
+ * 버킷 이름으로 시작하는 경로는 **둘 중 어느 뜻인지 알 수 없다** — 키가
+ * `contracts-raw/foo.pdf` 인지, 버킷+키를 붙여 적은 `foo.pdf` 인지. 파기는 되돌릴 수
+ * 없고 **틀린 추측은 "지웠다" 는 거짓말로 끝나므로** 지우지 않고 실패로 남긴다.
+ * 그러면 감사(F-A-08)가 그 건을 계속 본다.
+ */
+export function documentObjectKey(storagePath: string): string | null {
+  const key = storagePath.trim();
+
+  if (key === "" || key.startsWith("/") || key.includes("..")) return null;
+  if (key === DOCUMENT_BUCKET || key.startsWith(`${DOCUMENT_BUCKET}/`)) return null;
+
+  return key;
+}
+
 /** 파기 대상 한 건. `storagePath` 는 배치 안에서만 살고 **밖으로 나가지 않는다**(§5.3). */
 export type PurgeCandidate = {
   id: string;
