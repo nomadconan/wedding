@@ -41,6 +41,10 @@ const CLOSED = [
   // FIX-73(d) — 문서 분석·파기(§5.1)와 플래너 대화.
   "lib/reports",
   "lib/ai",
+  // FIX-73(e) — 계약·멤버십·쿼폰. 돈과 계약에 가장 가까운 나머지다.
+  "lib/contract",
+  "lib/membership",
+  "lib/coupons",
 ];
 
 /**
@@ -54,7 +58,7 @@ const CLOSED = [
  * 확인했다(34→35 인데 상한 40 이라 조용했다). 그래서 **닫은 도메인은
  * `CLOSED` 에 올리고 상한을 그만큼 내린다** — 둘을 함께 해야 톱니가 물린다.
  */
-const BUDGET = 34;
+const BUDGET = 28;
 
 const WRITE = /\.(insert|update|upsert|delete)\s*\(/;
 

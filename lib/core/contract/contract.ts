@@ -369,3 +369,43 @@ export const SIGN_VERIFICATION_NOTICE =
 
 export const STUB_VERIFICATION_NOTICE =
   "지금은 본인확인이 개발용 대체 수단으로 동작해요. 실제 서비스에서는 문자 인증을 거칩니다.";
+
+// =============================================================================
+// 확정이 반쪽으로 끝났는가 (FIX-73e · D-244)
+// =============================================================================
+
+/**
+ * 계약 확정은 **한 트랜잭션이 아니다.** 계약행을 `active` 로 옮기고, 예약을
+ * `confirmed` 로 옮기며 요율 스냅샷을 박고, 플래너 수수료 원장을 만든다 — 셋이
+ * 따로 쓰인다.
+ *
+ * **서명이 그 앞에 이미 저장돼 있어서** 뒤 걸음이 실패해도 되돌릴 수 없고, 재시도는
+ * `signingState` 의 "이미 확정된 계약이에요" 에 막혀 **다시 하지도 못한다.** 그래서
+ * 던지는 대신 **무엇이 빠졌는지를 값으로 만든다** — 이 함수가 그 값이다.
+ *
+ * 왜 `lib/core` 인가: 판정이 한 줄이라도 **화면·증적·응답 셋이 같은 답을 봐야** 하고,
+ * 위에 있으면 서버 코드 안에 묻혀 시험할 수 없다.
+ *
+ * **`plannerLedger` 의 `null` 은 `false` 가 아니다.** 플래너가 없거나 유예 설정이
+ * 없어 **애초에 만들지 않은 것**은 빠진 것이 아니다 — 그 둘을 섞으면 플래너 없는
+ * 계약이 전부 '반쪽 확정' 이 된다.
+ */
+export function activationGaps(input: {
+  bookingId: string;
+  bookingConfirmed: boolean;
+  plannerLedger: boolean | null;
+}): string[] {
+  const gaps: string[] = [];
+
+  // 예약 id 를 함께 적는다 — 예약이 `confirmed` 로 안 넘어가면 정산 집계가 그 건을
+  // **아예 안 집어** 나중에 어느 예약이 빠졌는지 알 길이 없다.
+  if (!input.bookingConfirmed) gaps.push(`booking_confirm:${input.bookingId}`);
+  if (input.plannerLedger === false) gaps.push("planner_ledger");
+
+  return gaps;
+}
+
+/** 빠진 걸음이 하나라도 있으면 **확정됐다고 말하지 않는다.** */
+export function isFullyActivated(gaps: readonly string[]): boolean {
+  return gaps.length === 0;
+}

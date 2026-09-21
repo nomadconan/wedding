@@ -5,12 +5,14 @@ import {
   ContractError,
   PLACEHOLDER_CLAUSE_SLOTS,
   SIGNER_ROLES,
+  activationGaps,
   assertNoClauseNumbers,
   canEditClauses,
   canSign,
   canonicalContent,
   contractTotalFromQuote,
   hasClauseNumber,
+  isFullyActivated,
   isPlaceholderTemplate,
   quoteEligibility,
   requiredSignerRoles,
@@ -345,5 +347,51 @@ describe("값 집합", () => {
   it("역할·상태 목록에 중복이 없다", () => {
     expect(new Set(SIGNER_ROLES).size).toBe(SIGNER_ROLES.length);
     expect(new Set(CONTRACT_STATUSES).size).toBe(CONTRACT_STATUSES.length);
+  });
+});
+
+// ── 확정이 반쪽으로 끝났는가 (FIX-73e · D-244) ──────────────────────────────
+//
+// **이 시험이 지키는 것은 "빠진 것을 빠졌다고 말하는가" 다.** 계약 확정은 세 걸음이
+// 따로 쓰이고 서명은 그 앞에 이미 저장돼 있어 되돌릴 수도 재시도할 수도 없다 —
+// 그래서 남은 수단이 **정확히 기록하고 확정됐다고 말하지 않는 것**뿐이다.
+
+describe("activationGaps — 빠진 걸음을 이름으로 말한다", () => {
+  const BOOKING = "00000000-0000-0000-0000-0000000000b1";
+
+  it("셋이 다 됐으면 빈 목록이다", () => {
+    expect(
+      activationGaps({ bookingId: BOOKING, bookingConfirmed: true, plannerLedger: true }),
+    ).toEqual([]);
+  });
+
+  it("예약이 안 잡히면 **예약 id 와 함께** 적는다 — 정산이 그 건을 아예 안 집는다", () => {
+    expect(
+      activationGaps({ bookingId: BOOKING, bookingConfirmed: false, plannerLedger: true }),
+    ).toEqual([`booking_confirm:${BOOKING}`]);
+  });
+
+  it("플래너 원장이 실패하면 적는다", () => {
+    expect(
+      activationGaps({ bookingId: BOOKING, bookingConfirmed: true, plannerLedger: false }),
+    ).toEqual(["planner_ledger"]);
+  });
+
+  it("**만들 이유가 없었던 것(null)은 빠진 것이 아니다** — false 와 섞지 않는다", () => {
+    expect(
+      activationGaps({ bookingId: BOOKING, bookingConfirmed: true, plannerLedger: null }),
+    ).toEqual([]);
+  });
+
+  it("둘 다 빠지면 둘 다 적는다", () => {
+    expect(
+      activationGaps({ bookingId: BOOKING, bookingConfirmed: false, plannerLedger: false }),
+    ).toEqual([`booking_confirm:${BOOKING}`, "planner_ledger"]);
+  });
+
+  it("빠진 것이 하나라도 있으면 **확정됐다고 말하지 않는다**", () => {
+    expect(isFullyActivated([])).toBe(true);
+    expect(isFullyActivated(["planner_ledger"])).toBe(false);
+    expect(isFullyActivated([`booking_confirm:${BOOKING}`, "planner_ledger"])).toBe(false);
   });
 });

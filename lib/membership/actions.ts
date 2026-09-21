@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { recordEvent } from "@/lib/audit/record";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import {
   MEMBERSHIP_SETTING_KEYS,
   membershipPrice,
@@ -206,12 +207,29 @@ export async function startMembership(
     return { status: 500, code: "MEMBERSHIP_SAVE_FAILED", message: "구독을 저장하지 못했어요." };
   }
 
-  await admin.from("subscription_payments").insert({
-    membership_id: membershipId,
-    amount: price.amount,
-    billing_cycle: "monthly",
-    status: "paid",
-  });
+  /**
+   * **`tryWrite` 다 — 던져도 이 행이 생기지 않는다**(D-244).
+   *
+   * 이 줄 위로 **어댑터 결제가 이미 끝났고** 멤버십도 `active` 로 섬다.
+   * 여기서 던져 500 을 내면 사용자는 결제가 실패한 줄 알고 다시 시도하는데,
+   * 이 함수 맨 위가 **`MEMBERSHIP_ALREADY_ACTIVE`(409)** 로 돌려보낸다 —
+   * **재시도가 이 행을 다시 만들지 못한다.** 예외는 상태를 바꾸지 못하고
+   * **사용자에게 틀린 말을 하게 만들 뿐**이다 — 돈은 나갔고 권한도 열렸다.
+   *
+   * **대신 금액을 잃지 않는다.** 아래 증적은 평소 금액을 안 적는데 그 이유가
+   * *"`subscription_payments` 가 이미 갖고 있고 옆겨 적으면 두 곳이 갈린다"* 였다.
+   * **그 행이 없으면 그 이유가 사라진다** — 갈릴 두 곳이 없고, 안 적으면 얼마를
+   * 받았는지가 **앱 안 어디에도 안 남는다.** 실패한 때만 금액을 증적에 싱는다.
+   */
+  const paymentRecorded = await tryWrite(
+    "subscription_payments.insert:paid",
+    admin.from("subscription_payments").insert({
+      membership_id: membershipId,
+      amount: price.amount,
+      billing_cycle: "monthly",
+      status: "paid",
+    }),
+  );
 
   await recordEvent({
     entityType: "membership",
@@ -222,7 +240,11 @@ export async function startMembership(
     // **금액을 남기지 않는다**(§7.3) — `subscription_payments` 가 이미 갖고 있고
     // 옮겨 적으면 두 곳이 갈린다. 남길 사실은 **어느 어댑터로 열렸는가**다:
     // 스텁으로 열린 구독과 실결제로 열린 구독은 나중에 반드시 구분해야 한다.
-    memo: `adapter:${adapter.name}`,
+    //
+    // **그 행이 안 들어갔을 때만 금액을 적는다** — 위 `tryWrite` 주석 참조.
+    memo: paymentRecorded
+      ? `adapter:${adapter.name}`
+      : `adapter:${adapter.name} payment_row_missing amount=${price.amount}`,
   });
 
   return { expiresAt, adapter: adapter.name };
@@ -259,13 +281,27 @@ export async function cancelMembership(
 
   const admin = createAdminClient();
 
-  await admin
-    .from("memberships")
-    .update({ status: "canceled" })
-    .eq("id", current.id)
-    // **소유자 필터를 넣는다.** 판정은 위에서 끝났지만 조건을 빼면 서비스롤 한 줄이
-    // 표 전체를 건드릴 수 있는 모양이 된다.
-    .eq("user_id", input.userId);
+  /**
+   * **`mustWrite` 다 — 이 줄이 곧 본 작업이고, 재시도가 되돌린다**(D-244).
+   *
+   * 조용히 실패하면 아래에서 `canceled: true` 를 돌려주고 화면은 *"해지 예약됐어요"*
+   * 라고 말하는데 **구독은 그대로 갱신된다.** 다음 달 청구가 곷 민원이다.
+   *
+   * 이 회차의 다른 다섯 자리와 갈리는 이유는 **재시도가 먹힌다**는 것이다 —
+   * 이 함수는 매번 현재 상태를 다시 읽고(`loadMembership`) `cancelPending` 가 아직
+   * false 면 그대로 다시 시도한다. 던져서 받는 500 은 **사용자에게 다시 누르라고
+   * 말하는 것이고, 그 다시 누름이 실제로 고친다.**
+   */
+  await mustWrite(
+    "memberships.update:cancel",
+    admin
+      .from("memberships")
+      .update({ status: "canceled" })
+      .eq("id", current.id)
+      // **소유자 필터를 넣는다.** 판정은 위에서 끝났지만 조건을 빼면 서비스롤 한 줄이
+      // 표 전체를 건드릴 수 있는 모양이 된다.
+      .eq("user_id", input.userId),
+  );
 
   await recordEvent({
     entityType: "membership",
