@@ -5573,6 +5573,41 @@ if (!vendorStaff || !adminUser) {
              where schemaname = 'storage' and tablename = 'objects'
                and qual like '%contracts-raw%';`) === "0",
     );
+
+    /**
+     * `storage_path` 가 **버킷 안의 키** 인가 (FIX-87 · §5.1)
+     *
+     * 이 칸의 뜻이 **적는 쪽과 읽는 쪽에서 갈라 있었다.** 적는 쪽
+     * (`documentPath()`)은 `<커플id>/<문서id>` 를 적고, 읽는 쪽(파기 배치)은 앞
+     * 조각을 **버킷**으로 읽었다. 그래서 배치는 없는 버킷을 지우며 "지웠다" 고
+     * 답했고, 진짜 문서는 **한 건도 안 지워졌다**(FIX-87).
+     *
+     * 그것을 모두가 못 본 이유가 여기 있다 — **시드 픽스처가 `contracts-raw/...` 로
+     * 적혀 배치와 짝이 맞았다.** 픽스처가 *생산 코드* 가 아니라 *읽는 코드* 에
+     * 맞춰 적혀 있으면, 그 픽스처로 도는 검사는 아무것도 지키지 않는다.
+     *
+     * **`db:reset` 직후에는 표가 비어 있어 조용히 통과한다**(§7.0b). 그래서
+     * "세어볼 행이 있는가" 를 먼저 본다.
+     */
+    {
+      const total = Number(sql(`select count(*) from public.documents;`));
+      const prefixed = Number(
+        sql(`select count(*) from public.documents
+               where storage_path = 'contracts-raw'
+                  or storage_path like 'contracts-raw/%';`),
+      );
+
+      check(
+        "**세어볼 `documents` 행이 실제로 있다** — 빈 표로 통과하지 않는다",
+        total > 0,
+        `rows=${total}`,
+      );
+      check(
+        "**`storage_path` 에 버킷 접두어가 없다** — 그 값은 `contracts-raw` 안의 키다 (FIX-87)",
+        prefixed === 0,
+        `접두어 붙은 행 ${prefixed}건 / 전체 ${total} · 적는 쪽은 documentPath() 하나다`,
+      );
+    }
   }
 
   // ── 대화 시작 권한 (S7-06) ─────────────────────────────────────────────────
@@ -8196,10 +8231,47 @@ if (!vendorStaff || !adminUser) {
       const src = srcOf("lib/privacy/purge.ts");
       // **`purged_at` 을 그냥 찾으면 안 된다** — select 목록에도 그 이름이 있어
       // 조회 문자열이 먼저 걸린다(처음 그렇게 썼다가 오탐이 났다). 실제 **쓰기**를 찾는다.
-      const remove = src.indexOf(".remove([parts.key])");
+      // **이 검사는 버그를 못 잡았다**(FIX-87). 순서는 맞았는데 버킷이 틀렸고,
+      // 순서만 보는 검사는 그것을 볼 수 없다 — 게다가 `.remove([parts.key])` 라는 **그때
+      // 틀렸던 코드의 모양**을 고정하고 있어 고치는 순간 오히려 떨어졌다. 순서는
+      // 그대로 보되 **모양에 안 매달린다**. 진짜 행동은 `npm run check:purge` 가
+      // 진짜 버킷에 진짜 파일을 올려 본다.
+      const remove = src.search(/\.remove\(\[/);
       const write = src.indexOf("update({ purged_at:");
 
       return remove > 0 && write > 0 && remove < write;
+    })(),
+  );
+  /**
+   * 분석 직후의 즉시 파기도 **지운 뒤에만 찍는다** (FIX-87 · D-58)
+   *
+   * **이것은 소스 검사다** — 그 사실을 숨기지 않게 적어 둔다. 배치쪽은
+   * `npm run check:purge` 가 **진짜 버킷에 진짜 파일을 올려** 행동으로 보는데,
+   * 이 자리는 `runAnalysis` 가 **로그인 세션**을 요구해 헤드리스로 못 민다.
+   * 그래서 불변식만 고정한다 — **삭제 결과를 본 뒤에 `purged_at` 을 쓴다.**
+   */
+  check(
+    "**분석 직후 파기도 삭제 결과를 본 뒤에 `purged_at` 을 찍는다**(FIX-87 · 소스 검사)",
+    (() => {
+      const src = srcOf("lib/reports/analyze.ts");
+      const judged = src.indexOf("const gone =");
+      const guard = src.indexOf("if (!gone)");
+      const write = src.indexOf('"documents.update:purged-at"');
+
+      return judged > 0 && guard > judged && write > guard;
+    })(),
+  );
+  check(
+    "**배치가 버킷을 경로에서 읽지 않는다**(FIX-87) — 상수 하나를 본다",
+    (() => {
+      const src = srcOf("lib/privacy/purge.ts");
+
+      return (
+        src.includes("documentObjectKey(") &&
+        src.includes(".from(DOCUMENT_BUCKET)") &&
+        // 앞 조각을 버킷으로 쎬던 함수가 되살아나면 떨어진다.
+        !src.includes("splitStoragePath")
+      );
     })(),
   );
 }

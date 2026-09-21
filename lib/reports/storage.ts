@@ -1,3 +1,4 @@
+import { DOCUMENT_BUCKET } from "@/lib/core/privacy/purge";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -16,10 +17,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * 인자·반환값으로만 다루고 어디에도 찍지 않는다.
  */
 
-export const DOCUMENT_BUCKET = "contracts-raw";
+/**
+ * **값은 `lib/core/privacy/purge.ts` 가 갖는다**(FIX-87).
+ *
+ * 전에는 이 파일과 파기 배치가 버킷을 **각자** 알고 있었고 — 정확히는 배치가
+ * `storage_path` 의 앞 조각을 버킷으로 **추측**했고 — 그 둘이 갈려 있어서
+ * **원문이 안 지워지는데 '파기됨' 으로 적혔다.** 한 벌로 묶는다.
+ */
+export { DOCUMENT_BUCKET };
 
 /**
- * 객체 경로.
+ * 객체 경로. **버킷 접두어를 붙이지 않는다** — 이 값이 곧 버킷 안의 키다(FIX-87).
  *
  * **커플 id 를 앞에 둔다.** 나중에 경로 접두어로 정책을 걸 수 있게 하기 위해서다
  * (지금은 정책 없이 서명 URL 전용이지만, 경로가 평평하면 그때 가서 못 건다).

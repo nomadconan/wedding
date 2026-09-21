@@ -565,15 +565,42 @@ try {
 
   await step("**표준 폼을 채우고 보낸다** — 사슬의 첫 칸(F-C-13)", consumer, async () => {
     // 업체 상세에서 왔으므로 그 업체가 미리 골라져 있어야 한다.
-    const preselected = await evaluate(
-      consumer,
-      `(() => {
-        const box = document.querySelector('#vendor-${chain.vendorId}');
-        if (!box) return "후보에 없음";
-        return box.getAttribute("data-state") === "checked" || box.getAttribute("aria-checked") === "true"
-          ? "미리 골라짐" : "안 골라짐";
-      })()`,
-    );
+    //
+    // ── 한 번만 묻지 않는다 (FIX-80) ─────────────────────────────────────
+    //
+    // 앞 걸음은 **경로가 `/inquiries/new` 가 된 것**까지만 기다렸다. 그런데
+    // 개발 서버에서 경로는 클라이언트 라우터가 잡는 순간 바뀌고, **후보 상자는
+    // 그보다 늦게 마운트된다** — 처음 여는 라우트를 그자리에서 컴파일하기 때문이다.
+    // 그래서 도착 직후 한 번 물으면 `boxes: 0` 이 나온다.
+    //
+    // **실제로 두 회차 연속으로 그러다.** FIX-73c 회차의 CI(`vendor:walk` 34/39)에
+    // 이어 FIX-73d 회차에는 여기서 **31/60** 이 났고, 코드를 한 줄도 안 고치고
+    // 다시 돌리자 **60/60** 이었다. 첫 실패가 바로 이 줄이고 나머지는 연쇄였다.
+    //
+    // **대기를 늘리는 것과 다르다.** 고정 대기를 넣으면 느려진 이유를 아무도 안
+    // 본다(FIX-80 이 경계한 것이 그것이다). 여기서 하는 것은 **판정하려는 것이
+    // 그려졌는지를 유한히 기다리는 것**이며, 바로 위 걸음이 경로를 그렇게 기다리는
+    // 것과 같은 모양이다. 시간을 다 써도 안 그려져 있으면 **`boxes` 수와 함께
+    // 그대로 떨어진다** — 진짜 회귀는 그대로 잡힌다.
+    const readBoxState = () =>
+      evaluate(
+        consumer,
+        `(() => {
+          const box = document.querySelector('#vendor-${chain.vendorId}');
+          if (!box) return "후보에 없음";
+          return box.getAttribute("data-state") === "checked" || box.getAttribute("aria-checked") === "true"
+            ? "미리 골라짐" : "안 골라짐";
+        })()`,
+      );
+
+    let preselected = await readBoxState();
+    const drawnBy = Date.now() + ms(30000);
+
+    while (preselected === "후보에 없음" && Date.now() < drawnBy) {
+      await sleep(500);
+      preselected = await readBoxState();
+    }
+
     if (preselected !== "미리 골라짐") {
       /**
        * **못 찾았으면 화면이 무엇을 그리고 있었는지 함께 적는다** (FIX-77 이 여기서 시작됐다).

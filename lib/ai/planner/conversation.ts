@@ -1,4 +1,5 @@
 import { conversationTitle, type PlannerMessageView, type ToolCard } from "@/lib/core/ai/conversation";
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/types/database";
 
@@ -104,6 +105,16 @@ export async function createConversation(input: {
   return (data as { id: string } | null)?.id ?? null;
 }
 
+/**
+ * 메시지 한 줄을 붙인다.
+ *
+ * 돌려주는 것은 **메시지 id 와 "목록 순서까지 맞췄는가"** 둘이다.
+ * `last_message_at` 은 대화 목록의 **정렬 키**이고 목록은 `limit(20)` 이라, 못 찍으면
+ * 한창 쓰고 있는 대화가 **목록 아래로 밀려나거나 아예 빠진다** — 메시지는 멀쩡히
+ * 저장돼 있는데 사용자는 대화를 잃은 것처럼 본다.
+ */
+export type AppendedMessage = { id: string | null; listOrderUpdated: boolean };
+
 export async function appendMessage(input: {
   conversationId: string;
   role: "user" | "assistant";
@@ -111,7 +122,7 @@ export async function appendMessage(input: {
   cards?: readonly ToolCard[];
   tokenIn?: number | null;
   tokenOut?: number | null;
-}): Promise<string | null> {
+}): Promise<AppendedMessage> {
   const admin = createAdminClient();
 
   const { data } = await admin
@@ -130,12 +141,24 @@ export async function appendMessage(input: {
     .select("id")
     .maybeSingle();
 
-  await admin
-    .from("ai_conversations")
-    .update({ last_message_at: new Date().toISOString() })
-    .eq("id", input.conversationId);
+  /**
+   * **`tryWrite` 다 — 던지면 더 잃는다**(D-237).
+   *
+   * 메시지는 **바로 위에서 이미 저장됐다.** 여기서 던지면 부르는 쪽은 턴이 실패한 줄
+   * 알고, 사용자가 다시 보내면 **같은 말이 두 줄** 들어간다. 정렬 키를 못 고친 것이
+   * 메시지를 두 번 저장하는 것보다 가볍다.
+   *
+   * **삼키는 것은 아니다** — 값으로 돌려주고 부르는 쪽이 본다.
+   */
+  const listOrderUpdated = await tryWrite(
+    "ai_conversations.update:last-message-at",
+    admin
+      .from("ai_conversations")
+      .update({ last_message_at: new Date().toISOString() })
+      .eq("id", input.conversationId),
+  );
 
-  return (data as { id: string } | null)?.id ?? null;
+  return { id: (data as { id: string } | null)?.id ?? null, listOrderUpdated };
 }
 
 // =============================================================================

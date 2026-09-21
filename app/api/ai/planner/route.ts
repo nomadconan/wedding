@@ -108,13 +108,25 @@ export async function POST(request: NextRequest) {
     // **막힌 턴도 품질 로그에 남긴다**(S8-07). 실패가 아니라 `limit_reached` 이며
     // 실패율 분모에서 빠진다 — 그러나 "몇 번이나 상한에 막혔나" 는 비용·정책 판단의
     // 근거라 세어야 한다.
-    await logAiCall({
+    const logged = await logAiCall({
       feature: "planner",
       model: null,
       promptVersion: PLANNER_PROMPT_VERSION,
       validationResult: "limit_reached",
       retryCount: 0,
     });
+
+    // 못 남기면 그 사실도 남긴다(FIX-88) — **안 셀 것이 0으로 보이면 안 된다.**
+    if (!logged) {
+      await recordEvent({
+        entityType: "ai_conversation",
+        entityId: requestedId ?? membership.coupleId,
+        eventType: "ai_quality_log_failed",
+        actor: { id: user.id },
+        afterState: "limit_reached",
+        memo: "table:ai_call_logs",
+      });
+    }
 
     return fail(429, "AI_TURN_LIMIT", gate.notice, { reason: gate.reason });
   }
@@ -170,7 +182,7 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        await appendMessage({ conversationId, role: "user", content: message });
+        const userTurn = await appendMessage({ conversationId, role: "user", content: message });
 
         const turnStartedAt = Date.now();
         const outcome = await runPlannerTurn({
@@ -180,7 +192,7 @@ export async function POST(request: NextRequest) {
           emit: send,
         });
 
-        const messageId = await appendMessage({
+        const assistantTurn = await appendMessage({
           conversationId,
           role: "assistant",
           content: outcome.text,
@@ -189,7 +201,21 @@ export async function POST(request: NextRequest) {
           tokenOut: outcome.tokenOut,
         });
 
-        await saveToolAudits(messageId, outcome.audits);
+        await saveToolAudits(assistantTurn.id, outcome.audits);
+
+        // **정렬 키를 못 찍은 것을 삼키지 않는다**(FIX-73d). 대화는 저장됐는데
+        // 목록(`limit(20)`)에서 밀려나면 사용자는 대화를 잃은 것처럼 본다 — 본문은
+        // 담지 않고(§7.3) “순서를 못 맞췬다” 는 사실만 남긴다.
+        if (!userTurn.listOrderUpdated || !assistantTurn.listOrderUpdated) {
+          await recordEvent({
+            entityType: "ai_conversation",
+            entityId: conversationId,
+            eventType: "ai_conversation_order_stale",
+            actor: { id: user.id },
+            afterState: "stale",
+            memo: "column:last_message_at",
+          });
+        }
 
         // 품질·비용 원천(F-A-04 · §5.8 · S8-07).
         //
@@ -200,7 +226,10 @@ export async function POST(request: NextRequest) {
         // `rules_only` 는 실패가 아니라 **부르지 않은 것**이다(키가 없다). 그것을
         // 실패로 세면 로컬 개발 환경의 실패율이 100% 가 되고, 스키마가 실제로 깨진
         // 날과 구분되지 않는다.
-        await logAiCall({
+        //
+        // **남았는지를 본다**(FIX-88). 일부만 안 들어가면 `instrumented` 는 참인 채
+        // 분자만 비어 **실패율이 0% 로 보인다** — 전부 안 들어가는 것보다 나쁜 모양이다.
+        const logged = await logAiCall({
           feature: "planner",
           model: outcome.model,
           promptVersion: PLANNER_PROMPT_VERSION,
@@ -210,6 +239,17 @@ export async function POST(request: NextRequest) {
           tokenIn: outcome.tokenIn,
           tokenOut: outcome.tokenOut,
         });
+
+        if (!logged) {
+          await recordEvent({
+            entityType: "ai_conversation",
+            entityId: conversationId,
+            eventType: "ai_quality_log_failed",
+            actor: { id: user.id },
+            afterState: outcome.mode === "model" ? "ok" : "no_key",
+            memo: "table:ai_call_logs",
+          });
+        }
 
         send("done", { conversationId });
       } catch {

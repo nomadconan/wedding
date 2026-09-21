@@ -32,15 +32,29 @@ const SKIP = new Set([
 ]);
 
 /** 닫은 도메인 — **0 이어야 한다.** */
-const CLOSED = ["lib/payments", "lib/cancellation", "lib/settlements", "lib/escrow", "app/api"];
+const CLOSED = [
+  "lib/payments",
+  "lib/cancellation",
+  "lib/settlements",
+  "lib/escrow",
+  "app/api",
+  // FIX-73(d) — 문서 분석·파기(§5.1)와 플래너 대화.
+  "lib/reports",
+  "lib/ai",
+];
 
 /**
  * 아직 안 닫은 곳의 상한. **늘면 실패한다.**
  *
  * 기준값은 `fix/FIX-73a` 회차에 실측한 수다(그때 전체 93 자리 중 `lib/payments`
- * 열아홉을 닫아 일흔넷이 남았다).
+ * 열아홉을 닫아 일흔넷이 남았다). 도메인을 닫을 때마다 그만큼 내린다.
+ *
+ * **상한만으로는 되돌림을 못 잡는다.** 방금 닫은 도메인에서 한 자리를 풀어도
+ * 전체 수는 상한 아래라 그대로 통과한다 — 실제로 FIX-73(d) 회차에 그렇게
+ * 확인했다(34→35 인데 상한 40 이라 조용했다). 그래서 **닫은 도메인은
+ * `CLOSED` 에 올리고 상한을 그만큼 내린다** — 둘을 함께 해야 톱니가 물린다.
  */
-const BUDGET = 40;
+const BUDGET = 34;
 
 const WRITE = /\.(insert|update|upsert|delete)\s*\(/;
 

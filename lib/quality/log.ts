@@ -22,6 +22,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * **적재 실패가 본 작업을 깨뜨리지 않는다.** 품질 로그를 못 남겼다고 사용자의
  * 리포트를 되돌리면 더 나쁘다. 대신 실패 사실을 남긴다 — 조용히 삼키지 않는다
  * (`recordEvent` 와 같은 규칙).
+ *
+ * ── 남았는지를 돌려준다 (FIX-88) ────────────────────────────────────────────
+ * "조용히 삼키지 않는다" 고 적어 두고 **`Promise<void>` 였다** — 부르는 쪽이 성공과
+ * 실패를 구별할 방법이 `console.error` 뿐이었고, 그건 아무도 안 읽는다.
+ *
+ * **이 표가 안 채워지면 화면은 그것을 0 으로 읽는다.** 전부 안 들어가면
+ * `instrumented: false` 가 잡아 주지만(`lib/core/quality/metrics.ts`), **일부만**
+ * 안 들어가면 `attempted > 0` 인 채로 분자만 비어 **실패율 0%** 가 된다. 그것이
+ * S8-07 이 막으려던 함정 2 그 자체다. `recordEvent` 와 같은 규칙으로 맞춘다 —
+ * boolean 을 돌려주고, 부르는 쪽이 증적에 접어 넣는다.
  */
 export type AiCallLogInput = {
   feature: "planner" | "report" | "estimate" | "search";
@@ -39,7 +49,7 @@ export type AiCallLogInput = {
   findingsDiscarded?: number | null;
 };
 
-export async function logAiCall(input: AiCallLogInput): Promise<void> {
+export async function logAiCall(input: AiCallLogInput): Promise<boolean> {
   const { error } = await createAdminClient()
     .from("ai_call_logs")
     .insert({
@@ -63,5 +73,9 @@ export async function logAiCall(input: AiCallLogInput): Promise<void> {
       validationResult: input.validationResult,
       code: error.code,
     });
+
+    return false;
   }
+
+  return true;
 }

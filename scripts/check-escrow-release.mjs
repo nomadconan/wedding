@@ -9,8 +9,15 @@
 // 시계를 기다리지 않고 실제 라우트를 실제로 두드린다.
 //
 // 실행 (서버가 떠 있어야 한다):
-//   npm run build && npm start        (다른 창)
+//   npm run dev                       (다른 창)
 //   npm run check:escrow
+//
+// **개발 서버여야 한다**(FIX-89). 이 머리글은 한동안 `npm start` 를 적고 있었고,
+// 그렇게 돌리면 **13/17 로 떨어진다** — 코드 탓이 아니라 `NODE_ENV=production` 에서
+// `resolveChargeAdapterName()` 이 `noop` 을 고르기 때문이다. noop 은 **일부러 실패**를
+// 돌려준다("받지 않은 돈이 들어왔다고 기록되는 사고" 를 막는 장치다) — 즉 프로덕션
+// 매문에서는 릴리즈 뒤 정산으로 가는 걸음이 **일부러 끝나지 않는다.**
+// CI 가 이미 같은 이유로 주행을 `npm run dev` 로 돌린다 — 이 문서만 낡아 있었다.
 //
 // **DB 를 더럽힌다.** 홀드를 만들고 예식일을 옮긴다. 끝나면
 // `npm run db:reset && npm run seed:accounts` 로 되돌린다(`audit:api` 와 같다).
