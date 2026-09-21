@@ -1,9 +1,12 @@
 import { readIntSetting, readSetting } from "@/lib/app-settings";
 import { recordEvent } from "@/lib/audit/record";
+import { tryWrite } from "@/lib/db/write";
 import {
   PLACEHOLDER_TEMPLATE_VERSION,
+  activationGaps,
   canSign,
   contractTotalFromQuote,
+  isFullyActivated,
   quoteEligibility,
   requiredSignerRoles,
   signingProgress,
@@ -386,12 +389,22 @@ export async function issueContract(input: {
   if (scheduleError) {
     // 회차 없는 계약은 결제할 수 없다. 발행 자체를 되돌린다 — 반쪽 계약을 남기면
     // 고객이 서명할 대상이 "금액은 있는데 낼 방법이 없는" 문서가 된다.
-    await admin.from("contracts").delete().eq("id", contractId);
+    //
+    // **`tryWrite` 다 — 이미 `CONTRACT_SCHEDULE_FAILED` 를 돌려주려는 참이다**(D-237).
+    // 던지면 원인이 **일반 500 으로 뒤바뀜다** — (c) 회차의
+    // `documents.delete:rollback-no-upload-url` 과 같은 자리다. 못 지웠으면
+    // **응답 문구에 적는다** — 회차 없는 계약이 업체 화면에 그대로 뜨기 때문이다.
+    const rolledBack = await tryWrite(
+      "contracts.delete:rollback-no-schedule",
+      admin.from("contracts").delete().eq("id", contractId),
+    );
 
     return failure(
       500,
       "CONTRACT_SCHEDULE_FAILED",
-      "결제 회차를 만들지 못했습니다.",
+      rolledBack
+        ? "결제 회차를 만들지 못했습니다."
+        : "결제 회차를 만들지 못했습니다. (빈 계약이 남아 있을 수 있어요)",
     );
   }
 
@@ -655,14 +668,40 @@ async function activateContract(input: {
 
   if (contractError) return false;
 
-  await admin
-    .from("bookings")
-    .update({
-      status: "confirmed",
-      applied_fee_rate_bp: input.contract.applied_fee_rate_bp,
-      applied_planner_fee_rate_bp: input.contract.applied_planner_fee_rate_bp,
-    })
-    .eq("id", input.contract.booking_id);
+  /**
+   * ── 여기서부터는 던지지 않는다 (FIX-73e · D-244) ─────────────────────
+   *
+   * 위 줄이 돌았고 **서명은 그보다 먼저 저장됐다.** 지금부터는 *되돌릴 수
+   * 없는 것 뒤에 따라오는 걸음* 이다. 던져 500 을 내면 사용자는 다시 서명하려
+   * 하고, 그때 `signingState` 가 **"이미 확정된 계약이에요"** 로 돌려보낸다 —
+   * **재시도가 이 걸음을 다시 하지 못한다.** 예외는 상태를 바꾸지 못하고
+   * **아래 증적만 건너뛰 뿐**이다.
+   *
+   * 그래서 값으로 받아 **무엇이 빠졌는지를 증적에 이름으로 남기고**
+   * `activated: false` 를 돌려준다 — 화면이 확정됐다고 말하지 않게.
+   * ((b) 회차의 `lib/settlements` 가 전부 `mustWrite` 였던 것과 갈리는 지점이다 —
+   * 그쪽은 **뒤에 돈이 더 움직여서** 멈추는 것이 이득이었다.)
+   *
+   * **못 찍으면 업체가 돈을 못 받는다.** 정산 집계는 `confirmed`·`fulfilled` 예약만
+   * 집으므로(`lib/settlements/actions.ts`) 이 예약은 **정산서에 아예 들어오지 않는다** —
+   * 요율 스냅샷이 비면 `rate_snapshot_missing` 으로 막히기라도 하지만, 예약 자체가
+   * 안 잡히면 **막힐 것도 없이 그냥 빠진다.** 그래서 증적에 예약 id 를 함께 남긴다.
+   */
+  const bookingConfirmed = await tryWrite(
+    "bookings.update:confirm-on-activate",
+    admin
+      .from("bookings")
+      .update({
+        status: "confirmed",
+        applied_fee_rate_bp: input.contract.applied_fee_rate_bp,
+        applied_planner_fee_rate_bp: input.contract.applied_planner_fee_rate_bp,
+      })
+      .eq("id", input.contract.booking_id),
+  );
+
+  // 원장을 만들 상황이 아니면 `null` — **`false` 와 구분한다.**
+  // "만들 이유가 없었다" 와 "만들려다 실패했다" 는 완전히 다른 사건이다.
+  let plannerLedger: boolean | null = null;
 
   if (input.contract.planner_id !== null) {
     const graceDays = resolveGraceDays(
@@ -680,29 +719,57 @@ async function activateContract(input: {
       });
 
       if (earning) {
-        await admin.from("planner_settlements").insert({
-          planner_id: input.contract.planner_id,
-          booking_id: input.contract.booking_id,
-          gross_amount: earning.grossAmount,
-          fee_rate_bp: earning.feeRateBp,
-          fee_amount: earning.feeAmount,
-          earned_at: earning.earnedAt,
-          payable_at: payableAtOf(earning.earnedAt, graceDays),
-          status: "earned",
-        });
+        /**
+         * **앞 줄과 같은 이유로 `tryWrite` 다**(D-244) — 서명은 이미 저장됐고
+         * 재시도는 "이미 확정된 계약" 에 막혀 **이 걸음을 다시 하지 못한다.**
+         *
+         * 못 넣으면 **플래너가 성사시킨 거래의 수수료를 영영 못 받는다**(D-17).
+         * 그런데 지급 배치는 **이 원장을 보고** 도므로 없는 원장은 배치에도
+         * 안 보인다 — 아무도 못 찾는다. 그래서 증적에 이름으로 남긴다.
+         */
+        plannerLedger = await tryWrite(
+          "planner_settlements.insert:planner-earning",
+          admin.from("planner_settlements").insert({
+            planner_id: input.contract.planner_id,
+            booking_id: input.contract.booking_id,
+            gross_amount: earning.grossAmount,
+            fee_rate_bp: earning.feeRateBp,
+            fee_amount: earning.feeAmount,
+            earned_at: earning.earnedAt,
+            payable_at: payableAtOf(earning.earnedAt, graceDays),
+            status: "earned",
+          }),
+        );
       }
     }
   }
 
+  // **빠진 걸음을 이름으로 적는다.** 판정은 `lib/core` 가 갖는다 — 화면·증적·응답
+  // 셋이 같은 답을 봐야 하고, 서버 코드 안에 묻힌 한 줄은 시험할 수 없다.
+  // 금액은 계약이 갖고 있으므로 안 적는다(§7.3).
+  const missing = activationGaps({
+    bookingId: input.contract.booking_id,
+    bookingConfirmed,
+    plannerLedger,
+  });
+
   await recordEvent({
     entityType: "contract",
     entityId: input.contract.id,
-    eventType: "contract_activated",
+    eventType: isFullyActivated(missing) ? "contract_activated" : "contract_activation_incomplete",
     actor: { id: input.actorId },
     beforeState: "issued",
+    // 계약행은 `active` 가 맞다 — 거짓말하지 않는다. 다만 따라오지 못한 걸음을 적는다.
     afterState: "active",
-    memo: `total=${input.contract.total_amount}`,
+    memo: isFullyActivated(missing)
+      ? `total=${input.contract.total_amount}`
+      : `total=${input.contract.total_amount} missing=${missing.join(",")}`,
   });
+
+  // **따라오지 못한 걸음이 있으면 확정됐다고 말하지 않는다.**
+  // 계약행은 `active` 지만 예약이 안 잡혔거나 플래너 원장이 없으면 **거래는 반쪽만
+  // 선 것**이고, 화면이 그것을 "확정" 으로 그리면 아무도 안 들여다본다.
+  if (!isFullyActivated(missing)) return false;
 
   const { data: bookingRow } = await admin
     .from("bookings")

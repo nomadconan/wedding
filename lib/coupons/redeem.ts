@@ -1,6 +1,7 @@
 import { recordEvent } from "@/lib/audit/record";
 import type { CouponIssuer } from "@/lib/core/coupon/coupon";
 import { type ApplyVerdict, applyVerdict } from "@/lib/core/coupon/wallet";
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import { loadWalletEntry } from "./read";
@@ -116,7 +117,19 @@ export async function commitRedemption(input: {
   // **발급분 상태를 'used' 로 옮긴다.** 사용 기록이 진실이고 이 값은 읽기 편의지만,
   // 어긋나면 화면이 쓸 수 있다고 말한다 — 유니크 인덱스가 최종 경계이므로 여기서
   // 실패해도 이중 사용은 일어나지 않는다.
-  await admin.from("coupon_issues").update({ status: "used" }).eq("id", input.issueId);
+  //
+  // **그래서 `tryWrite` 다**(D-244). 이 함수는 머리글이 적어 둔 대로 **결제가
+  // 승인된 뒤에만** 불리고, 바로 위 실패 경로도 *"쿼폰 사용을 기록하지 못했습니다.
+  // 결제는 완료됐습니다."* 라고 말한다. 여기서 던지면 **돈은 받았는데 결제
+  // 라우트가 500 으로 끝난다** — 쓴 사람은 결제가 안 된 줄 알고 다시 누른다.
+  //
+  // 대신 **못 옮겼다는 사실을 증적에 남긴다** — 부르는 쪽(`lib/payments/charge.ts`)은
+  // 일부러 결과를 안 보고 진행하므로(같은 이유로 그렇게 적혀 있다) **여기가
+  // 남기지 않으면 어디에도 안 남는다.**
+  const statusMarked = await tryWrite(
+    "coupon_issues.update:mark-used",
+    admin.from("coupon_issues").update({ status: "used" }).eq("id", input.issueId),
+  );
 
   await recordEvent({
     entityType: "coupon_issue",
@@ -125,7 +138,7 @@ export async function commitRedemption(input: {
     actor: { id: input.actorId },
     beforeState: "issued",
     afterState: "used",
-    memo: `amount=${input.discountAmount} borne=${input.borneBy}`,
+    memo: `amount=${input.discountAmount} borne=${input.borneBy}${statusMarked ? "" : " status_mark_failed"}`,
   });
 
   return {
