@@ -404,6 +404,8 @@ export async function chargeInstallment(input: {
     await notifyCouple(context.ownerId, "payment.failed", {
       scheduleId: context.scheduleId,
       seq: context.seq,
+      // 회차 단위 화면이 없어 알림은 예약 상세로 간다(C-4e). 참조만 는다(§7.3).
+      bookingId: context.bookingId,
     });
 
     return {
@@ -487,6 +489,8 @@ export async function chargeInstallment(input: {
   await notifyCouple(context.ownerId, "payment.succeeded", {
     scheduleId: context.scheduleId,
     seq: context.seq,
+    // 회차 단위 화면이 없어 알림은 예약 상세로 간다(C-4e). 참조만 는다(§7.3).
+    bookingId: context.bookingId,
   });
 
   if (progress.fullyPaid) {
@@ -553,7 +557,12 @@ async function notifyCouple(
     templateKey,
     params,
     // 같은 회차의 같은 사건을 두 번 알리지 않는다.
-    dedupeKey: `${templateKey}:${JSON.stringify(params)}`,
+    //
+    // **payload 전체를 키로 쓰지 않는다**(C-4e 가 고쳤다). `JSON.stringify(params)`
+    // 였는데, 그러면 화면 이동을 위해 참조 하나를 더 싣는 것만으로 키가 달라져
+    // **같은 사건이 다시 나갈 수 있다.** 중복 판정의 근거는 "무엇에 대한 알림인가"
+    // 이지 "payload 가 지금 어떤 모양인가" 가 아니다.
+    dedupeKey: `${templateKey}:${String(params.scheduleId ?? params.contractId ?? "")}`,
   });
 }
 

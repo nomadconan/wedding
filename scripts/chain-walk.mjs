@@ -1645,6 +1645,79 @@ try {
     return `링크 ${seen.count}개 · ${target} 열림`;
   });
 
+  // ── 8e. 알림 → 화면 이동, 전수 (C-4e) ────────────────────────────────────
+  //
+  // C-4d 는 **자기가 만든 두 템플릿**만 이었다. 여기서는 사슬이 지나오며 실제로
+  // 만든 알림 — 계약·결제·안전거래 — 이 **링크를 갖는지**를 본다.
+
+  await step("**기한 알림 말고도 링크가 붙는다** — 사슬이 만든 알림이 화면으로 간다", consumer, async () => {
+    // 기한 알림을 치운다. 안 치우면 C-4d 가 만든 것만 보고 통과할 수 있다.
+    sql(`delete from public.notifications where topic = 'task_due';`);
+
+    const topics = sql(`select coalesce(string_agg(distinct topic, ','), '-')
+                        from public.notifications
+                        where user_id = (select id from auth.users where email = 'couple-linked-a@local.test');`);
+
+    if (topics === "-") throw new Error("사슬이 만든 알림이 하나도 없다 — 분모가 비었다");
+
+    const info = await goto(consumer, "/notifications");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(consumer, `(() => {
+      const rows = [...document.querySelectorAll('[data-testid="notification-link"]')];
+      return JSON.stringify({ count: rows.length, hrefs: [...new Set(rows.map((a) => a.getAttribute("href")))] });
+    })()`));
+
+    if (seen.count === 0) throw new Error(`기한 알림을 빼니 링크가 0개다 (토픽: ${topics})`);
+
+    // **눌러 본다.** 레지스트리에 적혀 있다는 것과 닿는다는 것은 다르다.
+    for (const href of seen.hrefs.slice(0, 3)) {
+      const landed = await goto(consumer, href);
+
+      if (landed.notFound) throw new Error(`링크가 404 로 간다: ${href}`);
+      if (landed.errorState) throw new Error(`링크가 오류 화면으로 간다: ${href}`);
+    }
+
+    return `토픽 ${topics} · 링크 ${seen.count}개 · ${seen.hrefs.slice(0, 3).join(" ")} 열림`;
+  });
+
+  await step("**업체가 읽으면 업체 화면으로 간다** — 같은 알림도 면이 갈린다", vendor, async () => {
+    /**
+     * 커플 경로를 업체에게 주면 **거부 화면**을 본다. 그래서 역할로 가르는데,
+     * 그것이 실제로 서 있는지는 **업체로 로그인해서** 봐야 알 수 있다.
+     */
+    const rows = sql(`select count(*) from public.notifications
+                      where user_id in (select user_id from public.vendor_members
+                                        where vendor_id = '${chain.vendorId}');`);
+
+    if (rows === "0") throw new Error("업체에게 간 알림이 없다 — 분모가 비었다");
+
+    const info = await goto(vendor, "/notifications");
+    if (info.notFound || info.errorState) throw new Error(`화면 상태 이상: ${info.text.slice(0, 150)}`);
+
+    const seen = JSON.parse(await evaluate(vendor, `(() => {
+      const links = [...document.querySelectorAll('[data-testid="notification-link"]')];
+      return JSON.stringify({ count: links.length, hrefs: [...new Set(links.map((a) => a.getAttribute("href")))] });
+    })()`));
+
+    if (seen.count === 0) throw new Error(`업체 알림 ${rows}건에 링크가 하나도 없다`);
+
+    const consumerOnly = seen.hrefs.filter((href) => /^\/(consultations|inquiries|chat|checklist|wishlist)/.test(href));
+
+    if (consumerOnly.length > 0) {
+      throw new Error(`업체에게 소비자 경로를 줬다: ${consumerOnly.join(" ")}`);
+    }
+
+    for (const href of seen.hrefs.slice(0, 2)) {
+      const landed = await goto(vendor, href);
+
+      if (landed.notFound) throw new Error(`링크가 404 로 간다: ${href}`);
+      if (landed.errorState) throw new Error(`링크가 오류 화면으로 간다: ${href}`);
+    }
+
+    return `업체 알림 ${rows}건 · 링크 ${seen.count}개 · ${seen.hrefs.slice(0, 2).join(" ")} 열림`;
+  });
+
   // ── 9. 하이드레이션·콘솔 ──────────────────────────────────────────────────
   await step("사슬 화면 어디에도 콘솔 오류가 없다", null, async () => {
     const noisy = steps.filter((s) => s.consoleErrors.length > 0);

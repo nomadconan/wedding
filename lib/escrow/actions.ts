@@ -680,7 +680,10 @@ async function notifyCouple(
     topic: "payment",
     channel: "in_app",
     templateKey,
-    params,
+    // **예약 참조를 함께 싣는다**(C-4e). 안전거래 화면이 `/bookings/[id]/escrow` 라
+    // 알림에서 그리로 가려면 예약 ID 가 있어야 한다. 참조 ID 하나가 늘 뿐 금액·상태는
+    // 여전히 담지 않는다(§7.3).
+    params: { ...params, bookingId },
     dedupeKey: `${templateKey}:${String(params.holdId)}`,
   });
 }
