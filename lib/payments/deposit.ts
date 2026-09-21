@@ -1,5 +1,6 @@
 import { recordEvent } from "@/lib/audit/record";
 import type { DepositAction } from "@/lib/core/consultation/consultation";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import {
@@ -131,10 +132,15 @@ export async function holdDeposit(input: {
   });
 
   if (!result.ok) {
-    await admin
-      .from("consultation_deposits")
-      .update({ status: "failed", failure_reason: result.failureReason })
-      .eq("id", depositId);
+    // **실패를 실패로 적는 일이 실패하면 안 된다.** 못 적으면 행이 pending 으로
+    // 남아 재시도 상한(0030)이 늘 처음부터 다시 센다(FIX-73).
+    await mustWrite(
+      "consultation_deposits.update:mark-failed",
+      admin
+        .from("consultation_deposits")
+        .update({ status: "failed", failure_reason: result.failureReason })
+        .eq("id", depositId),
+    );
 
     await recordEvent({
       entityType: "consultation_deposit",
@@ -156,15 +162,20 @@ export async function holdDeposit(input: {
 
   const now = new Date().toISOString();
 
-  await admin
-    .from("consultation_deposits")
-    .update({
-      status: "held",
-      held_at: now,
-      provider_ref: result.providerRef,
-      failure_reason: null,
-    })
-    .eq("id", depositId);
+  // **PG 는 이미 잡았다.** 여기서 못 적으면 돈은 묶였는데 표는 미확보로 남고,
+  // 상담 확정이 안 되며 환불 경로도 열리지 않는다(FIX-73).
+  await mustWrite(
+    "consultation_deposits.update:mark-held",
+    admin
+      .from("consultation_deposits")
+      .update({
+        status: "held",
+        held_at: now,
+        provider_ref: result.providerRef,
+        failure_reason: null,
+      })
+      .eq("id", depositId),
+  );
 
   await recordEvent({
     entityType: "consultation_deposit",
@@ -227,10 +238,15 @@ export async function releaseDeposit(input: {
   if (!result.ok) {
     // **상태를 바꾸지 않는다.** 실패했는데 refunded 로 적으면 있지도 않은 환불이
     // 기록되고, 그 기록이 분쟁의 근거가 된다.
-    await admin
-      .from("consultation_deposits")
-      .update({ failure_reason: result.failureReason })
-      .eq("id", deposit.id);
+    // 사유는 곁가지다 — 못 적어도 **해제 실패라는 결론은 그대로**이고, 여기서
+    // 던지면 아래 증적과 실패 응답이 통째로 날아간다. 세고 넘어간다(FIX-73).
+    const noted = await tryWrite(
+      "consultation_deposits.update:release-failure-reason",
+      admin
+        .from("consultation_deposits")
+        .update({ failure_reason: result.failureReason })
+        .eq("id", deposit.id),
+    );
 
     await recordEvent({
       entityType: "consultation_deposit",
@@ -238,23 +254,28 @@ export async function releaseDeposit(input: {
       eventType: "deposit_release_failed",
       actor: { id: input.actorId ?? null },
       beforeState: deposit.status,
-      memo: `action=${input.action} retryable=${result.retryable}`,
+      memo: `action=${input.action} retryable=${result.retryable}${noted ? "" : " reasonWriteFailed=1"}`,
     });
 
     return { status: "failed", reason: result.failureReason };
   }
 
-  await admin
-    .from("consultation_deposits")
-    .update({
-      status: nextStatus,
-      resolved_at: new Date().toISOString(),
-      resolution_reason: input.reason,
-      resolved_by: input.actorId,
-      provider_ref: result.providerRef,
-      failure_reason: null,
-    })
-    .eq("id", deposit.id);
+  // **돈은 이미 움직였다**(환불이든 몰취든). 못 적으면 held 로 남아 **같은
+  // 보증금을 두 번 처리**할 수 있다(FIX-73).
+  await mustWrite(
+    "consultation_deposits.update:resolve",
+    admin
+      .from("consultation_deposits")
+      .update({
+        status: nextStatus,
+        resolved_at: new Date().toISOString(),
+        resolution_reason: input.reason,
+        resolved_by: input.actorId,
+        provider_ref: result.providerRef,
+        failure_reason: null,
+      })
+      .eq("id", deposit.id),
+  );
 
   await recordEvent({
     entityType: "consultation_deposit",
@@ -286,10 +307,15 @@ export async function disputeDeposit(input: {
   const deposit = data as { id: string; status: string } | null;
   if (!deposit || deposit.status !== "held") return;
 
-  await admin
-    .from("consultation_deposits")
-    .update({ status: "disputed" })
-    .eq("id", deposit.id);
+  // 조율 대기로 못 옮기면 **held 로 남아 자동 처리 대상**이 된다 — 이의 제기가
+  // 있었는데 기계가 몰취하는 일이 생긴다(FIX-73).
+  await mustWrite(
+    "consultation_deposits.update:dispute",
+    admin
+      .from("consultation_deposits")
+      .update({ status: "disputed" })
+      .eq("id", deposit.id),
+  );
 
   await recordEvent({
     entityType: "consultation_deposit",
