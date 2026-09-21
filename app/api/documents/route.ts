@@ -12,6 +12,7 @@ import {
 import { findMyCouple } from "@/lib/couple/membership";
 import { createDocumentUploadUrl, documentPath } from "@/lib/reports/storage";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { mustWrite, tryWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -86,12 +87,33 @@ export async function POST(request: NextRequest) {
   const ticket = await createDocumentUploadUrl(path);
 
   if (ticket === null) {
-    await supabase.from("documents").delete().eq("id", documentId);
+    // **이미 실패를 돌려주려는 참이다.** 여기서 던지면 `DOC_UPLOAD_URL_FAILED` 가
+    // 일반 500 으로 뒤바뀌어 부르는 쪽이 원인을 잃는다 — 값으로 받고 응답에 적는다.
+    const cleaned = await tryWrite(
+      "documents.delete:rollback-no-upload-url",
+      supabase.from("documents").delete().eq("id", documentId),
+    );
 
-    return fail(500, "DOC_UPLOAD_URL_FAILED", "업로드 주소를 만들지 못했습니다.");
+    return fail(
+      500,
+      "DOC_UPLOAD_URL_FAILED",
+      cleaned
+        ? "업로드 주소를 만들지 못했습니다."
+        : "업로드 주소를 만들지 못했습니다. (빈 자리가 남았을 수 있어요)",
+    );
   }
 
-  await supabase.from("documents").update({ storage_path: path }).eq("id", documentId);
+  /**
+   * **파기가 이 줄에 달려 있다**(§5.1).
+   *
+   * `storage_path` 를 못 적으면 파일은 올라가는데 **어디 있는지를 DB 가 모른다.**
+   * `purge-documents` 배치는 이 값으로 Storage 객체를 지우므로, 비어 있으면
+   * **원문이 24시간 뒤에도 남는다.** 이 파일에서 가장 위험한 줄이다(FIX-73).
+   */
+  await mustWrite(
+    "documents.update:storage-path",
+    supabase.from("documents").update({ storage_path: path }).eq("id", documentId),
+  );
 
   await recordEvent({
     entityType: "document",

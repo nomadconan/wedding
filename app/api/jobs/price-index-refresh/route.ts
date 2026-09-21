@@ -4,6 +4,7 @@ import { fail, ok } from "@/lib/api/response";
 import { authorizeJob } from "@/lib/ops/job-auth";
 import { PRICE_INDEX_ALL } from "@/lib/core/pricing/price-index";
 import { recalculateIndex } from "@/lib/pricing/curation";
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -98,8 +99,12 @@ export async function POST(request: NextRequest) {
       else built += 1;
     }
 
+    let runClosed = true;
+
     if (jobRunId) {
-      await admin
+      runClosed = await tryWrite(
+        "job_runs.update:close-refresh",
+        admin
         .from("job_runs")
         .update({
           finished_at: new Date().toISOString(),
@@ -117,7 +122,8 @@ export async function POST(request: NextRequest) {
               .filter(Boolean)
               .join(" ") || null,
         })
-        .eq("id", jobRunId);
+        .eq("id", jobRunId),
+      );
     }
 
     return ok({
@@ -127,20 +133,35 @@ export async function POST(request: NextRequest) {
       // 지역을 모르는 업체 수. **0 으로 감추지 않는다** — 세지 않은 것이 있다는 사실이다.
       skippedNoRegion,
       guestBucket: PRICE_INDEX_ALL,
+      // 마감을 못 적었으면 밖으로 낸다(FIX-73).
+      runClosed,
     });
   } catch {
+    // 기록을 남겼는지도 값으로 든다 — 실행이 없으면 남길 것도 없으니 true 다.
+    let noted = true;
+
     if (jobRunId) {
-      await admin
-        .from("job_runs")
-        .update({
-          finished_at: new Date().toISOString(),
-          status: "failed",
-          error_summary: "refresh_failed:1",
-        })
-        .eq("id", jobRunId);
+      // `catch` 안이다 — 던지면 **원래 예외가 사라진다**. 그래도 **값은 받는다**:
+      // 버리면 `check:writes` 가 잡고(그게 "삼키는 것이 아니다" 를 지키는 방법이다),
+      // 못 적었으면 실패 응답에 적어 모니터가 `running` 으로 남은 행을 설명할 수 있게 한다.
+      noted = await tryWrite(
+        "job_runs.update:mark-failed",
+        admin
+          .from("job_runs")
+          .update({
+            finished_at: new Date().toISOString(),
+            status: "failed",
+            error_summary: "refresh_failed:1",
+          })
+          .eq("id", jobRunId),
+      );
     }
 
-    return fail(500, "JOB_FAILED", "지수 재계산을 끝내지 못했습니다.");
+    return fail(
+      500,
+      "JOB_FAILED",
+      noted ? "지수 재계산을 끝내지 못했습니다." : "지수 재계산을 끝내지 못했고 실행 기록도 남기지 못했습니다.",
+    );
   }
 }
 

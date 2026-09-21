@@ -9,6 +9,7 @@ import {
   inviteBlocker,
 } from "@/lib/core/schemas/onboarding";
 import { findMyCouple, generateInviteCode } from "@/lib/couple/membership";
+import { mustWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -108,12 +109,17 @@ export async function POST(request: NextRequest) {
     }
 
     // 재발급하면 이전 코드는 죽인다. 살아 있는 코드가 여러 개면 회수할 수 없다.
-    await admin
-      .from("couple_invites")
-      .update({ expires_at: new Date().toISOString() })
-      .eq("couple_id", membership.coupleId)
-      .is("accepted_by", null)
-      .gt("expires_at", new Date().toISOString());
+    // **옛 코드를 죽이는 것이 본 작업이다.** 실패하면 재발급했는데 이전 코드가
+    // 그대로 살아 있고, 바로 위 주석대로 **회수할 수 없다**(FIX-73).
+    await mustWrite(
+      "couple_invites.update:revoke-previous",
+      admin
+        .from("couple_invites")
+        .update({ expires_at: new Date().toISOString() })
+        .eq("couple_id", membership.coupleId)
+        .is("accepted_by", null)
+        .gt("expires_at", new Date().toISOString()),
+    );
 
     const code = generateInviteCode();
     const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3_600_000).toISOString();
@@ -190,10 +196,15 @@ export async function POST(request: NextRequest) {
     return fail(500, "COUPLE_INVITE_ACCEPT_FAILED", "연결하지 못했습니다.");
   }
 
-  await admin
-    .from("couple_invites")
-    .update({ accepted_by: user.id, accepted_at: new Date().toISOString() })
-    .eq("id", invite.id);
+  // **연결은 이미 끝났다.** 수락 표시를 못 남기면 코드가 미사용으로 남아
+  // **다시 쓸 수 있다** — 초대 하나로 둘이 붙는다(FIX-73).
+  await mustWrite(
+    "couple_invites.update:accept",
+    admin
+      .from("couple_invites")
+      .update({ accepted_by: user.id, accepted_at: new Date().toISOString() })
+      .eq("id", invite.id),
+  );
 
   await recordEvent({
     entityType: "couple",

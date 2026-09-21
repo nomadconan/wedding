@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api/response";
 import { authorizeJob } from "@/lib/ops/job-auth";
 import { loadAnomalies } from "@/lib/pricing/curation";
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -43,8 +44,12 @@ export async function POST(request: NextRequest) {
     const blocked =
       payload.bait.status === "blocked" && payload.addon.status === "blocked";
 
+    let runClosed = true;
+
     if (jobRunId) {
-      await admin
+      runClosed = await tryWrite(
+        "job_runs.update:close-scan",
+        admin
         .from("job_runs")
         .update({
           finished_at: new Date().toISOString(),
@@ -53,7 +58,8 @@ export async function POST(request: NextRequest) {
           processed_count: payload.flags.length,
           error_summary: blocked ? "threshold_undecided:O-19" : null,
         })
-        .eq("id", jobRunId);
+        .eq("id", jobRunId),
+      );
     }
 
     return ok({
@@ -63,20 +69,36 @@ export async function POST(request: NextRequest) {
       flagged: payload.flags.length,
       bait: payload.bait.status,
       addon: payload.addon.status,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73).
+      runClosed,
     });
   } catch {
+    // 기록을 남겼는지도 값으로 든다 — 실행이 없으면 남길 것도 없으니 true 다.
+    let noted = true;
+
     if (jobRunId) {
-      await admin
-        .from("job_runs")
-        .update({
-          finished_at: new Date().toISOString(),
-          status: "failed",
-          error_summary: "scan_failed:1",
-        })
-        .eq("id", jobRunId);
+      // `catch` 안이다 — 던지면 **원래 예외가 사라진다**. 그래도 **값은 받는다**:
+      // 버리면 `check:writes` 가 잡고(그게 "삼키는 것이 아니다" 를 지키는 방법이다),
+      // 못 적었으면 실패 응답에 적어 모니터가 `running` 으로 남은 행을 설명할 수 있게 한다.
+      noted = await tryWrite(
+        "job_runs.update:mark-failed",
+        admin
+          .from("job_runs")
+          .update({
+            finished_at: new Date().toISOString(),
+            status: "failed",
+            error_summary: "scan_failed:1",
+          })
+          .eq("id", jobRunId),
+      );
     }
 
-    return fail(500, "JOB_FAILED", "이상 탐지를 끝내지 못했습니다.");
+    return fail(
+      500,
+      "JOB_FAILED",
+      noted ? "이상 탐지를 끝내지 못했습니다." : "이상 탐지를 끝내지 못했고 실행 기록도 남기지 못했습니다.",
+    );
   }
 }
 

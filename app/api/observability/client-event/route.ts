@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { LOGIN_ERROR_CODES } from "@/lib/core/auth/login-error";
+import { tryWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -57,7 +58,16 @@ export async function POST(request: NextRequest) {
   // 비인증 입력에 그 권한을 붙일 이유가 없다. 표는 `anon` 에게 `kind`·`code`
   // 두 칸의 INSERT 만 주며(0064), 그것이 이 경로가 할 수 있는 전부다.
   const supabase = await createClient();
-  await supabase.from("client_events").insert({ kind, code });
+
+  // **던지지 않는다.** 이 경로는 로그인 실패 신고(FIX-32)가 쓰는 비인증 입구이고,
+  // 관측 한 건을 못 남겼다고 5xx 를 내면 **신고 화면 자체가 깨진다.** 응답은
+  // 원래 고정(`done`)이라 값으로 받아 로그에만 남긴다 — 삼키는 것이 아니다.
+  const noted = await tryWrite(
+    "client_events.insert:login-error",
+    supabase.from("client_events").insert({ kind, code }),
+  );
+
+  if (!noted) console.error("[observability] client event dropped");
 
   return done;
 }

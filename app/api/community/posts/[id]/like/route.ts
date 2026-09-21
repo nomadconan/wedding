@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api/response";
 import { COMMUNITY_FLAG, communityClosedNotice, isFeatureEnabled } from "@/lib/flags";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { mustWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -63,7 +64,13 @@ export async function DELETE(_request: NextRequest, props: { params: Promise<{ i
   const supabase = await createClient();
 
   // 본인 행만 지워진다(정책). 남의 좋아요를 지우려 해도 0행으로 끝난다.
-  await supabase.from("community_likes").delete().eq("post_id", params.id);
+  //
+  // **응답이 `liked:false` 를 말한다.** 지우기가 실패했는데 그렇게 답하면 다음
+  // 새로고침에 좋아요가 되살아나고 사용자는 이유를 모른다(FIX-73).
+  await mustWrite(
+    "community_likes.delete:unlike",
+    supabase.from("community_likes").delete().eq("post_id", params.id),
+  );
 
   return ok({ liked: false, likeCount: await likeCount(params.id) });
 }

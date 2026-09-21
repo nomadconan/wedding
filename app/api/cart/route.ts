@@ -10,6 +10,7 @@ import { findMyCouple } from "@/lib/couple/membership";
 import { createPublicClient } from "@/lib/explore/query";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { mustWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, Json, TablesInsert } from "@/types/database";
 
@@ -531,7 +532,12 @@ export async function POST(request: NextRequest) {
 
   // 옮기기였으면 찜에서 뺀다. 같은 것을 두 곳에 두면 상태가 갈린다.
   if (wishlistId) {
-    await supabase.from("wishlists").delete().eq("id", wishlistId);
+    // 실패하면 **같은 것이 장바구니와 찜 양쪽에** 남는다 — 바로 위 주석이
+    // "상태가 갈린다" 고 적은 그 상태다(FIX-73).
+    await mustWrite(
+      "wishlists.delete:moved-to-cart",
+      supabase.from("wishlists").delete().eq("id", wishlistId),
+    );
   }
 
   await event(

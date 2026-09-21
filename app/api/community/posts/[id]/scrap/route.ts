@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { fail, ok } from "@/lib/api/response";
 import { COMMUNITY_FLAG, communityClosedNotice, isFeatureEnabled } from "@/lib/flags";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { mustWrite } from "@/lib/db/write";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -41,7 +42,11 @@ export async function DELETE(_request: NextRequest, props: { params: Promise<{ i
   if (!user) return fail(401, "AUTH_REQUIRED", "로그인이 필요합니다.");
 
   const supabase = await createClient();
-  await supabase.from("community_scraps").delete().eq("post_id", params.id);
+  // 좋아요와 같다 — 응답이 `scrapped:false` 를 말하므로 지우기가 본 작업이다.
+  await mustWrite(
+    "community_scraps.delete:unscrap",
+    supabase.from("community_scraps").delete().eq("post_id", params.id),
+  );
 
   return ok({ scrapped: false });
 }
