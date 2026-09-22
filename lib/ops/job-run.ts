@@ -1,3 +1,4 @@
+import { tryWrite } from "@/lib/db/write";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -44,19 +45,35 @@ export async function closeJobRun(
     processedCount?: number;
     errorSummary?: string | null;
   },
-): Promise<void> {
-  if (handle.id === null) return;
+): Promise<boolean> {
+  // 열지 못한 실행은 닫을 행이 없다 — **실패가 아니다.**
+  if (handle.id === null) return true;
 
   const admin = createAdminClient();
 
-  await admin
-    .from("job_runs")
-    .update({
-      finished_at: new Date().toISOString(),
-      status: result.status,
-      processed_count: result.processedCount ?? 0,
-      // **원문·경로를 싣지 않는다**(§5.3). 요약 코드만 남긴다.
-      error_summary: result.errorSummary ?? null,
-    })
-    .eq("id", handle.id);
+  /**
+   * **`tryWrite` 다 — 배치의 일은 이미 끝났다**(D-244).
+   *
+   * 원문을 지웠고 알림을 보냈고 정산을 쌓았다. 여기서 던져 500 을 내면
+   * **크론은 그 실행을 실패로 읽고 다시 돌린다** — 일은 두 번 하고 기록은
+   * 그만큼 더 어긋난다. 그리고 **재시도는 이 행을 닫아 주지 못한다** — 다음
+   * 실행은 새 행을 여므로, 못 닫은 행은 영영 `running` 으로 남는다.
+   *
+   * **그 사실은 표가 이미 말해 준다** — 끝난 지 오래인데 `running` 인 행이
+   * 곧 그것이다. 거기에 더해 **값을 돌려줘 응답이 `runClosed` 로 실도록** 한다
+   * (`price-anomaly-scan` 이 FIX-73c 에서 세운 선례와 같은 모양).
+   */
+  return tryWrite(
+    `job_runs.update:close-${result.status}`,
+    admin
+      .from("job_runs")
+      .update({
+        finished_at: new Date().toISOString(),
+        status: result.status,
+        processed_count: result.processedCount ?? 0,
+        // **원문·경로를 싣지 않는다**(§5.3). 요약 코드만 남긴다.
+        error_summary: result.errorSummary ?? null,
+      })
+      .eq("id", handle.id),
+  );
 }

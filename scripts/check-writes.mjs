@@ -45,6 +45,10 @@ const CLOSED = [
   "lib/contract",
   "lib/membership",
   "lib/coupons",
+  // FIX-73(f) — 알림·배치 이력·파기.
+  "lib/notify",
+  "lib/ops",
+  "lib/privacy",
 ];
 
 /**
@@ -58,7 +62,7 @@ const CLOSED = [
  * 확인했다(34→35 인데 상한 40 이라 조용했다). 그래서 **닫은 도메인은
  * `CLOSED` 에 올리고 상한을 그만큼 내린다** — 둘을 함께 해야 톱니가 물린다.
  */
-const BUDGET = 28;
+const BUDGET = 22;
 
 const WRITE = /\.(insert|update|upsert|delete)\s*\(/;
 

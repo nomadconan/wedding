@@ -185,7 +185,12 @@ export type EntityType =
   // 갖는다. 남길 사실은 **어느 플래그가 언제 켜지고 꺼졌는가**이며, 플래그는 되돌릴 수
   // 있지만 **켜져 있던 동안 벌어진 일은 되돌릴 수 없어** 그 구간이 곧 질문이 된다.
   // `entity_id` 는 uuid 라 키가 아니라 행 id 이고, 키는 memo 로 남긴다.
-  | "feature_flag";
+  | "feature_flag"
+  // S4-13. 알림 발송 기록. **본문도 수신자도 memo 에 넣지 않는다**(§7.3) —
+  // `notifications` 가 이미 틀 id 와 참조를 갖고 있다. 여기 남길 사실은
+  // **그 행에 결과를 못 적었다** 는 것이다(FIX-73f) — 알림은 분쟁에서
+  // *"안내했는가"* 를 묻는 기록이라(D-23) 그 기록이 비었다는 사실도 기록이다.
+  | "notification";
 
 export type EventSource = "web" | "app" | "system" | "admin";
 

@@ -490,5 +490,34 @@ export function canRetry(attemptCount: number): boolean {
   return attemptCount < MAX_SEND_ATTEMPTS;
 }
 
+/**
+ * 재시도를 막는 이유 — **네 가지를 한 자리에 모은다** (FIX-90).
+ *
+ * 전에는 `retryNotification` 이 세 가지를 손으로 보고 **네 번째를 안 봤다** —
+ * 수신 설정이다. 함수 머리글은 *"수신 설정으로 막힌 것은 재시도가 아니라
+ * 설정 변경으로 풀린다"* 고 적어 둔 채였는데 코드는 그것을 확인하지 않았고,
+ * 그 사이의 `deliver()` 는 수신 설정을 보지 않는다. 즉 **꺼 둔 사람에게 보낼 수
+ * 있는 경로**가 열려 있었다.
+ *
+ * **주석과 코드가 갈라 있었고, 갈라진 쪽은 조용했다** — 그래서 판정을
+ * 여기로 옮긴다. 수는 여기서 세고, 부르는 쪽은 그것을 따를 뿐이다.
+ */
+export type RetryBlock = "already_sent" | "attempts_exhausted" | "blocked_by_prefs" | null;
+
+export function retryBlock(input: {
+  sentAt: string | null;
+  attemptCount: number;
+  allowed: boolean;
+}): RetryBlock {
+  // 순서가 뜻을 가른다 — **이미 보낸 것**이 먼저다. 그것은 실패가 아니다.
+  if (input.sentAt !== null) return "already_sent";
+  // **수신 설정을 상한보다 먼저 본다.** 꺼 둔 사람에게는 상한이 남아 있어도
+  // 보내지 않는다 — 순서를 바꾸면 "상한에 닿기 전까지는 보낸다" 가 된다.
+  if (!input.allowed) return "blocked_by_prefs";
+  if (!canRetry(input.attemptCount)) return "attempts_exhausted";
+
+  return null;
+}
+
 export const SEND_BLOCKED_BY_PREFS = "수신 설정에서 꺼 둔 채널입니다.";
 export const SEND_CHANNEL_NOT_READY = "발송 대행 계약 전이라 아직 보낼 수 없습니다.";

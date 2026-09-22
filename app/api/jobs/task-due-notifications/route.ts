@@ -80,14 +80,21 @@ export async function POST(request: NextRequest) {
       .filter(Boolean)
       .join(" ");
 
-    await closeJobRun(run, {
+    const runClosed = await closeJobRun(run, {
       // 파라미터가 없어 아무것도 못 보낸 것은 **성공이 아니다.**
       status: result.blocked === null ? "succeeded" : "skipped",
       processedCount: result.scanned,
       errorSummary: summary === "" ? null : summary,
     });
 
-    return ok({ today, ...result, auditRecorded: recorded });
+    return ok({
+      today,
+      ...result,
+      auditRecorded: recorded,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, { status: "failed", errorSummary: "task_due_failed:1" });
 

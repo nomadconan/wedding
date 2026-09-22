@@ -38,6 +38,9 @@ export async function POST(request: NextRequest) {
     const result = await runDocumentPurge(now);
 
     // **무엇을 지웠는지 id·경로를 싣지 않는다**(§5.3). 개수와 상태만 낸다.
+    //
+    // `result.runClosed` 가 함께 나간다(FIX-73f) — 원문은 지웠는데 실행 이력을 못
+    // 닫은 경우를 모니터가 가를 수 있게 한다. 파기 결과와 기록 결과는 다른 사실이다.
     return ok(result);
   } catch {
     // 실패 원인을 응답에 싣지 않는다(§5.3). 이력은 `job_runs` 에 남았고

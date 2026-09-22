@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     const expiry = await runExpiry(now, today);
     const escalation = await runSlaEscalation(now);
 
-    await closeJobRun(run, {
+    const runClosed = await closeJobRun(run, {
       status: "succeeded",
       // **두 일을 한 배치라 훨은 건수를 더한다.** 한쪽만 세면 나머지가 안 도는 것처럼 보인다.
       processedCount:
@@ -52,7 +52,15 @@ export async function POST(request: NextRequest) {
         escalation.overdueChatRooms,
     });
 
-    return ok({ now, today, expiry, escalation });
+    return ok({
+      now,
+      today,
+      expiry,
+      escalation,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, { status: "failed", errorSummary: "sla_failed:1" });
 

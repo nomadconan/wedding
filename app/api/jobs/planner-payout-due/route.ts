@@ -34,9 +34,15 @@ export async function POST(request: NextRequest) {
   try {
     const result = await runPlannerPayoutDue(now);
 
-    await closeJobRun(run, { status: "succeeded", processedCount: result.moved });
+    const runClosed = await closeJobRun(run, { status: "succeeded", processedCount: result.moved });
 
-    return ok({ now: now.toISOString(), ...result });
+    return ok({
+      now: now.toISOString(),
+      ...result,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, { status: "failed", errorSummary: "planner_payout_due_failed:1" });
 

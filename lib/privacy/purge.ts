@@ -8,6 +8,7 @@ import {
   selectDuePurges,
   summarizePurgeRun,
 } from "@/lib/core/privacy/purge";
+import { closeJobRun } from "@/lib/ops/job-run";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -48,7 +49,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * **경로는 `contracts-raw` 안의 키다.** 버킷은 상수이며 추측하지 않는다.
  * 그리고 `remove()` 가 **오류를 안 내므로 지워진 개수를 본다** — 0 은 성공이 아니다.
  */
-export type PurgeRunResult = PurgeSummary & { jobRunId: string | null; ranAt: string };
+/**
+ * `runClosed` — **실행 이력을 닫았는가**(FIX-73f).
+ *
+ * 파기 결과와 다른 것을 말한다. `status: "succeeded"` 는 **원문을 다 지웠다**이고,
+ * `runClosed: false` 는 **그 사실을 `job_runs` 에 못 적었다**이다. 몸리에서는 모니터
+ * 화면이 그 행을 영영 `running` 으로 보게 되므로, 응답에 실어 그 이유를 남긴다.
+ */
+export type PurgeRunResult = PurgeSummary & {
+  jobRunId: string | null;
+  ranAt: string;
+  runClosed: boolean;
+};
 
 export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
   const admin = createAdminClient();
@@ -76,7 +88,7 @@ export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
 
   if (error) {
     const summary = summarizePurgeRun([]);
-    await closeRun(admin, jobRunId, { ...summary, status: "failed", errorSummary: "query_failed:1" });
+    await closeRun(jobRunId, { ...summary, status: "failed", errorSummary: "query_failed:1" });
 
     throw new Error("PURGE_QUERY_FAILED");
   }
@@ -112,9 +124,9 @@ export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
           reason: "bucket_missing",
         })),
       );
-      await closeRun(admin, jobRunId, summary);
+      const runClosed = await closeRun(jobRunId, summary);
 
-      return { ...summary, jobRunId, ranAt };
+      return { ...summary, jobRunId, ranAt, runClosed };
     }
   }
 
@@ -156,26 +168,35 @@ export async function runDocumentPurge(now: Date): Promise<PurgeRunResult> {
   }
 
   const summary = summarizePurgeRun(outcomes);
-  await closeRun(admin, jobRunId, summary);
+  const runClosed = await closeRun(jobRunId, summary);
 
-  return { ...summary, jobRunId, ranAt };
+  return { ...summary, jobRunId, ranAt, runClosed };
 }
 
+/**
+ * 실행 이력을 닫는다 — **닫는 모양은 `lib/ops/job-run.ts` 하나다**(FIX-73f).
+ *
+ * 이 파일은 그것과 거의 같은 UPDATE 를 **따로 갖고 있었다.** `lib/ops/job-run.ts`
+ * 의 머리글은 *"이미 채우던 셋이 각자 같은 코드를 복사해 갖고 있었다. 여기로 모아
+ * 열고 닫는 모양을 하나로 만든다"* 고 적어 둔 채였고, **이쪽은 안 옷겨졌다.**
+ * FIX-87 이 가르친 것이 그것이다 — 같은 규칙이 두 곳에 있으면 갈라지고,
+ * 갈라진 짬은 조용하다.
+ *
+ * `started_at` 을 여는 쪽은 아직 같이 안 묶었다 — 이 배치는 `now` 를 **인자로
+ * 받아** 재현 가능하게 둔다(`openJobRun` 은 서버 시계를 쓴다). 그것은 일부러
+ * 다른 것이므로 건드리지 않았고, 원장에 적어 둥다.
+ */
 async function closeRun(
-  admin: ReturnType<typeof createAdminClient>,
   jobRunId: string | null,
   summary: PurgeSummary,
-): Promise<void> {
-  if (!jobRunId) return;
-
-  await admin
-    .from("job_runs")
-    .update({
-      finished_at: new Date().toISOString(),
+): Promise<boolean> {
+  return closeJobRun(
+    { id: jobRunId },
+    {
       status: summary.status,
-      processed_count: summary.processed,
+      processedCount: summary.processed,
       // 사유별 개수만 담는다. 경로·id 는 담지 않는다(§5.3 · `summarizePurgeRun` 주석).
-      error_summary: summary.errorSummary,
-    })
-    .eq("id", jobRunId);
+      errorSummary: summary.errorSummary,
+    },
+  );
 }

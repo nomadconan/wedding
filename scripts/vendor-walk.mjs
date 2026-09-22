@@ -25,7 +25,15 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { killTree, removeProfile, sweepOrphans, memoryNote, ms, walkScale } from "./lib/chrome-teardown.mjs";
+import {
+  chromeLaunchFailureNote,
+  killTree,
+  removeProfile,
+  sweepOrphans,
+  memoryNote,
+  ms,
+  walkScale,
+} from "./lib/chrome-teardown.mjs";
 
 /** 이번 주행이 쓴 임시 프로필. 끝날 때 지운다(FIX-77). */
 let lastProfile = "";
@@ -116,7 +124,8 @@ async function launchChrome() {
   }
   killTree(proc);
   removeProfile(lastProfile);
-  throw new Error("Chrome DevTools 엔드포인트가 열리지 않았다.");
+  // **무엇을 죽일지를 사람이 추측하게 두지 않는다**(FIX-91).
+  throw new Error(chromeLaunchFailureNote());
 }
 
 function connect(wsUrl) {

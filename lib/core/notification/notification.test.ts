@@ -12,6 +12,7 @@ import {
   TOPIC_LABEL,
   TOPIC_PENDING,
   canRetry,
+  retryBlock,
   dedupeKey,
   isAllowed,
   isTopicLive,
@@ -203,5 +204,44 @@ describe("스텁 어댑터 (D-28)", () => {
     const result = await createNoopAdapter("email").send({ ...request, channel: "email" });
 
     expect(result).toMatchObject({ ok: false, retryable: false });
+  });
+});
+
+// ── 재시도를 막는 이유 (FIX-90) ──────────────────────────────
+//
+// **이 시험이 지키는 것은 네 번째 이유다** — 수신 설정. `retryNotification` 의
+// 머리글은 *"수신 설정으로 막힌 것은 재시도가 아니라 설정 변경으로 풀린다"* 고
+// 적어 둔 채였고, 코드는 그것을 보지 않았다. **주석은 검사가 아니다.**
+
+describe("retryBlock — 재시도를 막는 이유를 한 자리에서 센다", () => {
+  const base = { sentAt: null, attemptCount: 0, allowed: true };
+
+  it("네 가지 중 아무것도 안 걸리면 재시도한다", () => {
+    expect(retryBlock(base)).toBeNull();
+  });
+
+  it("이미 보낸 것은 재시도가 아니다", () => {
+    expect(retryBlock({ ...base, sentAt: "2026-09-21T00:00:00.000Z" })).toBe("already_sent");
+  });
+
+  it("상한에 닿으면 멈춘다", () => {
+    expect(retryBlock({ ...base, attemptCount: MAX_SEND_ATTEMPTS })).toBe("attempts_exhausted");
+  });
+
+  it("**수신을 꺼 둔 사람에게는 재시도로도 안 보낸다**", () => {
+    expect(retryBlock({ ...base, allowed: false })).toBe("blocked_by_prefs");
+  });
+
+  it("**수신 설정을 상한보다 먼저 본다** — 순서가 바뀌면 상한 전까지는 보낸다", () => {
+    expect(retryBlock({ sentAt: null, attemptCount: 0, allowed: false })).toBe("blocked_by_prefs");
+    expect(
+      retryBlock({ sentAt: null, attemptCount: MAX_SEND_ATTEMPTS, allowed: false }),
+    ).toBe("blocked_by_prefs");
+  });
+
+  it("**보낸 것이 수신 설정보다 먼저다** — 이미 간 것을 '막혔다' 고 말하지 않는다", () => {
+    expect(
+      retryBlock({ sentAt: "2026-09-21T00:00:00.000Z", attemptCount: 0, allowed: false }),
+    ).toBe("already_sent");
   });
 });
