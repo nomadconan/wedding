@@ -30,12 +30,18 @@ export async function POST(request: NextRequest) {
   try {
     const result = await runResolve(now);
 
-    await closeJobRun(run, {
+    const runClosed = await closeJobRun(run, {
       status: "succeeded",
       processedCount: result.scanned,
     });
 
-    return ok({ now, ...result });
+    return ok({
+      now,
+      ...result,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, {
       status: "failed",

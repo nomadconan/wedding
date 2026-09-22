@@ -39,14 +39,20 @@ export async function POST(request: NextRequest) {
   try {
     const result = await runDdayNotifications(today);
 
-    await closeJobRun(run, {
+    const runClosed = await closeJobRun(run, {
       status: "succeeded",
       processedCount: result.scanned,
       // **발송 실패를 배치 실패로 세지 않는다.** 배치는 돌았고 일부가 안 간 것이다.
       errorSummary: result.failed > 0 ? `send_failed:${result.failed}` : null,
     });
 
-    return ok({ today, ...result });
+    return ok({
+      today,
+      ...result,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, { status: "failed", errorSummary: "dday_failed:1" });
 

@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     // 후보가 있었는데 하나도 서지 못했다 — 왜인지를 요약 코드로 남긴다(§5.3 · 원문 금지).
     const stalled = result.scanned > 0 && result.drafted === 0 && result.blocked > 0;
 
-    await closeJobRun(run, {
+    const runClosed = await closeJobRun(run, {
       status: result.failed > 0 || stalled ? "failed" : "succeeded",
       // **선 정산서만 센다.** `blocked` 를 함께 세면 마감이 빈 달과 찬 달이 같은 수가 된다.
       processedCount: result.drafted,
@@ -53,7 +53,13 @@ export async function POST(request: NextRequest) {
             : null,
     });
 
-    return ok({ now: now.toISOString(), ...result });
+    return ok({
+      now: now.toISOString(),
+      ...result,
+      // 마감을 못 적었으면 밖으로 낸다 — 모니터가 `running` 으로 남은 행을 볼 때
+      // 그 이유가 여기 있다(FIX-73f · `price-anomaly-scan` 과 같은 모양).
+      runClosed,
+    });
   } catch {
     await closeJobRun(run, { status: "failed", errorSummary: "settlement_aggregate_failed:1" });
 

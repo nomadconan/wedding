@@ -139,6 +139,72 @@ export function sweepOrphans({ quiet = false } = {}) {
 }
 
 /**
+ * **지금 떠 있는 Chrome 을 우리 것과 남의 것으로 가른다** (FIX-91).
+ *
+ * 주행이 CDP 포트를 못 여는 날, 사람은 곧장 `taskkill /IM chrome.exe /F` 를 친다 —
+ * **직전 회차가 실제로 그랬고, 그것은 사용자의 브라우저였다.** 명령줄을 먼저
+ * 읽었으면 바로 보였다: 우리가 띄우는 Chrome 은 **임시 프로필**(`wc-*`)과
+ * **`--remote-debugging-port`** 를 달고 있고, 사람의 것은 진짜 프로필을 쓴다.
+ *
+ * 그래서 주행이 죽을 때 **그 구분을 로그에 적어 둔다.** 사람이 판단을 안 하고
+ * 지나가도 되게 하는 것이 이 함수의 목적이다.
+ *
+ * **아무것도 죽이지 않는다** — 세기만 한다.
+ */
+export function chromeCensus() {
+  if (!IS_WIN) return { ours: 0, foreign: 0, foreignDebugPorts: 0 };
+
+  try {
+    const out = execFileSync("powershell", [
+      "-NoProfile", "-Command",
+      "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | " +
+        "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+
+    if (!out) return { ours: 0, foreign: 0, foreignDebugPorts: 0 };
+
+    const parsed = JSON.parse(out);
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+
+    let ours = 0;
+    let foreign = 0;
+    let foreignDebugPorts = 0;
+
+    for (const row of rows) {
+      const cmd = String(row?.CommandLine ?? "");
+      if (PROFILE_PREFIXES.some((p) => cmd.includes(p))) {
+        ours += 1;
+        continue;
+      }
+      foreign += 1;
+      // **포트를 물고 있는 남의 Chrome 만이 우리를 방해할 수 있다.**
+      // 평범한 브라우저는 디버그 포트를 안 열어 상관이 없다.
+      if (cmd.includes("--remote-debugging-port")) foreignDebugPorts += 1;
+    }
+
+    return { ours, foreign, foreignDebugPorts };
+  } catch {
+    return { ours: 0, foreign: 0, foreignDebugPorts: 0 };
+  }
+}
+
+/**
+ * Chrome 이 안 떠서 주행을 못 시작했을 때 **무엇을 보고 판단할지**를 적는다.
+ *
+ * 이 문장이 없으면 다음 사람이 **전부 죽이는 것부터** 시도한다.
+ */
+export function chromeLaunchFailureNote() {
+  const { ours, foreign, foreignDebugPorts } = chromeCensus();
+
+  return [
+    "Chrome DevTools 엔드포인트가 열리지 않았다.",
+    `  주행이 띄운 Chrome ${ours}개 · 그 밖 ${foreign}개(디버그 포트를 문 것 ${foreignDebugPorts}개)`,
+    "  **`taskkill /IM chrome.exe` 를 치지 않는다** — 그 안에 사람의 브라우저가 섞여 있다.",
+    "  주행이 남긴 것만 치우려면: node -e \"import('./scripts/lib/chrome-teardown.mjs').then(m=>m.sweepOrphans())\"",
+  ].join("\n");
+}
+
+/**
  * **기다림에 배율을 건다** (FIX-77).
  *
  * 주행의 기다림은 전부 `Date.now() + N` 으로 적혀 있고 그 `N` 들은 **여유 있는
